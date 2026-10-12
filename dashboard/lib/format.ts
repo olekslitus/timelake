@@ -36,5 +36,5 @@ export function formatValue(v: unknown): string {
 }
 
 export function tableHref(name: string): string {
-  return `/tables/${encodeURIComponent(name)}`
+  return `/explore/tables/${encodeURIComponent(name)}`
 }

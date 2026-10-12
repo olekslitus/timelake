@@ -1,0 +1,8 @@
+# zstd (C) must be compiled for wasm32 with a clang that has the WebAssembly target.
+# Homebrew: `brew install llvm`. Override with CC_wasm32_unknown_unknown / AR_wasm32_unknown_unknown.
+[env]
+CC_wasm32_unknown_unknown = { value = "/opt/homebrew/opt/llvm/bin/clang", force = false }
+AR_wasm32_unknown_unknown = { value = "/opt/homebrew/opt/llvm/bin/llvm-ar", force = false }
+
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg", "getrandom_backend=\"wasm_js\""]

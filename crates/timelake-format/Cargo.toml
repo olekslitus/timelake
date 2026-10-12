@@ -1,0 +1,9 @@
+[package]
+name = "timelake-format"
+description = "Timelake's table conventions, shared by the engine and the WASM reader (no I/O)"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["alloc"] }

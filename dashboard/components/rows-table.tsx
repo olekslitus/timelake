@@ -1,6 +1,6 @@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { formatValue } from "@/lib/format"
-import type { Row } from "@/lib/timelake"
+import type { Row } from "@/lib/lake/types"
 
 /** A generic table for query results. Numbers right-aligned and monospaced. */
 export function RowsTable({ rows, max = 500 }: { rows: Row[]; max?: number }) {

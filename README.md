@@ -94,17 +94,22 @@ SELECT * FROM iceberg_scan('s3://lake/wh/iot/readings');   -- reads metadata/ver
 ## Repository layout
 | Path | What |
 |---|---|
-| `crates/timelake` | Core library: storage, catalog, writer, commit layer, maintenance, DataFusion reader |
+| `crates/timelake` | Core library: storage (any object store, read-only HTTPS), catalog, writer, commit layer, maintenance, DataFusion reader |
+| `crates/timelake-format` | Table conventions shared by the engine and the WASM reader (contract, partitions, Iceberg bounds) |
 | `crates/timelake-cli` | `timelake` command |
 | `crates/timelake-py` | Python package (PyO3 + maturin) |
-| `site/` | Website: how Timelake works, benchmark results, and docs (`cd site && bun run dev`) |
-| `dashboard/` | Web dashboard (Next.js, shadcn): tables, latest values, series explorer, SQL console, benchmarks |
-| `bench/` | Benchmarks: TSBS IoT, TPC-H, ClickBench, and the v0 comparison (`bench/v0`) |
+| `crates/timelake-wasm` | WebAssembly reader: metadata, pruning, Parquet decoding, latest/range/bucket queries (no I/O) |
+| `packages/timelake-client` | `@timelake/client`: TypeScript client around the WASM reader, with Zod-typed rows |
+| `dashboard/` | Web app: website, docs, benchmark results, and the Explorer (`/explore`). Deploys to Vercel; see its README |
+| `bench/` | Benchmarks: TSBS IoT, TPC-H, ClickBench, the v0 comparison (`bench/v0`), TimescaleDB on Tiger Cloud |
+| `scripts/` | Demo warehouse build (`build-demo-warehouse.sh`) and a static server with Range support for testing (`serve-range.mjs`) |
 | `spikes/` | Phase 0 experiments |
 | `SPEC.md` | Design and decisions |
 
 ## Development
 ```bash
-cargo test -p timelake                                   # Rust tests
+cargo test -p timelake -p timelake-format                # Rust tests
 python -m pytest crates/timelake-py/tests                # Python tests (after maturin develop)
+(cd packages/timelake-client && bun test)                # TS client + WASM vs the engine (needs scripts/build-demo-warehouse.sh)
+(cd packages/timelake-client && bun run build:wasm)      # rebuild the WASM after changing crates/timelake-wasm
 ```

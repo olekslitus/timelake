@@ -15,6 +15,8 @@ pub enum Error {
     /// Another writer committed first and the operation could not be rebased.
     #[error("commit conflict: {0}")]
     Conflict(String),
+    #[error("{0}")]
+    Format(#[from] timelake_format::FormatError),
     #[error(transparent)]
     Iceberg(#[from] iceberg::Error),
     #[error(transparent)]

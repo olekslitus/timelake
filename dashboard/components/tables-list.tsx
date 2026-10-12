@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { formatAgo, formatBytes, formatCompact, tableHref } from "@/lib/format"
-import type { TableInfo } from "@/lib/timelake"
+import type { TableInfo } from "@/lib/lake/types"
 
 export function TablesList({ tables, now }: { tables: TableInfo[]; now: number }) {
   return (

@@ -6,6 +6,7 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+timelake-format = { path = "../timelake-format" }
 iceberg.workspace = true
 datafusion.workspace = true
 arrow.workspace = true

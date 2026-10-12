@@ -4103,11 +4103,19 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+ "timelake-format",
  "tokio",
  "tracing",
  "typetag",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "timelake-format"
+version = "0.0.1"
+dependencies = [
+ "chrono",
 ]
 
 [[package]]

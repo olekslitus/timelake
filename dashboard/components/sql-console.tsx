@@ -8,7 +8,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Textarea } from "@/components/ui/textarea"
-import type { Row } from "@/lib/timelake"
+import type { Row } from "@/lib/lake/types"
 
 const EXAMPLES: { label: string; sql: string }[] = [
   {

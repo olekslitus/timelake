@@ -18,7 +18,7 @@
 //! ```
 
 mod commit;
-pub mod contract;
+pub use timelake_format::{bounds, contract};
 mod error;
 mod lake;
 mod lvi;

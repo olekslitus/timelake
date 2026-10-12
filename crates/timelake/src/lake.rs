@@ -30,10 +30,7 @@ use crate::error::{Error, Result};
 use crate::storage::{Storage, warehouse_url};
 
 pub const DEFAULT_NAMESPACE: &str = "default";
-/// Snapshot summary key holding the last-value index location of that snapshot.
-pub const S_LVI: &str = "timelake.last-value-index";
-/// Snapshot summary key holding the writer-supplied idempotency key of an append.
-pub const S_BATCH_ID: &str = "timelake.batch-id";
+pub use timelake_format::{S_BATCH_ID, S_LVI};
 
 /// A warehouse: a root location holding namespaces and tables.
 #[derive(Clone)]
@@ -122,13 +119,39 @@ impl Lake {
     }
 
     pub async fn namespaces(&self) -> Result<Vec<String>> {
+        if !self.inner.storage.can_list() {
+            let mut v: Vec<String> = self.indexed_tables().await?.into_iter().map(|t| t.namespace).collect();
+            v.sort();
+            v.dedup();
+            return Ok(v);
+        }
         let mut v = self.inner.storage.list_dirs(&self.inner.root).await?;
         v.sort();
         Ok(v)
     }
 
+    /// Tables recorded in the warehouse's `timelake-tables.json` index.
+    async fn indexed_tables(&self) -> Result<Vec<TableName>> {
+        let uri = format!("{}/{}", self.inner.root, timelake_format::TABLES_INDEX);
+        let Some(bytes) = self.inner.storage.read_opt(&uri).await? else { return Ok(vec![]) };
+        let names: Vec<String> = serde_json::from_slice(&bytes)?;
+        names.iter().map(|n| TableName::parse(n)).collect()
+    }
+
+    /// Rewrites `timelake-tables.json`, the table index used by readers that cannot list (HTTPS,
+    /// browsers). Called on create and drop; run it explicitly after copying tables around.
+    pub async fn write_tables_index(&self) -> Result<Vec<String>> {
+        let names: Vec<String> = self.all_tables().await?.into_iter().map(|t| t.to_string()).collect();
+        let uri = format!("{}/{}", self.inner.root, timelake_format::TABLES_INDEX);
+        self.inner.storage.write(&uri, Bytes::from(serde_json::to_vec_pretty(&names)?)).await?;
+        Ok(names)
+    }
+
     /// Tables in a namespace (directories that contain `metadata/version-hint.text`).
     pub async fn tables(&self, namespace: &str) -> Result<Vec<TableName>> {
+        if !self.inner.storage.can_list() {
+            return Ok(self.indexed_tables().await?.into_iter().filter(|t| t.namespace == namespace).collect());
+        }
         let dirs = self.inner.storage.list_dirs(&format!("{}/{namespace}", self.inner.root)).await?;
         let mut out = vec![];
         for d in dirs {
@@ -232,7 +255,11 @@ impl Lake {
             return Err(Error::AlreadyExists(name.to_string()));
         }
         st.write(&hint_uri(&location), Bytes::from("1")).await?;
-        Table::new(self.clone(), name, location, 1, metadata)
+        let t = Table::new(self.clone(), name, location, 1, metadata)?;
+        if st.can_list() {
+            let _ = self.write_tables_index().await;
+        }
+        Ok(t)
     }
 
     /// Loads the current version of a table.
@@ -288,6 +315,7 @@ impl Lake {
         let location = self.table_location(&name);
         let uris = self.inner.storage.list(&location).await?.into_iter().map(|(u, _, _)| u).collect();
         self.inner.storage.delete_many(uris).await?;
+        let _ = self.write_tables_index().await;
         Ok(())
     }
 

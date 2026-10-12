@@ -3,7 +3,7 @@
 import { Suspense } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { Database, Gauge, LayoutDashboard, SquareTerminal, Waves } from "lucide-react"
+import { BookOpen, Database, Gauge, House, LayoutDashboard, SquareTerminal, Waves } from "lucide-react"
 
 import {
   Sidebar,
@@ -19,14 +19,20 @@ import {
 } from "@/components/ui/sidebar"
 
 const NAV = [
-  { href: "/", label: "Overview", icon: LayoutDashboard },
-  { href: "/tables", label: "Tables", icon: Database },
-  { href: "/sql", label: "SQL console", icon: SquareTerminal },
+  { href: "/explore", label: "Overview", icon: LayoutDashboard },
+  { href: "/explore/tables", label: "Tables", icon: Database },
+  { href: "/explore/sql", label: "SQL console", icon: SquareTerminal },
+]
+
+const LINKS = [
+  { href: "/", label: "Home", icon: House },
+  { href: "/docs", label: "Docs", icon: BookOpen },
   { href: "/benchmarks", label: "Benchmarks", icon: Gauge },
 ]
 
 function NavMenu({ pathname }: { pathname: string | null }) {
-  const active = (href: string) => pathname !== null && (href === "/" ? pathname === "/" : pathname.startsWith(href))
+  const active = (href: string) =>
+    pathname !== null && (href === "/explore" ? pathname === "/explore" : pathname.startsWith(href))
   return (
     <SidebarMenu>
       {NAV.map((item) => (
@@ -51,13 +57,13 @@ export function AppSidebar({ warehouse }: { warehouse: string }) {
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton size="lg" render={<Link href="/" />}>
+            <SidebarMenuButton size="lg" render={<Link href="/explore" />}>
               <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
                 <Waves className="size-4" />
               </div>
               <div className="grid flex-1 text-left text-sm leading-tight">
                 <span className="truncate font-semibold">Timelake</span>
-                <span className="truncate text-xs text-muted-foreground">time-series lake</span>
+                <span className="truncate text-xs text-muted-foreground">explorer</span>
               </div>
             </SidebarMenuButton>
           </SidebarMenuItem>
@@ -65,12 +71,27 @@ export function AppSidebar({ warehouse }: { warehouse: string }) {
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>Lake</SidebarGroupLabel>
+          <SidebarGroupLabel>Explorer</SidebarGroupLabel>
           <SidebarGroupContent>
             {/* The current URL is only known at request time: stream the active state in. */}
             <Suspense fallback={<NavMenu pathname={null} />}>
               <ActiveNavMenu />
             </Suspense>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarGroup>
+          <SidebarGroupLabel>Timelake</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {LINKS.map((item) => (
+                <SidebarMenuItem key={item.href}>
+                  <SidebarMenuButton tooltip={item.label} render={<Link href={item.href} />}>
+                    <item.icon />
+                    <span>{item.label}</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>

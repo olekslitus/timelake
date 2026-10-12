@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Builds the public demo warehouse: a slice of TSBS IoT (50 trucks × 3 days, ~1.2M rows per table)
+# written as Timelake tables whose metadata already points at the URL they will be served from.
+#
+#   scripts/build-demo-warehouse.sh https://<store-id>.public.blob.vercel-storage.com/demo
+#   scripts/build-demo-warehouse.sh http://127.0.0.1:4100/demo          # local testing (default)
+#
+# Output: bench/data/demo-site/<files to upload, paths relative to the URL origin>
+# Then upload with scripts/upload-demo-to-blob.mjs (Vercel Blob) or any static host with Range support.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+BASE_URL=${1:-http://127.0.0.1:4100/demo}
+OUT=bench/data/demo-site
+SRC=bench/data/tsbs/parquet
+TL=target/release/timelake
+TRUCKS=${TRUCKS:-50}
+[ -x "$TL" ] || cargo build --release -p timelake-cli
+rm -rf "$OUT" bench/data/demo-src && mkdir -p bench/data/demo-src
+bench/.venv/bin/python - "$SRC" bench/data/demo-src "$TRUCKS" <<'PY'
+import sys, duckdb
+src, dst, n = sys.argv[1], sys.argv[2], int(sys.argv[3])
+duckdb.sql("SET TimeZone='UTC'")
+duckdb.sql(f"COPY (SELECT * FROM '{src}/tags.parquet' WHERE id <= {n}) TO '{dst}/tags.parquet'")
+for t in ("readings", "diagnostics"):
+    duckdb.sql(f"COPY (SELECT * FROM '{src}/{t}.parquet' WHERE tags_id <= {n}) TO '{dst}/{t}.parquet'")
+PY
+# Small row groups: web readers fetch whole row-group column chunks, so 64k rows keeps a
+# one-series read to a few hundred KB.
+TLW=("$TL" -w "$BASE_URL" -o "timelake_local_root=$OUT")
+"${TLW[@]}" import tsbs.tags bench/data/demo-src/tags.parquet
+for t in readings diagnostics; do
+  "${TLW[@]}" import tsbs.$t bench/data/demo-src/$t.parquet --time-column time --series-key tags_id --no-dedup \
+    --prop timelake.row-group-rows=65536
+done
+"${TLW[@]}" maintain
+"${TLW[@]}" index
+rm -rf bench/data/demo-src
+echo; echo "built $(find "$OUT" -type f | wc -l | tr -d ' ') files, $(du -sh "$OUT" | cut -f1) in $OUT for $BASE_URL"

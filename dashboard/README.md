@@ -1,34 +1,72 @@
-# Timelake dashboard
+# Timelake web
 
-A small Next.js 16 dashboard for a Timelake warehouse: tables and freshness, per-table layout, snapshots, latest values and a time-series explorer, a read-only SQL console, and the v0 benchmark results.
+One Next.js app with the Timelake website, docs, benchmark results and the Explorer:
 
-Stack: Next.js (App Router, Cache Components), React 19, bun, shadcn/ui (Base UI), Tailwind v4, Recharts, lucide icons.
+| Route | What |
+|---|---|
+| `/` | Landing page: what Timelake is, how it works, quick start, benchmark highlights |
+| `/docs/**` | Documentation (quick start, concepts, CLI, Python, querying, properties, storage, architecture, roadmap) |
+| `/benchmarks` | v0 benchmark results (Timelake vs naive Iceberg and Lance; TimescaleDB on Tiger Cloud) |
+| `/explore` | Explorer: tables, freshness, partitions, snapshots, latest values, a series chart, read-only SQL console |
+
+Stack: Next.js 16 (App Router, Cache Components), React 19, bun, shadcn/ui (Base UI), Tailwind v4, Recharts, lucide icons.
 
 ## Run
 ```bash
-cargo build --release -p timelake-cli     # from the repo root; the dashboard calls this binary
+cargo build --release -p timelake-cli     # from the repo root; the Explorer calls this binary
 cd dashboard
 bun install
 bun run dev                               # http://127.0.0.1:3000
 ```
 
-The server reads the lake by running the `timelake` CLI: `ls --json`, `info --json`, `latest`, and `sql --format json`. It needs no database or service of its own.
+The site, docs and benchmarks need nothing else. The Explorer has two backends (`lib/lake/`):
+
+- **WASM** (hosted), used when `TIMELAKE_URL` is set. It reads a warehouse served over HTTPS (Vercel Blob, a public bucket, a CDN) with `@timelake/client` (`packages/timelake-client`), a WebAssembly build of the reader. There's no binary and no engine, and SQL isn't available.
+- **CLI** (local), used otherwise. It runs the `timelake` binary (`ls --json`, `info --json`, `latest`, `sql --format json`), so the SQL console works.
+
+When neither is available, the pages show a "not connected" card and the API routes return 503.
 
 | Env var | Default | Meaning |
 |---|---|---|
-| `TIMELAKE_WAREHOUSE` | `../bench/data/v0/local/timelake/lake` (TSBS IoT tables) | Warehouse to browse: local path or `s3://…` |
+| `TIMELAKE_URL` | (none) | HTTPS warehouse for the WASM backend, e.g. `https://<store>.public.blob.vercel-storage.com/demo` |
+| `TIMELAKE_WAREHOUSE` | `../bench/data/v0/local/timelake/lake` (TSBS IoT tables) | Warehouse the Explorer browses: local path or `s3://…` |
 | `TIMELAKE_OPTIONS` | (none) | Storage options, comma-separated `k=v` (e.g. `aws_endpoint=http://localhost:9000,aws_allow_http=true`) |
 | `TIMELAKE_BIN` | `../target/release/timelake` | CLI binary |
-| `TIMELAKE_BENCH_RESULTS` | `../bench/results` | Benchmark results for the Benchmarks page |
+| `TIMELAKE_BENCH_RESULTS` | `data/results` | Benchmark results for `/benchmarks` |
 
 The SQL console accepts only single read statements (`SELECT`, `WITH`, `EXPLAIN`, `SHOW`, `DESCRIBE`), because DataFusion can write files. The dev and start scripts bind to 127.0.0.1.
+
+### Benchmark data
+`/benchmarks` reads `data/results/`, a committed copy of the files it needs from `../bench/results`, so the app builds where only this directory exists. After re-running benchmarks:
+```bash
+bun run sync-results
+```
 
 ## Layout
 | Path | What |
 |---|---|
-| `app/page.tsx` | Overview: totals and the tables list |
-| `app/tables/[name]/page.tsx` | Table detail: explore chart, latest values, layout, snapshots |
-| `app/sql/page.tsx` | SQL console |
-| `app/benchmarks/page.tsx` | v0 benchmark charts and ingest table |
-| `app/api/sql`, `app/api/series` | Route handlers used by the console and the chart |
-| `lib/timelake.ts` | Server-only wrapper around the CLI |
+| `app/(site)/` | Landing page, `/docs`, `/benchmarks` (top-nav layout) |
+| `app/(app)/explore/` | Explorer pages (sidebar layout) |
+| `app/api/sql`, `app/api/series` | Route handlers used by the SQL console and the series chart |
+| `lib/lake/` | Explorer data layer: `types.ts` (the `LakeBackend` interface), `wasm.ts` (hosted, `@timelake/client`), `cli.ts` (local, the CLI), `index.ts` (picks the backend) |
+| `lib/benchmarks.ts` | Loads `/benchmarks` data (geometric means as in `bench/v0/summarize.py`) |
+| `scripts/sync-results.ts` | Copies benchmark results into `data/results/` |
+| `scripts/upload-demo-to-blob.ts` | Uploads the demo warehouse to Vercel Blob (`bun run upload-demo`) |
+
+## Deploying to Vercel
+- **Project root:** `dashboard/`. **Framework:** Next.js. **Install:** `bun install`, which runs at the repo root because it is a bun workspace with `packages/timelake-client`. **Build:** `bun run build`.
+- The site, docs and benchmarks need no configuration.
+- **Hosted Explorer: the demo warehouse on Vercel Blob.**
+  1. Create a **public** Blob store (Vercel → Storage → Blob) and note its base URL, `https://<store-id>.public.blob.vercel-storage.com`.
+  2. Build the demo with that URL baked into its metadata (50 TSBS trucks over 3 days, about 22 MB): `../scripts/build-demo-warehouse.sh https://<store-id>.public.blob.vercel-storage.com/demo`
+  3. Upload it, keeping paths: `BLOB_READ_WRITE_TOKEN=… bun run upload-demo`
+  4. Check range support. This should print `HTTP/… 206`; without it the client still works but downloads whole files: `curl -sI -H 'Range: bytes=0-99' https://<store-id>.public.blob.vercel-storage.com/demo/tsbs/tags/metadata/version-hint.text`
+  5. Set `TIMELAKE_URL=https://<store-id>.public.blob.vercel-storage.com/demo` on the project, for build and runtime alike (the static shell shows it), then deploy.
+- **The Explorer is public: no login, read-only.** Each chart reads at most a few MB from Blob. Consider a Vercel Firewall rate limit on `/api/*`.
+
+### Testing the hosted mode locally
+```bash
+../scripts/build-demo-warehouse.sh                     # builds for http://127.0.0.1:4100/demo
+bun ../scripts/serve-range.mjs ../bench/data/demo-site 4100 &
+TIMELAKE_URL=http://127.0.0.1:4100/demo bun run dev
+```

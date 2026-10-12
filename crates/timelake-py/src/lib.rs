@@ -113,7 +113,7 @@ impl Lake {
         let opts = TableOptions {
             time_column,
             series_key: series_key.unwrap_or_default(),
-            chunk: chunk.as_deref().map(Chunk::parse).transpose().map_err(to_py)?,
+            chunk: chunk.as_deref().map(Chunk::parse).transpose().map_err(|e| to_py(e.into()))?,
             dedup,
             retention,
             properties: properties.unwrap_or_default(),

@@ -1,5 +1,6 @@
+import { sql } from "@/lib/lake"
+import { errorResponse } from "@/lib/lake/http"
 import { readOnlyError } from "@/lib/sql-guard"
-import { sql } from "@/lib/timelake"
 
 export async function POST(request: Request) {
   const { query } = (await request.json()) as { query?: string }
@@ -7,9 +8,8 @@ export async function POST(request: Request) {
   const guard = readOnlyError(query)
   if (guard) return Response.json({ error: guard }, { status: 400 })
   try {
-    const { rows, ms } = await sql(query)
-    return Response.json({ rows, ms })
+    return Response.json(await sql(query))
   } catch (e) {
-    return Response.json({ error: (e as Error).message }, { status: 400 })
+    return errorResponse(e)
   }
 }

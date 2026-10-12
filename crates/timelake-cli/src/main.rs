@@ -100,6 +100,8 @@ enum Cmd {
     Duckdb { table: String },
     /// Delete a table and all its files.
     Drop { table: String },
+    /// Rewrite timelake-tables.json, the table index for readers that cannot list (HTTPS, browsers).
+    Index,
 }
 
 #[derive(clap::Args)]
@@ -255,6 +257,10 @@ async fn run(cli: Cli) -> Result<()> {
                 println!("-- newest row per series (Timelake last-value index for v{}):", t.version);
                 println!("SELECT * FROM read_parquet('{lvi}');");
             }
+        }
+        Cmd::Index => {
+            let names = lake.write_tables_index().await?;
+            println!("indexed {} tables: {}", names.len(), names.join(", "));
         }
         Cmd::Drop { table } => {
             lake.drop_table(&table).await?;

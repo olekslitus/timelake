@@ -1,0 +1,34 @@
+[package]
+name = "timelake-wasm"
+description = "Timelake reader for WebAssembly: metadata, pruning, Parquet decoding and time-series queries (no I/O; the host fetches byte ranges)"
+version = "0.0.1"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+timelake-format = { path = "../timelake-format" }
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde-wasm-bindgen = "0.6"
+apache-avro = { version = "0.21", default-features = false }
+bytes = "1"
+arrow-array = "58"
+arrow-schema = "58"
+arrow-select = "58"
+arrow-cast = "58"
+arrow-ord = "58"
+arrow-json = "58"
+parquet = { version = "58", default-features = false, features = ["arrow", "zstd", "snap"] }
+chrono = { version = "0.4", default-features = false, features = ["alloc"] }
+getrandom = { version = "0.3", features = ["wasm_js"] }
+getrandom02 = { package = "getrandom", version = "0.2", features = ["js"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1

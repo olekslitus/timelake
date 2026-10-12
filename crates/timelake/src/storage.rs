@@ -20,6 +20,7 @@ use object_store::aws::{AmazonS3Builder, AmazonS3ConfigKey, S3ConditionalPut};
 use object_store::azure::{AzureConfigKey, MicrosoftAzureBuilder};
 use object_store::buffered::BufWriter;
 use object_store::gcp::{GoogleCloudStorageBuilder, GoogleConfigKey};
+use object_store::http::HttpBuilder;
 use object_store::local::LocalFileSystem;
 use object_store::memory::InMemory;
 use object_store::path::Path;
@@ -37,17 +38,47 @@ pub struct Storage {
     store: Arc<dyn ObjectStore>,
     /// `scheme://authority` with no trailing slash, e.g. `s3://bucket` or `file://`.
     base: String,
+    listable: bool,
 }
+
+/// Storage option mapping a warehouse URL onto a local directory (see [`Storage::open`]).
+pub const LOCAL_ROOT_OPTION: &str = "timelake_local_root";
 
 impl Storage {
     /// Opens the store for `url`. `options` are backend config keys (e.g. `aws_endpoint`,
     /// `aws_access_key_id`, `google_service_account`); for S3, GCS and Azure the usual environment
     /// variables are read as well.
+    ///
+    /// `timelake_local_root=<dir>` maps the URL onto a local directory: objects are written under
+    /// `<dir>` while every path recorded in metadata keeps the URL. That builds a warehouse on disk
+    /// that is ready to upload to its final location, e.g. a public Vercel Blob or CDN URL that is
+    /// then read over HTTPS.
     pub fn open(url: &Url, options: &HashMap<String, String>) -> Result<Self> {
+        let mut options = options.clone();
+        let local_root = options.remove(LOCAL_ROOT_OPTION);
         let scheme = url.scheme();
         let authority = url.host_str().unwrap_or_default();
+        let base = match scheme {
+            // Keep the port for HTTP origins (e.g. http://127.0.0.1:4000).
+            "http" | "https" => url.origin().ascii_serialization(),
+            _ => format!("{scheme}://{authority}"),
+        };
+        if let Some(dir) = local_root {
+            std::fs::create_dir_all(&dir)?;
+            let store = LocalFileSystem::new_with_prefix(&dir)?;
+            return Ok(Self { store: Arc::new(store), base, listable: true });
+        }
         let store: Arc<dyn ObjectStore> = match scheme {
             "file" => Arc::new(LocalFileSystem::new()),
+            // Plain HTTPS (public buckets, Vercel Blob, CDNs): read-only, and it cannot list,
+            // so table discovery uses the warehouse's `timelake-tables.json` index.
+            "http" | "https" => {
+                let mut b = HttpBuilder::new().with_url(&base);
+                if scheme == "http" {
+                    b = b.with_client_options(object_store::ClientOptions::new().with_allow_http(true));
+                }
+                Arc::new(b.build()?)
+            }
             "memory" => Arc::new(InMemory::new()),
             "s3" | "s3a" => {
                 let mut b = AmazonS3Builder::from_env()
@@ -55,7 +86,7 @@ impl Storage {
                     // Atomic commits rely on put-if-absent (`If-None-Match: *`), supported by AWS S3
                     // since 2024 and by most S3-compatible stores.
                     .with_conditional_put(S3ConditionalPut::ETagMatch);
-                for (k, v) in options {
+                for (k, v) in &options {
                     let key = AmazonS3ConfigKey::from_str(k)
                         .map_err(|_| Error::config(format!("unknown S3 option {k:?}")))?;
                     b = b.with_config(key, v);
@@ -64,7 +95,7 @@ impl Storage {
             }
             "gs" => {
                 let mut b = GoogleCloudStorageBuilder::from_env().with_bucket_name(authority);
-                for (k, v) in options {
+                for (k, v) in &options {
                     let key = GoogleConfigKey::from_str(k)
                         .map_err(|_| Error::config(format!("unknown GCS option {k:?}")))?;
                     b = b.with_config(key, v);
@@ -73,7 +104,7 @@ impl Storage {
             }
             "az" | "abfs" | "abfss" => {
                 let mut b = MicrosoftAzureBuilder::from_env().with_url(url.as_str());
-                for (k, v) in options {
+                for (k, v) in &options {
                     let key = AzureConfigKey::from_str(k)
                         .map_err(|_| Error::config(format!("unknown Azure option {k:?}")))?;
                     b = b.with_config(key, v);
@@ -82,7 +113,13 @@ impl Storage {
             }
             other => return Err(Error::config(format!("unsupported storage scheme {other:?}"))),
         };
-        Ok(Self { store, base: format!("{scheme}://{authority}") })
+        let listable = !matches!(scheme, "http" | "https");
+        Ok(Self { store, base, listable })
+    }
+
+    /// Whether the store supports listing (plain HTTPS does not).
+    pub fn can_list(&self) -> bool {
+        self.listable
     }
 
     pub fn object_store(&self) -> Arc<dyn ObjectStore> {

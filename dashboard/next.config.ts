@@ -1,8 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
   cacheComponents: true,
+  // The TypeScript client (with its WASM reader) is a workspace package consumed from source.
+  transpilePackages: ["@timelake/client"],
   partialPrefetching: true,
   turbopack: {
     rules: {
