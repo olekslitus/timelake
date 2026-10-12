@@ -1,0 +1,150 @@
+-- TSBS IoT queries, ported from tsbs/cmd/tsbs_generate_queries/databases/timescaledb/iot.go
+-- (TimescaleDB flavour, tagset in a normalized `tags` table).
+--
+-- Porting rules, so every engine runs the same logic:
+--   * Random parameters are fixed: fleet = 'South'; windows end near the data end (2026-01-04).
+--   * `INNER JOIN LATERAL (... ORDER BY time DESC LIMIT 1)` (an index lookup in TimescaleDB) becomes
+--     ROW_NUMBER() over (tags_id ORDER BY time DESC) = 1, which lake engines can execute.
+--   * Engine-specific functions are placeholders filled in by run.py:
+--       @B10M(x) 10-minute time bucket, @B1D(x) 1-day bucket, @EPOCH(x) seconds since epoch,
+--       @TS('...') timestamptz literal.
+--   * Integer divisions that Postgres truncates use float division (results are reported, not checked).
+--   * breakdown-frequency: TSBS's `count(STATUS = 0) / count(*)` counts non-NULL booleans, so it is
+--     always 1. We use the intended fraction of rows with status = 0.
+
+-- name: last-loc
+SELECT t.name, t.driver, r.longitude, r.latitude
+FROM tags t
+JOIN (SELECT tags_id, longitude, latitude,
+             ROW_NUMBER() OVER (PARTITION BY tags_id ORDER BY time DESC) AS rn
+      FROM readings) r ON r.tags_id = t.id AND r.rn = 1
+WHERE t.name IS NOT NULL AND t.fleet = 'South';
+
+-- name: low-fuel
+SELECT t.name, t.driver, d.fuel_state
+FROM tags t
+JOIN (SELECT tags_id, fuel_state,
+             ROW_NUMBER() OVER (PARTITION BY tags_id ORDER BY time DESC) AS rn
+      FROM diagnostics) d ON d.tags_id = t.id AND d.rn = 1
+WHERE t.name IS NOT NULL AND d.fuel_state < 0.1 AND t.fleet = 'South';
+
+-- name: high-load
+SELECT t.name, t.driver, d.current_load
+FROM tags t
+JOIN (SELECT tags_id, current_load,
+             ROW_NUMBER() OVER (PARTITION BY tags_id ORDER BY time DESC) AS rn
+      FROM diagnostics) d ON d.tags_id = t.id AND d.rn = 1
+WHERE t.name IS NOT NULL AND d.current_load / t.load_capacity > 0.9 AND t.fleet = 'South';
+
+-- name: stationary-trucks
+SELECT t.name, t.driver
+FROM tags t
+JOIN readings r ON r.tags_id = t.id
+WHERE r.time >= @TS('2026-01-03 12:00:00') AND r.time < @TS('2026-01-03 12:10:00')
+  AND t.name IS NOT NULL AND t.fleet = 'South'
+GROUP BY t.name, t.driver
+HAVING avg(r.velocity) < 1;
+
+-- name: long-driving-sessions
+SELECT t.name, t.driver
+FROM tags t
+JOIN (SELECT @B10M(time) AS ten_minutes, tags_id
+      FROM readings
+      WHERE time >= @TS('2026-01-03 08:00:00') AND time < @TS('2026-01-03 12:00:00')
+      GROUP BY 1, 2
+      HAVING avg(velocity) > 1) r ON t.id = r.tags_id
+WHERE t.name IS NOT NULL AND t.fleet = 'South'
+GROUP BY t.name, t.driver
+HAVING count(r.ten_minutes) > 22;
+
+-- name: long-daily-sessions
+SELECT t.name, t.driver
+FROM tags t
+JOIN (SELECT @B10M(time) AS ten_minutes, tags_id
+      FROM readings
+      WHERE time >= @TS('2026-01-02 12:00:00') AND time < @TS('2026-01-03 12:00:00')
+      GROUP BY 1, 2
+      HAVING avg(velocity) > 1) r ON t.id = r.tags_id
+WHERE t.name IS NOT NULL AND t.fleet = 'South'
+GROUP BY t.name, t.driver
+HAVING count(r.ten_minutes) > 60;
+
+-- name: avg-vs-projected-fuel-consumption
+SELECT t.fleet, avg(r.fuel_consumption) AS avg_fuel_consumption,
+       avg(t.nominal_fuel_consumption) AS projected_fuel_consumption
+FROM tags t
+JOIN readings r ON r.tags_id = t.id
+WHERE r.velocity > 1
+  AND t.fleet IS NOT NULL AND t.nominal_fuel_consumption IS NOT NULL AND t.name IS NOT NULL
+GROUP BY t.fleet;
+
+-- name: avg-daily-driving-duration
+WITH ten_minute_driving_sessions AS (
+    SELECT @B10M(time) AS ten_minutes, tags_id
+    FROM readings
+    GROUP BY 1, 2
+    HAVING avg(velocity) > 1
+), daily_total_session AS (
+    SELECT @B1D(ten_minutes) AS day, tags_id, count(*) / 6.0 AS hours
+    FROM ten_minute_driving_sessions
+    GROUP BY 1, 2
+)
+SELECT t.fleet, t.name, t.driver, avg(d.hours) AS avg_daily_hours
+FROM daily_total_session d
+JOIN tags t ON t.id = d.tags_id
+GROUP BY t.fleet, t.name, t.driver;
+
+-- name: avg-daily-driving-session
+WITH driver_status AS (
+    SELECT tags_id, @B10M(time) AS ten_minutes, avg(velocity) > 5 AS driving
+    FROM readings
+    GROUP BY 1, 2
+), driver_status_change AS (
+    SELECT tags_id, ten_minutes AS start_ts,
+           lead(ten_minutes) OVER (PARTITION BY tags_id ORDER BY ten_minutes) AS stop_ts, driving
+    FROM (SELECT tags_id, ten_minutes, driving,
+                 lag(driving) OVER (PARTITION BY tags_id ORDER BY ten_minutes) AS prev_driving
+          FROM driver_status) x
+    WHERE x.driving <> x.prev_driving
+)
+SELECT t.name, @B1D(d.start_ts) AS day, avg(@EPOCH(d.stop_ts) - @EPOCH(d.start_ts)) AS duration_s
+FROM tags t
+JOIN driver_status_change d ON t.id = d.tags_id
+WHERE t.name IS NOT NULL AND d.driving = true
+GROUP BY 1, 2
+ORDER BY 1, 2;
+
+-- name: avg-load
+SELECT t.fleet, t.model, t.load_capacity, avg(d.avg_load / t.load_capacity) AS avg_load_percentage
+FROM tags t
+JOIN (SELECT tags_id, avg(current_load) AS avg_load FROM diagnostics GROUP BY tags_id) d ON t.id = d.tags_id
+WHERE t.name IS NOT NULL
+GROUP BY t.fleet, t.model, t.load_capacity;
+
+-- name: daily-activity
+SELECT t.fleet, t.model, y.day, sum(y.ten_mins_per_day) / 144.0 AS daily_activity
+FROM tags t
+JOIN (SELECT @B1D(time) AS day, @B10M(time) AS ten_minutes, tags_id, count(*) AS ten_mins_per_day
+      FROM diagnostics
+      GROUP BY 1, 2, 3
+      HAVING avg(status) < 1) y ON y.tags_id = t.id
+WHERE t.name IS NOT NULL
+GROUP BY t.fleet, t.model, y.day
+ORDER BY y.day;
+
+-- name: breakdown-frequency
+WITH breakdown_per_truck_per_ten_minutes AS (
+    SELECT @B10M(time) AS ten_minutes, tags_id,
+           sum(CASE WHEN status = 0 THEN 1 ELSE 0 END) * 1.0 / count(*) >= 0.5 AS broken_down
+    FROM diagnostics
+    GROUP BY 1, 2
+), breakdowns_per_truck AS (
+    SELECT ten_minutes, tags_id, broken_down,
+           lead(broken_down) OVER (PARTITION BY tags_id ORDER BY ten_minutes) AS next_broken_down
+    FROM breakdown_per_truck_per_ten_minutes
+)
+SELECT t.model, count(*)
+FROM tags t
+JOIN breakdowns_per_truck b ON t.id = b.tags_id
+WHERE t.name IS NOT NULL AND b.broken_down = false AND b.next_broken_down = true
+GROUP BY t.model;

@@ -1,0 +1,121 @@
+// s3proxy: a TCP proxy for benchmarking against a local S3-compatible store.
+//
+// It delays the first response byte of every HTTP request by a configurable time-to-first-byte
+// (modelling S3 request latency without throttling bandwidth) and counts requests and response bytes.
+//
+//	s3proxy -listen :59100 -upstream localhost:59000 -admin :59101 -ttfb 20ms
+//	curl localhost:59101/stats            -> {"requests":N,"bytes":B,"ttfb_ms":20}
+//	curl -X POST 'localhost:59101/ttfb?ms=0'
+package main
+
+import (
+	"encoding/json"
+	"flag"
+	"log"
+	"net"
+	"net/http"
+	"strconv"
+	"sync/atomic"
+	"time"
+)
+
+var (
+	requests atomic.Int64
+	bytesOut atomic.Int64
+	ttfbMs   atomic.Int64
+)
+
+func main() {
+	listen := flag.String("listen", ":59100", "proxy listen address")
+	upstream := flag.String("upstream", "localhost:59000", "S3 endpoint")
+	admin := flag.String("admin", ":59101", "stats/admin listen address")
+	ttfb := flag.Duration("ttfb", 20*time.Millisecond, "time to first byte added per request")
+	flag.Parse()
+	ttfbMs.Store(ttfb.Milliseconds())
+
+	go serveAdmin(*admin)
+	ln, err := net.Listen("tcp", *listen)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("proxy %s -> %s, ttfb %v, admin %s", *listen, *upstream, *ttfb, *admin)
+	for {
+		c, err := ln.Accept()
+		if err != nil {
+			log.Fatal(err)
+		}
+		go handle(c, *upstream)
+	}
+}
+
+func handle(client net.Conn, upstream string) {
+	defer client.Close()
+	server, err := net.Dial("tcp", upstream)
+	if err != nil {
+		log.Print(err)
+		return
+	}
+	defer server.Close()
+
+	// awaiting is set when the client sends a new request and cleared when its response starts.
+	var awaiting atomic.Bool
+	done := make(chan struct{}, 2)
+
+	go func() { // client -> server
+		buf := make([]byte, 64<<10)
+		for {
+			n, err := client.Read(buf)
+			if n > 0 {
+				if awaiting.CompareAndSwap(false, true) {
+					requests.Add(1)
+				}
+				if _, werr := server.Write(buf[:n]); werr != nil {
+					break
+				}
+			}
+			if err != nil {
+				break
+			}
+		}
+		done <- struct{}{}
+	}()
+	go func() { // server -> client
+		buf := make([]byte, 256<<10)
+		for {
+			n, err := server.Read(buf)
+			if n > 0 {
+				if awaiting.CompareAndSwap(true, false) {
+					if d := ttfbMs.Load(); d > 0 {
+						time.Sleep(time.Duration(d) * time.Millisecond)
+					}
+				}
+				bytesOut.Add(int64(n))
+				if _, werr := client.Write(buf[:n]); werr != nil {
+					break
+				}
+			}
+			if err != nil {
+				break
+			}
+		}
+		done <- struct{}{}
+	}()
+	<-done
+}
+
+func serveAdmin(addr string) {
+	http.HandleFunc("/stats", func(w http.ResponseWriter, _ *http.Request) {
+		json.NewEncoder(w).Encode(map[string]int64{
+			"requests": requests.Load(), "bytes": bytesOut.Load(), "ttfb_ms": ttfbMs.Load(),
+		})
+	})
+	http.HandleFunc("/ttfb", func(w http.ResponseWriter, r *http.Request) {
+		ms, err := strconv.ParseInt(r.URL.Query().Get("ms"), 10, 64)
+		if err != nil {
+			http.Error(w, "ms required", 400)
+			return
+		}
+		ttfbMs.Store(ms)
+	})
+	log.Fatal(http.ListenAndServe(addr, nil))
+}

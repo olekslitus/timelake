@@ -1,0 +1,22 @@
+== load
+
+Summary:
+loaded 116706915 metrics in 57.196sec with 8 workers (mean rate 2040486.79 metrics/sec)
+loaded 23340309 rows in 57.196sec with 8 workers (mean rate 408078.58 rows/sec)
+
+real	0m57.391s
+user	1m32.067s
+sys	0m9.343s
+db size: 3512 MB
+timescaledb last-loc median 2.13ms
+timescaledb low-fuel median 2.53ms
+timescaledb high-load median 1.96ms
+timescaledb stationary-trucks median 9.80ms
+timescaledb long-driving-sessions median 191.66ms
+timescaledb long-daily-sessions median 600.00ms
+timescaledb avg-vs-projected-fuel-consumption median 595.23ms
+timescaledb avg-daily-driving-duration median 829.82ms
+timescaledb avg-daily-driving-session median 904.61ms
+timescaledb avg-load median 329.55ms
+timescaledb daily-activity median 780.74ms
+timescaledb breakdown-frequency median 1973.44ms

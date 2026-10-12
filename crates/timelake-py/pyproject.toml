@@ -1,0 +1,14 @@
+[build-system]
+requires = ["maturin>=1.8,<2"]
+build-backend = "maturin"
+
+[project]
+name = "timelake"
+version = "0.0.1"
+description = "Serverless time-series lake on Apache Iceberg"
+requires-python = ">=3.10"
+dependencies = ["pyarrow>=14"]
+
+[tool.maturin]
+python-source = "python"
+module-name = "timelake._timelake"

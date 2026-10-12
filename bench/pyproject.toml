@@ -1,0 +1,18 @@
+[project]
+name = "timelake-bench"
+version = "0.0.0"
+description = "Baseline benchmarks for Timelake (SPEC.md §17)"
+requires-python = ">=3.12"
+dependencies = [
+    "duckdb",
+    "datafusion",
+    "polars",
+    "pyarrow",
+    "pyiceberg[sql-sqlite,pyarrow,pyiceberg-core]",
+    "pytz",
+    "pylance>=13.0.0",
+    "psycopg[binary]>=3.3.6",
+]
+
+[tool.uv]
+package = false

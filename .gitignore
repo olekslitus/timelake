@@ -1,0 +1,14 @@
+/target
+/spike-data
+/bench/data
+/bench/.venv
+/bench/rust-reader/target
+__pycache__/
+.pytest_cache/
+*.so
+/crates/timelake-py/target
+/bench/.bin
+node_modules/
+.next/
+*.tsbuildinfo
+.DS_Store

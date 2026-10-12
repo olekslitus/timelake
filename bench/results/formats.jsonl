@@ -1,0 +1,48 @@
+{"dataset": "tpch", "table": "lineitem", "layout": "as-is", "format": "parquet", "bytes": 1532343161}
+{"dataset": "tpch", "table": "lineitem", "layout": "as-is", "format": "vortex", "write_s": 55.016, "bytes": 1825344916}
+{"dataset": "tpch", "table": "orders", "layout": "as-is", "format": "parquet", "bytes": 378814051}
+{"dataset": "tpch", "table": "orders", "layout": "as-is", "format": "vortex", "write_s": 14.409, "bytes": 514060916}
+{"dataset": "tpch", "table": "customer", "layout": "as-is", "format": "parquet", "bytes": 79765388}
+{"dataset": "tpch", "table": "customer", "layout": "as-is", "format": "vortex", "write_s": 2.248, "bytes": 94889992}
+{"dataset": "tpch", "table": "part", "layout": "as-is", "format": "parquet", "bytes": 41168185}
+{"dataset": "tpch", "table": "part", "layout": "as-is", "format": "vortex", "write_s": 1.682, "bytes": 56106512}
+{"dataset": "tpch", "table": "partsupp", "layout": "as-is", "format": "parquet", "bytes": 280156742}
+{"dataset": "tpch", "table": "partsupp", "layout": "as-is", "format": "vortex", "write_s": 8.204, "bytes": 263380508}
+{"dataset": "tpch", "table": "supplier", "layout": "as-is", "format": "parquet", "bytes": 5107569}
+{"dataset": "tpch", "table": "supplier", "layout": "as-is", "format": "vortex", "write_s": 0.193, "bytes": 6129000}
+{"dataset": "tpch", "table": "nation", "layout": "as-is", "format": "parquet", "bytes": 1947}
+{"dataset": "tpch", "table": "nation", "layout": "as-is", "format": "vortex", "write_s": 0.005, "bytes": 8184}
+{"dataset": "tpch", "table": "region", "layout": "as-is", "format": "parquet", "bytes": 1004}
+{"dataset": "tpch", "table": "region", "layout": "as-is", "format": "vortex", "write_s": 0.001, "bytes": 4740}
+{"dataset": "clickbench", "table": "hits_0", "layout": "as-is", "format": "parquet", "bytes": 122446530}
+{"dataset": "clickbench", "table": "hits_0", "layout": "as-is", "format": "vortex", "write_s": 6.508, "bytes": 96507964}
+{"dataset": "clickbench", "table": "hits_1", "layout": "as-is", "format": "parquet", "bytes": 174965044}
+{"dataset": "clickbench", "table": "hits_1", "layout": "as-is", "format": "vortex", "write_s": 6.823, "bytes": 151143668}
+{"dataset": "clickbench", "table": "hits_2", "layout": "as-is", "format": "parquet", "bytes": 230595491}
+{"dataset": "clickbench", "table": "hits_2", "layout": "as-is", "format": "vortex", "write_s": 7.858, "bytes": 201980196}
+{"dataset": "clickbench", "table": "hits_3", "layout": "as-is", "format": "parquet", "bytes": 192507052}
+{"dataset": "clickbench", "table": "hits_3", "layout": "as-is", "format": "vortex", "write_s": 7.404, "bytes": 155429620}
+{"dataset": "clickbench", "table": "hits_4", "layout": "as-is", "format": "parquet", "bytes": 140929275}
+{"dataset": "clickbench", "table": "hits_4", "layout": "as-is", "format": "vortex", "write_s": 5.093, "bytes": 117876524}
+{"dataset": "clickbench", "table": "hits_5", "layout": "as-is", "format": "parquet", "bytes": 122286439}
+{"dataset": "clickbench", "table": "hits_5", "layout": "as-is", "format": "vortex", "write_s": 4.81, "bytes": 100005980}
+{"dataset": "clickbench", "table": "hits_6", "layout": "as-is", "format": "parquet", "bytes": 122927935}
+{"dataset": "clickbench", "table": "hits_6", "layout": "as-is", "format": "vortex", "write_s": 4.702, "bytes": 100450612}
+{"dataset": "clickbench", "table": "hits_7", "layout": "as-is", "format": "parquet", "bytes": 123902333}
+{"dataset": "clickbench", "table": "hits_7", "layout": "as-is", "format": "vortex", "write_s": 4.667, "bytes": 101134636}
+{"dataset": "clickbench", "table": "hits_8", "layout": "as-is", "format": "parquet", "bytes": 122735269}
+{"dataset": "clickbench", "table": "hits_8", "layout": "as-is", "format": "vortex", "write_s": 5.169, "bytes": 100387788}
+{"dataset": "clickbench", "table": "hits_9", "layout": "as-is", "format": "parquet", "bytes": 133629314}
+{"dataset": "clickbench", "table": "hits_9", "layout": "as-is", "format": "vortex", "write_s": 4.352, "bytes": 108030564}
+{"dataset": "tsbs", "table": "tags", "layout": "as-is", "format": "parquet", "bytes": 35163}
+{"dataset": "tsbs", "table": "tags", "layout": "as-is", "format": "vortex", "write_s": 0.014, "bytes": 34904}
+{"dataset": "tsbs", "table": "tags", "layout": "sorted", "format": "parquet", "write_s": 0.009, "bytes": 28780}
+{"dataset": "tsbs", "table": "tags", "layout": "sorted", "format": "vortex", "write_s": 0.011, "bytes": 34904}
+{"dataset": "tsbs", "table": "readings", "layout": "as-is", "format": "parquet", "bytes": 230723019}
+{"dataset": "tsbs", "table": "readings", "layout": "as-is", "format": "vortex", "write_s": 3.367, "bytes": 162099928}
+{"dataset": "tsbs", "table": "readings", "layout": "sorted", "format": "parquet", "write_s": 1.37, "bytes": 163843809}
+{"dataset": "tsbs", "table": "readings", "layout": "sorted", "format": "vortex", "write_s": 3.096, "bytes": 169368120}
+{"dataset": "tsbs", "table": "diagnostics", "layout": "as-is", "format": "parquet", "bytes": 20474000}
+{"dataset": "tsbs", "table": "diagnostics", "layout": "as-is", "format": "vortex", "write_s": 1.517, "bytes": 27980616}
+{"dataset": "tsbs", "table": "diagnostics", "layout": "sorted", "format": "parquet", "write_s": 0.514, "bytes": 31528132}
+{"dataset": "tsbs", "table": "diagnostics", "layout": "sorted", "format": "vortex", "write_s": 1.627, "bytes": 54772344}

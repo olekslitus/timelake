@@ -1,0 +1,19 @@
+[package]
+name = "timelake-py"
+version = "0.0.1"
+edition = "2024"
+publish = false
+
+[lib]
+name = "_timelake"
+crate-type = ["cdylib"]
+
+[dependencies]
+timelake = { path = "../timelake" }
+pyo3 = { version = "0.28", features = ["extension-module", "abi3-py310"] }
+arrow-pyarrow = "58.4"
+arrow-array = { version = "58.4", features = ["ffi"] }
+tokio = { version = "1", features = ["full"] }
+
+[profile.release]
+debug = "line-tables-only"
