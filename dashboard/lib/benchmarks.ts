@@ -1,9 +1,10 @@
 import "server-only"
 
+import { cacheLife } from "next/cache"
+
 import { readFile } from "node:fs/promises"
 import path from "node:path"
 
-import { connection } from "next/server"
 
 /** Benchmark results bundled with the app (bun run sync-results copies them from ../bench/results). */
 const RESULTS = process.env.TIMELAKE_BENCH_RESULTS ?? path.resolve(/*turbopackIgnore: true*/ process.cwd(), "data/results")
@@ -70,7 +71,8 @@ const gm = (xs: number[]) => Math.exp(xs.reduce((s, x) => s + Math.log(Math.max(
 
 /** Geometric-mean first-run time per engine, over queries every engine completed (as bench/v0/summarize.py). */
 export async function loadPanels(): Promise<BenchPanel[]> {
-  await connection()
+  "use cache" // read at build time: results change only when benchmarks are re-run (then redeploy)
+  cacheLife("max")
   const panels: BenchPanel[] = []
   for (const suite of SUITES) {
     for (const st of STATES) {
@@ -103,7 +105,8 @@ export async function loadPanels(): Promise<BenchPanel[]> {
 }
 
 export async function loadIngest(): Promise<IngestRow[]> {
-  await connection()
+  "use cache" // read at build time: results change only when benchmarks are re-run (then redeploy)
+  cacheLife("max")
   type R = { system: string; storage: string; phase: string; seconds: number; commit_ms_p50: number; commit_ms_p95: number; objects: number }
   const latest = new Map<string, R>()
   for (const r of await lines<R>("v0_ingest.jsonl")) if (r.phase === "ingest") latest.set(`${r.storage}|${r.system}`, r)
@@ -114,7 +117,8 @@ export async function loadIngest(): Promise<IngestRow[]> {
 
 /** TimescaleDB on Tiger Cloud (bench/results/tsdb_cloud.jsonl), if that run exists. Works with partial data. */
 export async function loadTsdb(): Promise<TsdbRow[] | null> {
-  await connection()
+  "use cache" // read at build time: results change only when benchmarks are re-run (then redeploy)
+  cacheLife("max")
   const recs = await lines<Rec>("tsdb_cloud.jsonl")
   if (recs.length === 0) return null
   const out: TsdbRow[] = []
