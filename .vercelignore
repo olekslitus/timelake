@@ -1,0 +1,11 @@
+# Deploy only the web app and the packages it depends on.
+/*
+!/dashboard
+!/packages
+!/package.json
+!/bun.lock
+/dashboard/node_modules
+/dashboard/.next
+/dashboard/.env*
+/packages/*/node_modules
+/packages/*/dist
