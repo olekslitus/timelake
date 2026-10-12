@@ -2,6 +2,7 @@
 name = "bench-reader"
 version = "0.0.0"
 edition = "2024"
+license = "Apache-2.0"
 publish = false
 
 # Separate workspace: Vortex 0.88 needs DataFusion 55 / Arrow 59, while the iceberg spike is on Arrow 58.

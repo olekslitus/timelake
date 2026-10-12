@@ -7,6 +7,7 @@ name = "timelake"
 version = "0.0.1"
 description = "Serverless time-series lake on Apache Iceberg"
 requires-python = ">=3.10"
+license = "Apache-2.0"
 dependencies = ["pyarrow>=14"]
 
 [tool.maturin]

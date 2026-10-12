@@ -3,6 +3,8 @@ name = "timelake-cli"
 description = "Command-line interface for Timelake"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
 publish.workspace = true
 
 [[bin]]

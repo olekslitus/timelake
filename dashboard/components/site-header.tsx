@@ -5,10 +5,12 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { Menu, Waves } from "lucide-react"
 
+import { GithubIcon } from "@/components/github-icon"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { DOCS_NAV } from "@/lib/docs-nav"
+import { REPO_URL } from "@/lib/site"
 import { cn } from "@/lib/utils"
 
 const LINKS = [
@@ -54,6 +56,9 @@ export function SiteHeader() {
           <ActiveNavLinks />
         </Suspense>
         <div className="flex-1" />
+        <Button variant="ghost" size="icon" aria-label="Timelake on GitHub" render={<a href={REPO_URL} target="_blank" rel="noreferrer" />}>
+          <GithubIcon className="size-4" />
+        </Button>
         <ThemeToggle />
         <Sheet>
           <SheetTrigger render={<Button variant="ghost" size="icon" className="sm:hidden" aria-label="Open menu" />}>
@@ -68,6 +73,7 @@ export function SiteHeader() {
                 <Link href="/" className="block py-1 text-sm">Home</Link>
                 <Link href="/benchmarks" className="block py-1 text-sm">Benchmarks</Link>
                 <Link href="/explore" className="block py-1 text-sm">Explorer</Link>
+                <a href={REPO_URL} className="block py-1 text-sm">GitHub</a>
               </div>
               {DOCS_NAV.map((g) => (
                 <div key={g.title} className="space-y-1">

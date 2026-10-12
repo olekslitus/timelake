@@ -1,7 +1,7 @@
 # Timelake — Specification
 
 > **Status:** Draft v0.7 — v0 implementation in progress (§19.0)
-> **Last updated:** 2026-10-11
+> **Last updated:** 2026-10-12
 > **Scope of this document:** product requirements, architecture, and the key design decisions (with open questions). Not an implementation guide yet.
 
 ### Decision log
@@ -13,7 +13,7 @@
 | D4 | Any database-backed component (hot store, catalog DB) is an optional performance upgrade, never a requirement | **Accepted** |
 | D5 | User-defined schemas with a hypertable-like contract (§7) | **Accepted** |
 | D6 | Deletes are immutable: logical, audited, and reversible; physical purge is a separate explicit operation (§9.2) | **Accepted** |
-| D7 | License | Deferred; the repo stays private until it works well |
+| D7 | License: **Apache License 2.0** for everything in this repository. Apache 2.0's explicit patent grant suits infrastructure that companies embed, and it matches Iceberg, Arrow, DataFusion and Parquet. The repository is public (2026-10-12). | **Accepted** |
 | D8 | GDPR erasure is supported: immediate logical delete, then a batched physical purge (daily by default, `--now` on demand, alert past 7 days), covering every copy of the data (§9.3). No legal hold / WORM in v1. | **Accepted** |
 | D9 | Backfill is a first-class operation: one command, final layout on write, staged on an Iceberg branch, atomic publish; existing rows win on conflict by default (§8.4) | **Accepted** |
 | D10 | `import` = contract inference + create/adopt + backfill, with smart defaults for CSV, lake formats, and databases (TimescaleDB first) (§8.5) | **Accepted** |
@@ -824,7 +824,7 @@ Full results: [`bench/results/BASELINE.md`](bench/results/BASELINE.md).
 - Object storage: Vortex is at parity to 1.5× slower with DataFusion, because it issues more requests; with DuckDB, 1.3–3× slower (that extension doesn't cache).
 - Size: Vortex files are *larger* in our sorted layout.
 → D16 |
-| Q9 | License | **Deferred** (D7). Keep the repo private; decide before publishing |
+| Q9 | ~~License~~ | **Resolved:** Apache 2.0 (D7) |
 | Q10 | Rule engine scope: a SQL-defined rules DSL, or YAML presets plus SQL escape hatch? | YAML presets + SQL |
 | Q11 | ~~Legal hold / WORM?~~ | **Resolved:** not in v1; GDPR purge must always be possible (D8) |
 | Q12 | DataFusion vs. embedded DuckDB as the internal engine (D3) | DataFusion, pending the Phase 0 spike. The spike runs the TSBS IoT queries (§17.1) on our Parquet layout in DataFusion, DuckDB, and Polars, since general benchmarks disagree and depend on the harness. Polars is evaluated as a reference, not as a candidate engine: its Rust API is secondary and it lacks DataFusion's extension points. |
@@ -906,4 +906,4 @@ Open from v0:
 | Caggs + function library, DuckDB extension, Python library | Enterprise SSO/RBAC, compliance reporting (GDPR erasure certificates as a service) |
 | Import: CSV, Parquet, Iceberg/S3 Tables, Delta, TimescaleDB/Postgres, InfluxDB | Support / SLAs |
 
-The principle: everything needed to run the lake well is open; integrations with proprietary industrial systems and managed operations are premium. To be revisited together with the license (D7).
+The principle: everything needed to run the lake well is open; integrations with proprietary industrial systems and managed operations are premium. The open-source part is Apache 2.0 (D7); premium components would live outside this repository.

@@ -54,7 +54,7 @@ export default function Page() {
 
       <h2>Status</h2>
       <p>
-        This is v0, a private preview. It covers the write path, maintenance and the reader. A REST catalog, a hot tier for
+        This is v0, an early open-source release (Apache 2.0). It covers the write path, maintenance and the reader. A REST catalog, a hot tier for
         sub-commit freshness, deletes and GDPR erasure, and continuous aggregates are planned; see{" "}
         <Link href="/docs/roadmap">Roadmap & limitations</Link>.
       </p>

@@ -2,6 +2,7 @@
 name = "spike-iceberg-write"
 version = "0.0.0"
 edition.workspace = true
+license.workspace = true
 publish.workspace = true
 
 # Phase 0 spike (SPEC.md Q7): how far does iceberg-rust get us for time-series writes?

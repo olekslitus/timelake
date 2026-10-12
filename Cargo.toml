@@ -6,6 +6,8 @@ exclude = ["crates/timelake-py", "crates/timelake-wasm"]
 [workspace.package]
 version = "0.0.1"
 edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/olekslitus/timelake"
 publish = false
 
 [workspace.dependencies]

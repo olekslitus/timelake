@@ -3,6 +3,8 @@ name = "timelake-wasm"
 description = "Timelake reader for WebAssembly: metadata, pruning, Parquet decoding and time-series queries (no I/O; the host fetches byte ranges)"
 version = "0.0.1"
 edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/olekslitus/timelake"
 publish = false
 
 [lib]

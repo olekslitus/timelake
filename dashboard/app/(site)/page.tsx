@@ -15,11 +15,13 @@ import {
 
 import { ArchitectureDiagram } from "@/components/architecture-diagram"
 import { CodeBlock } from "@/components/code-block"
+import { GithubIcon } from "@/components/github-icon"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { REPO_URL } from "@/lib/site"
 
 const PROBLEMS = [
   {
@@ -85,7 +87,7 @@ export default function Home() {
       {/* Hero */}
       <section className="py-16 sm:py-24">
         <Badge variant="secondary" className="mb-6">
-          v0 · private preview
+          v0 · open source, Apache 2.0
         </Badge>
         <h1 className="max-w-3xl text-4xl font-semibold tracking-tight sm:text-5xl">A serverless time-series lake on Apache Iceberg</h1>
         <p className="mt-6 max-w-2xl text-lg text-muted-foreground">
@@ -102,6 +104,9 @@ export default function Home() {
           </Button>
           <Button size="lg" variant="ghost" render={<Link href="/explore" />}>
             <Database /> Explorer
+          </Button>
+          <Button size="lg" variant="ghost" render={<a href={REPO_URL} target="_blank" rel="noreferrer" />}>
+            <GithubIcon /> GitHub
           </Button>
         </div>
       </section>

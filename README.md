@@ -113,3 +113,6 @@ python -m pytest crates/timelake-py/tests                # Python tests (after m
 (cd packages/timelake-client && bun test)                # TS client + WASM vs the engine (needs scripts/build-demo-warehouse.sh)
 (cd packages/timelake-client && bun run build:wasm)      # rebuild the WASM after changing crates/timelake-wasm
 ```
+
+## License
+Licensed under the [Apache License, Version 2.0](LICENSE). Unless you state otherwise, any contribution you submit for inclusion in Timelake is licensed under the same terms, without additional conditions (Apache 2.0, §5).
