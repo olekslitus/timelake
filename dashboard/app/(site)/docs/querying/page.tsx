@@ -15,8 +15,10 @@ export default function Page() {
 
       <h2>Time buckets</h2>
       <p>
-        <code>time_bucket(interval, ts [, origin])</code> works as in TimescaleDB. It is DataFusion’s <code>date_bin</code>{" "}
-        under another name: buckets are aligned to the Unix epoch unless you pass an origin.
+        <code>time_bucket(interval, ts [, origin])</code> groups rows into fixed time windows, like TimescaleDB&apos;s
+        function of the same name. It is DataFusion&apos;s <code>date_bin</code> under another name: buckets are aligned to
+        the Unix epoch (1970-01-01) unless you pass an origin. TimescaleDB aligns weekly buckets to Monday 2000-01-03, so
+        for weeks pass that origin to get the same buckets.
       </p>
       <pre>{`SELECT device_id, time_bucket(INTERVAL '5 minutes', time) AS bucket, avg(temp), max(temp)
 FROM iot.readings
@@ -42,13 +44,24 @@ GROUP BY 1, 2`}</pre>
       <h3>Latest row matching a series filter</h3>
       <pre>{`SELECT * FROM iot.readings WHERE device_id = 'pump-7' ORDER BY time DESC LIMIT 1`}</pre>
       <p>
-        Rewritten to the index when the filters reference only series key columns and the limit is 1. A filter on any other
+        Rewritten to the index when the table has a series key, the filters (if any) reference only series key columns, and
+        the limit is 1. Without a filter it returns the newest row of the whole table. A filter on any other
         column (for example <code>temp &gt; 80</code>) keeps the normal scan, because the latest matching row may not be the
         latest row.
       </p>
       <p>
-        Both rewrites need a last-value index, which every append maintains. Check with <code>EXPLAIN</code>: a rewritten
-        query reads an in-memory source instead of Parquet files.
+        Both rewrites need a last-value index, which every append maintains (a table whose first rows were written by another
+        tool has none, and these queries scan). Check with <code>EXPLAIN</code>: a rewritten query reads an in-memory source
+        instead of Parquet files:
+      </p>
+      <pre>{`$ timelake sql "EXPLAIN SELECT * FROM iot.readings WHERE device_id = 'pump-1' ORDER BY time DESC LIMIT 1"
+…
+| physical_plan | SortExec: TopK(fetch=1), expr=[time@0 DESC], preserve_partitioning=[false] |
+|               |   FilterExec: device_id@1 = pump-1                                         |
+|               |     DataSourceExec: partitions=1, partition_sizes=[1]                      |`}</pre>
+      <p>
+        <code>partition_sizes</code> means an in-memory source (the index). A normal scan shows <code>file_groups</code>{" "}
+        and Parquet files instead.
       </p>
 
       <h3>Object storage</h3>

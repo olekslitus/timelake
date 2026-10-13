@@ -1,5 +1,7 @@
 import type { Metadata } from "next"
 
+import Link from "next/link"
+
 import { ArchitectureDiagram } from "@/components/architecture-diagram"
 import { DocPage } from "@/components/docs/pager"
 
@@ -10,9 +12,11 @@ export default function Page() {
     <DocPage href="/docs/architecture">
       <h1>Architecture</h1>
       <p>
-        Timelake is one Rust crate (<code>timelake</code>) used by the CLI and the Python package. It builds on iceberg-rust’s
-        spec types for metadata and manifests, the Rust <code>object_store</code> crate for I/O, Arrow and Parquet for data,
-        and DataFusion for queries.
+        The engine is one Rust crate (<code>timelake</code>) used by the CLI and the Python package. It builds on
+        iceberg-rust’s spec types for metadata and manifests, the Rust <code>object_store</code> crate for I/O, Arrow and
+        Parquet for data, and DataFusion for queries. A separate read-only WebAssembly reader (<code>timelake-wasm</code>,
+        used by <code>@timelake/client</code>) shares the table rules in <code>timelake-format</code>. See the{" "}
+        <Link href="/docs/codebase">Codebase tour</Link> for where each part lives.
       </p>
       <div className="not-prose my-6 overflow-x-auto rounded-lg border p-4">
         <div className="min-w-[720px]">
@@ -21,7 +25,8 @@ export default function Page() {
       </div>
 
       <h2>On-disk layout</h2>
-      <pre>{`<warehouse>/<namespace>/<table>/
+      <pre>{`<warehouse>/timelake-tables.json            list of tables, for readers that can't list objects
+<warehouse>/<namespace>/<table>/
   metadata/
     v1.metadata.json … vN.metadata.json     table metadata, one per commit
     version-hint.text                       "N": the latest version (best-effort pointer)
@@ -29,7 +34,8 @@ export default function Page() {
     <uuid>-{added|merged|deleted}-m.avro    manifests
     lvi-<snapshot-id>-<uuid>.parquet        last-value index of a snapshot
   data/
-    <time>_<chunk>=<label>/<uuid-v7>.parquet   e.g. time_day=2026-01-03/…`}</pre>
+    <time>_<chunk>=<label>/<uuid-v7>.parquet   e.g. time_day=2026-01-03/…
+    <uuid-v7>.parquet                       plain tables (no time column) are not partitioned`}</pre>
       <p>
         This is Iceberg’s Hadoop-catalog convention, which is why DuckDB’s <code>iceberg_scan</code> can open a table
         directory directly. Tables are Iceberg format version 2.
@@ -86,8 +92,8 @@ export default function Page() {
       </p>
       <p>
         <strong>Full (maintain).</strong> A partition with at least two small files, or any file not in the table’s sort order,
-        is rewritten. If the partition holds less than twice the target size, all its files are rewritten into sorted files;
-        otherwise only the small ones. Rows are merged in commit order and, with dedup on, the last row of each{" "}
+        is rewritten. If it has an unsorted file or holds less than twice the target size, all its files are rewritten into
+        sorted files; otherwise only the small ones. Rows are merged in commit order and, with dedup on, the last row of each{" "}
         <code>(series key, time)</code> group wins. v0 merges a partition in memory, so partitions should fit comfortably in
         RAM; pick the chunk interval accordingly.
       </p>

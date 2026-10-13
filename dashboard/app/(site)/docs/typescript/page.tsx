@@ -34,6 +34,13 @@ const hourly = await readings.bucket({
 })
 hourly[0].velocity_avg                               // number | null, typed from the agg map`}</pre>
 
+      <h2>Install</h2>
+      <p>
+        The package isn&apos;t published to npm yet. Inside this repository it is a bun workspace package, so other
+        workspace packages (like the website) depend on it with <code>&quot;@timelake/client&quot;: &quot;workspace:*&quot;</code>.
+        It needs <code>zod</code> 4 as a peer dependency.
+      </p>
+
       <h2>What it reads</h2>
       <p>
         A warehouse served over plain HTTP(S), such as Vercel Blob, a public S3, R2 or GCS bucket, or a CDN. The server must
@@ -82,7 +89,10 @@ hourly[0].velocity_avg                               // number | null, typed fro
             <td>
               <code>table.latest({"{ series?, columns? }"})</code>
             </td>
-            <td>The newest row of each series, read from the last-value index in a single request.</td>
+            <td>
+              The newest row of each series, read from the last-value index in a single request. Throws if the table has no
+              index.
+            </td>
           </tr>
           <tr>
             <td>
@@ -117,6 +127,21 @@ hourly[0].velocity_avg                               // number | null, typed fro
           </tr>
           <tr>
             <td>
+              <code>table.refresh()</code>
+            </td>
+            <td>Forget the cached table version, so the next query reads the newest one.</td>
+          </tr>
+          <tr>
+            <td>
+              <code>zodSource(info, exportName?)</code>, <code>readerVersion()</code>
+            </td>
+            <td>
+              Standalone exports: generate Zod source from a <code>table.info()</code> result; the version of the embedded WASM
+              reader.
+            </td>
+          </tr>
+          <tr>
+            <td>
               <code>table.lastStats</code>
             </td>
             <td>Requests, bytes, files and milliseconds of the last query.</td>
@@ -126,7 +151,8 @@ hourly[0].velocity_avg                               // number | null, typed fro
       <p>
         <code>series</code> is a value or a list of values of the first series-key column, or an object such as{" "}
         <code>{"{ device_id: [\"a\", \"b\"] }"}</code>. Times are <code>Date</code> objects, ISO strings, or epoch milliseconds.
-        Durations are written like <code>30s</code>, <code>10m</code>, <code>1h</code> or <code>1d</code>.
+        Durations are written like <code>500ms</code>, <code>30s</code>, <code>10m</code>, <code>1h</code>,{" "}
+        <code>1d</code> or <code>1w</code>, or given as a number of milliseconds. Buckets are aligned to the Unix epoch.
       </p>
 
       <h2>How a query runs</h2>
@@ -147,11 +173,17 @@ hourly[0].velocity_avg                               // number | null, typed fro
           It answers time-series query shapes, not arbitrary SQL. For SQL, use the engine (CLI, Python) or plain DuckDB.
         </li>
         <li>
-          The WASM module is about 6 MB (around 2 MB gzipped). That is fine on servers; in browsers, load it lazily.
+          The WASM module is embedded as base64, about 8 MB of JavaScript (about 2 MB gzipped). That is fine on servers; in
+          browsers, load it lazily.
         </li>
         <li>
           Pruning works at the row-group level. Tables meant for web reads should use smaller row groups (the demo uses{" "}
           <code>timelake.row-group-rows=65536</code>).
+        </li>
+        <li>
+          <strong>Known issue:</strong> a <code>range</code> or <code>bucket</code> query that needs 16 or more files waits
+          forever with the default <code>concurrency</code> of 16. Until it is fixed, set <code>concurrency</code> higher
+          than the number of files a query can touch, or run <code>timelake maintain</code> so tables have fewer files.
         </li>
       </ul>
     </DocPage>

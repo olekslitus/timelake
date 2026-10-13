@@ -83,7 +83,8 @@ export default function Page() {
       <h2 id="lvi">Last-value index</h2>
       <p>
         Each append updates a small Parquet file holding the newest row of every series (on equal times, the later write wins),
-        and the new snapshot references it. <code>timelake latest</code> and <code>Lake.latest()</code> read it, and the
+        and the new snapshot references it. A table whose first rows were written by another tool has no index; latest-row
+        queries on it scan the table instead. <code>timelake latest</code> and <code>Lake.latest()</code> read it, and the
         reader rewrites latest-row SQL to use it (see <Link href="/docs/querying">Querying</Link>).
       </p>
 
@@ -91,7 +92,8 @@ export default function Page() {
       <ul>
         <li>
           <strong>Inline (default).</strong> After each append, small files in the touched partitions that have grown into a
-          group of similar size are merged, and old snapshots are expired in batches.
+          group of similar size are merged, partitions past the retention period are dropped, and old snapshots are expired in
+          batches.
         </li>
         <li>
           <strong>Explicit.</strong> <code>timelake maintain</code> (or <code>Table.maintain()</code>) rewrites each partition

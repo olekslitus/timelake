@@ -29,10 +29,10 @@ function Flags({ rows }: { rows: [string, string][] }) {
 
 const TABLE_DEF: [string, string][] = [
   ["--from <file>", "Take the schema from this Parquet or CSV file."],
-  ["--schema <name:type,…>", "Schema inline. Types: int, bigint, double, float, string, bool, date, timestamp, timestamptz."],
+  ["--schema <name:type,…>", "Schema inline. Types: int (int32), bigint (long, int64), double (float64), float (float32, real), string (text, varchar), bool, date, timestamp, timestamptz."],
   ["--time-column <col>", "The time column; makes this a time-series table."],
   ["--series-key <a,b>", "Columns that identify a series, comma-separated."],
-  ["--chunk <hour|day|month>", "Time partition size (default day)."],
+  ["--chunk <hour|day|month>", "Time partition size (default day). Also accepts 1h, 1d, 24h, 1 month."],
   ["--retention <dur>", "Drop data older than this, e.g. 90d (units s, m, h, d, w, y)."],
   ["--no-dedup", "Keep rows with identical (series, time) during compaction."],
   ["--prop <k=v>", "Extra table property; repeatable."],
@@ -49,6 +49,10 @@ export default function Page() {
     <DocPage href="/docs/cli">
       <h1>CLI reference</h1>
       <pre>{`timelake [-w <warehouse>] [-o key=value]... <command>`}</pre>
+      <p>
+        Every command prints help with <code>--help</code>, for example <code>timelake import --help</code>.{" "}
+        <code>timelake --version</code> prints the version.
+      </p>
 
       <h2>Global options</h2>
       <Flags
@@ -86,15 +90,20 @@ timelake create iot.devices --schema "device_id:string,site:string,installed:dat
 echo "SELECT * FROM readings LIMIT 5" | timelake sql --namespace iot --format csv`}</pre>
       <Flags
         rows={[
-          ["--format <table|csv|json|none>", "Output format (default table). json writes one object per row, nulls included."],
+          ["--format <table|csv|json|none>", "Output format (default table). json writes one JSON object per line (newline-delimited), nulls included. none prints only the row count."],
           ["--namespace <ns>", "Namespace for unqualified table names (default default)."],
           ["--set <key=value>", "DataFusion setting, e.g. --set datafusion.execution.target_partitions=32."],
         ]}
       />
 
       <h2>latest</h2>
-      <p>Print the newest row of every series, from the last-value index.</p>
-      <pre>{`timelake latest iot.readings --format json`}</pre>
+      <p>
+        Print the newest row of every series. It reads the last-value index; a table without one (for example, one first
+        written by another tool) is scanned instead. Takes <code>--format</code> like <code>sql</code>.
+      </p>
+      <pre>{`$ timelake latest iot.readings --format json
+{"time":"2026-01-05T10:15:00","device_id":"pump-1","temp":64.0,"humidity":40}
+{"time":"2026-01-05T10:10:00","device_id":"pump-2","temp":60.2,"humidity":44}`}</pre>
 
       <h2>maintain</h2>
       <p>Compact, apply retention and expire snapshots, for the given tables or all tables.</p>

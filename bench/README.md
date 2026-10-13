@@ -1,9 +1,14 @@
-# timelake-bench (Phase 0 baseline)
+# timelake-bench
 
-Reproducible baseline benchmarks for SPEC.md §17. This is not Timelake yet: it measures the engines and
-layouts Timelake will build on and compete with, so later Timelake numbers have a reference.
+Benchmarks for SPEC.md §17. Three sets live here:
 
-Results: [`results/BASELINE.md`](results/BASELINE.md).
+| Set | What it answers | How to run | Results |
+|---|---|---|---|
+| **Phase 0 baseline** (this file) | How fast are the engines and layouts Timelake builds on and competes with, on local disk and S3-compatible storage? | below | [`results/BASELINE.md`](results/BASELINE.md), [`OBJECT_STORAGE.md`](results/OBJECT_STORAGE.md), [`VORTEX.md`](results/VORTEX.md) |
+| **v0 comparison** | The same IoT stream written into Timelake, naive Iceberg (the S3 Tables pattern) and Lance: ingest, then queries before and after maintenance | [`v0/README.md`](v0/README.md) | [`results/V0.md`](results/V0.md) (RustFS), [`results/TIMESCALE.md`](results/TIMESCALE.md) |
+| **Real AWS** | Phase 0 and v0 on AWS S3 and real S3 Tables | [`infra/README.md`](infra/README.md), `run_aws.sh` | [`results/S3.md`](results/S3.md) |
+
+Shared pieces: `run.py` (runs one suite on one engine), `queries/`, `scripts/` (data preparation), `tools/s3proxy` (counts S3 requests; adds latency or signs for AWS), `compare_*.py` and `summarize.py` (tables from results).
 
 ## Suites
 | Suite | Data | Queries |

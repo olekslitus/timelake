@@ -6,7 +6,7 @@
 #   scripts/build-demo-warehouse.sh http://127.0.0.1:4100/demo          # local testing (default)
 #
 # Output: bench/data/demo-site/<files to upload, paths relative to the URL origin>
-# Then upload with scripts/upload-demo-to-blob.mjs (Vercel Blob) or any static host with Range support.
+# Then upload with `bun run upload-demo` in dashboard/ (Vercel Blob) or any static host with Range support.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 BASE_URL=${1:-http://127.0.0.1:4100/demo}

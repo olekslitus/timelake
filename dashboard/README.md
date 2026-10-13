@@ -5,8 +5,8 @@ One Next.js app with the Timelake website, docs, benchmark results and the Explo
 | Route | What |
 |---|---|
 | `/` | Landing page: what Timelake is, how it works, quick start, benchmark highlights |
-| `/docs/**` | Documentation (quick start, concepts, CLI, Python, querying, properties, storage, architecture, roadmap) |
-| `/benchmarks` | v0 benchmark results (Timelake vs naive Iceberg and Lance; TimescaleDB on Tiger Cloud) |
+| `/docs/**` | Documentation (quick start, how it works, concepts, glossary, CLI, Python, TypeScript, querying, properties, storage, architecture, codebase tour, development, benchmarks, roadmap) |
+| `/benchmarks` | Benchmark results on AWS S3 (Timelake vs Lance, naive Iceberg and S3 Tables) and local disk; TimescaleDB on Tiger Cloud |
 | `/explore` | Explorer: tables, freshness, partitions, snapshots, latest values, a series chart, read-only SQL console |
 
 Stack: Next.js 16 (App Router, Cache Components), React 19, bun, shadcn/ui (Base UI), Tailwind v4, Recharts, lucide icons.
@@ -58,7 +58,7 @@ bun run sync-results
 - The site, docs and benchmarks need no configuration.
 - **Hosted Explorer: the demo warehouse on Vercel Blob.**
   1. Create a **public** Blob store (Vercel → Storage → Blob) and note its base URL, `https://<store-id>.public.blob.vercel-storage.com`.
-  2. Build the demo with that URL baked into its metadata (50 TSBS trucks over 3 days, about 22 MB): `../scripts/build-demo-warehouse.sh https://<store-id>.public.blob.vercel-storage.com/demo`
+  2. Build the demo with that URL baked into its metadata (the first 50 TSBS truck ids over 3 days, about 22 MB): `../scripts/build-demo-warehouse.sh https://<store-id>.public.blob.vercel-storage.com/demo`
   3. Upload it, keeping paths: `BLOB_READ_WRITE_TOKEN=… bun run upload-demo`
   4. Check range support. This should print `HTTP/… 206`; without it the client still works but downloads whole files: `curl -sI -H 'Range: bytes=0-99' https://<store-id>.public.blob.vercel-storage.com/demo/tsbs/tags/metadata/version-hint.text`
   5. Set `TIMELAKE_URL=https://<store-id>.public.blob.vercel-storage.com/demo` on the project, for build and runtime alike (the static shell shows it), then deploy.

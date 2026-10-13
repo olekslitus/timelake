@@ -11,7 +11,7 @@ Runs the TSBS suites and the v0 benchmark on real S3 (SPEC §17.4). One CloudFor
 aws login --profile timelake        # the scripts use profile timelake, region us-east-2
 bench/infra/up.sh                   # buckets only
 bench/run_aws.sh                    # several hours; log in bench/data/run_aws.log
-.venv/bin/python compare_aws.py laptop
+bench/.venv/bin/python bench/compare_aws.py laptop
 bench/infra/down.sh                 # empties all buckets and deletes the stack
 ```
 Latency then includes the trip from the laptop to us-east-2. Request counts, bytes and request cost don't depend on where the client runs, and every system takes the same path, so the comparisons hold. Only TSBS IoT and v0 run this way: TPC-H and ClickBench scan hundreds of MB per query, and pulling that over the internet is slow and costs egress.
@@ -39,7 +39,7 @@ INSTANCE=true bench/infra/up.sh                 # a few minutes; first boot inst
 bench/infra/ssm.sh --bg 'bench/infra/remote.sh all'
 bench/infra/ssm.sh 'grep "^==" /mnt/bench/logs/all.log; tail -3 /mnt/bench/logs/all.log'   # progress
 bench/infra/fetch.sh                            # results → bench/results/*aws*.jsonl
-bench/infra/down.sh                             # empties both buckets and deletes the stack
+bench/infra/down.sh                             # empties the buckets and deletes the stack
 ```
 - **Stages:** `remote.sh` runs build → data → queries on each target → direct → v0 on each target. Each stage can also run on its own, e.g. `remote.sh queries s3x`. To run new code, check it out first: `ssm.sh 'git fetch -q && git checkout -q origin/main'`.
 - **Auto-stop:** the instance stops itself after 12 hours (`AutoStopMinutes`). Stopping wipes an NVMe SSD. Results are copied to `s3://<data bucket>/_out/` after every stage.

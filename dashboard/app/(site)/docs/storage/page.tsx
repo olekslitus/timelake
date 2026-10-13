@@ -57,6 +57,13 @@ export default function Page() {
           </tr>
           <tr>
             <td>
+              <code>https://</code>, <code>http://</code>
+            </td>
+            <td>Any web server or public bucket (read-only, see below)</td>
+            <td>—</td>
+          </tr>
+          <tr>
+            <td>
               <code>memory://</code>
             </td>
             <td>In-memory (tests)</td>
@@ -68,7 +75,8 @@ export default function Page() {
       <h2>Options</h2>
       <p>
         Options are <code>object_store</code> configuration keys: <code>-o key=value</code> on the CLI,{" "}
-        <code>storage_options</code> in Python. Unknown keys are an error. Common S3 keys:
+        <code>storage_options</code> in Python. For S3, GCS and Azure, unknown keys are an error; other backends ignore options.
+        Common S3 keys:
       </p>
       <table>
         <thead>
@@ -132,9 +140,13 @@ export default function Page() {
       <p>
         Commits create the next <code>vN.metadata.json</code> with put-if-absent: on S3 that is <code>If-None-Match: *</code>,
         which AWS S3 has supported since 2024; GCS and Azure use their own preconditions. A store that ignores the condition
-        would let two concurrent writers both believe they committed. Timelake has been tested on local disk and on RustFS; with
-        a store you haven’t tested, check that a second create of the same table fails.
+        would let two concurrent writers both believe they committed. Timelake has been tested on local disk, RustFS, AWS S3
+        and S3 Express One Zone (correctness only). With a store you haven’t tested, check that creating the same table twice fails the second
+        time:
       </p>
+      <pre>{`timelake -w s3://my-bucket/test create t --schema "x:int"     # created t
+timelake -w s3://my-bucket/test create t --schema "x:int"     # must fail: already exists
+timelake -w s3://my-bucket/test drop t`}</pre>
 
       <h2>Environment</h2>
       <table>

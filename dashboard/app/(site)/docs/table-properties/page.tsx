@@ -10,7 +10,7 @@ const PROPS: [string, string, string][] = [
   ["timelake.chunk-interval", "day", "Partition size: hour, day or month."],
   ["timelake.dedup", "true with a series key, else false", "Drop duplicate (series, time) rows during compaction; the latest write wins."],
   ["timelake.retention", "forever", "Drop partitions that end before now minus this duration, e.g. 90d."],
-  ["timelake.auto-maintain", "true", "Run size-tiered compaction and snapshot expiry inline after appends."],
+  ["timelake.auto-maintain", "true", "Run size-tiered compaction, retention and snapshot expiry inline after appends."],
   ["timelake.compact-min-files", "8", "Inline compaction merges a size tier of a partition once it has this many files."],
   ["timelake.target-file-size-bytes", "268435456 (256 MiB)", "Size at which compaction output and writes roll to a new file."],
   ["timelake.row-group-rows", "1048576", "Parquet row group size. Page indexes keep single-series reads selective inside large row groups."],
@@ -49,7 +49,11 @@ export default function Page() {
           ))}
         </tbody>
       </table>
-      <p>Durations are a number and a unit: <code>s</code>, <code>m</code>, <code>h</code>, <code>d</code>, <code>w</code> or <code>y</code>.</p>
+      <p>
+        Durations are a number and a unit: <code>s</code>, <code>m</code> (minutes), <code>h</code>, <code>d</code>,{" "}
+        <code>w</code> or <code>y</code>, or the long forms (<code>90 days</code>, <code>2 weeks</code>). Examples:{" "}
+        <code>30m</code>, <code>36h</code>, <code>90d</code>, <code>1y</code>.
+      </p>
 
       <h2>Iceberg properties set at creation</h2>
       <ul>

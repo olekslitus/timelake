@@ -4,7 +4,9 @@ export const DOCS_NAV: { title: string; items: { href: string; label: string }[]
     items: [
       { href: "/docs", label: "Introduction" },
       { href: "/docs/quick-start", label: "Quick start" },
+      { href: "/docs/how-it-works", label: "How it works" },
       { href: "/docs/concepts", label: "Concepts" },
+      { href: "/docs/glossary", label: "Glossary" },
     ],
   },
   {
@@ -22,6 +24,8 @@ export const DOCS_NAV: { title: string; items: { href: string; label: string }[]
     title: "Internals",
     items: [
       { href: "/docs/architecture", label: "Architecture" },
+      { href: "/docs/codebase", label: "Codebase tour" },
+      { href: "/docs/development", label: "Development" },
       { href: "/docs/benchmarks", label: "Benchmarks" },
       { href: "/docs/roadmap", label: "Roadmap & limitations" },
     ],

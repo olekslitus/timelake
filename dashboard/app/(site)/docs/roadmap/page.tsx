@@ -38,15 +38,15 @@ export default function Page() {
         </li>
         <li>
           <strong>Replaced files linger.</strong> Files removed by compaction are deleted when the snapshots that reference them
-          expire (after an hour by default).
+          expire: at least an hour later by default, and inline expiry waits until about 20 extra snapshots have piled up.
         </li>
         <li>
-          <strong>Benchmarks are narrow.</strong> One dataset (TSBS IoT), one machine, S3 simulated with RustFS plus a latency
-          proxy.
+          <strong>Benchmarks are narrow.</strong> One dataset (TSBS IoT). The AWS S3 runs were made from a laptop, so their
+          latency includes the trip to the region; runs from inside AWS are next.
         </li>
         <li>
-          <strong>Tested storage.</strong> Local disk and RustFS. AWS S3, GCS and Azure use the same code paths but haven’t been
-          benchmarked.
+          <strong>Tested storage.</strong> Local disk, RustFS, AWS S3, and S3 Express One Zone (correctness only). GCS, Azure and R2 use the same
+          code paths but haven’t been tested yet.
         </li>
       </ul>
 
@@ -90,6 +90,17 @@ export default function Page() {
           <tr>
             <td>Reader</td>
             <td>A data cache for repeat queries, and more query shapes served from indexes.</td>
+          </tr>
+          <tr>
+            <td>Performance</td>
+            <td>
+              Fewer round trips to object storage: the table state in one request, file footers stored with it, two-step
+              commits. See SPEC §19.1.
+            </td>
+          </tr>
+          <tr>
+            <td>Server mode</td>
+            <td>An experiment: Timelake as a database on one machine with local NVMe, compared with TimescaleDB. See SPEC §21.8.</td>
           </tr>
         </tbody>
       </table>

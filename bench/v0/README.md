@@ -3,10 +3,10 @@
 The question: a team streams IoT data to object storage and queries it. Is Timelake v0 better than what it would otherwise build: PyIceberg/Firehose appends into an S3 Tables-style Iceberg table, or a Lance dataset?
 
 ## Workload
-- **Data:** TSBS IoT (`readings` and `diagnostics`, 11.7M rows each, 3 days, 4,234 trucks; `tags` dimension), the same data as the Phase 0 baseline.
+- **Data:** TSBS IoT (`readings` and `diagnostics`, 11.7M rows each, 3 days, 500 trucks (4,234 tag ids); `tags` dimension), the same data as the Phase 0 baseline.
 - **Ingest:** streamed in **5-minute windows** (Firehose's default buffer interval): 864 windows × 2 tables = **1,728 commits**, about 13.5k rows each. Every system gets identical rows.
 - **Queries:** the 12 TSBS IoT queries plus 5 single-truck queries (`queries/tsbs_iot`, `queries/iot_point`). Each query runs in a fresh process: one first run (cold: metadata, footers, data) plus repeats.
-- **Storage:** local disk and RustFS behind `tools/s3proxy` with 20 ms time-to-first-byte per request (roughly S3 standard in-region). Ingest and queries both go through the proxy.
+- **Storage:** local disk, and RustFS behind `tools/s3proxy` with 20 ms time-to-first-byte per request (roughly S3 standard in-region). Ingest and queries both go through the proxy. The same benchmark also runs against real AWS S3 and S3 Tables (`../run_aws.sh`, results in [S3.md](../results/S3.md)).
 - **States:** right after ingest ("ingested"), and after each system's standard maintenance ("maintained").
 
 ## Systems
@@ -16,7 +16,7 @@ The question: a team streams IoT data to object storage and queries it. Is Timel
 | **Lance** | `lance.write_dataset(mode="append")` per window | `compact_files()` + `cleanup_old_versions()` | DuckDB (pyarrow dataset interface); DataFusion + Lance's scanner (`FFILanceTableProvider`) |
 | **Timelake v0** | `Table.append` per window, with inline size-tiered compaction and snapshot expiry | `Table.maintain()`: one sorted file per partition, expiry, cleanup | Timelake reader (CLI, DataFusion inside); plain DuckDB `iceberg_scan` on the same tables |
 
-Not simulated: S3 Tables' managed compaction runs asynchronously (minutes to hours later) and is billed per object and GB processed. "Ingested" is the state its readers see until compaction has run. The S3 Tables API itself is not available locally. The Iceberg write and read pattern is identical; only the managed compaction is simulated.
+On RustFS, S3 Tables can't run, so its managed compaction is simulated: it runs asynchronously (minutes to hours later) and is billed per object and GB processed, and "ingested" is the state its readers see until it has run. The Iceberg write and read pattern is identical. The AWS runs use real S3 Tables (`--system s3tables`), including waiting for its own compaction.
 
 ## Run
 ```bash

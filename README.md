@@ -17,7 +17,7 @@ Keep time series in your own bucket on S3, R2, GCS, Azure, MinIO or a local disk
 
 **Open format** (Parquet files and Apache Iceberg metadata today; DuckDB, Spark and PyIceberg read the tables, and Trino, Athena and Snowflake will through the planned REST catalog) · **any object store** · **Apache 2.0**.
 
-> **Status: v0, open source, under active development.** See [SPEC.md](SPEC.md) for the design (§19.0 covers v0's scope) and [bench/results/V0.md](bench/results/V0.md) for v0 against naive Iceberg (the S3 Tables write pattern) and Lance. On S3-compatible storage with 20 ms of added latency (RustFS on one laptop, not AWS), Timelake is 1.2–16× faster on TSBS IoT and 2.2–9× faster on single-truck queries, depending on table state. Real-S3 runs and an IIoT benchmark against InfluxDB 3, TimescaleDB, ClickHouse and QuestDB are next (SPEC §17.6).
+> **Status: v0, open source, under active development.** See [SPEC.md](SPEC.md) for the design (§19.0 covers v0's scope). On real AWS S3 (us-east-2, queried from a laptop), against the same data streamed in 5-minute batches, Timelake answered the TSBS IoT queries 2.1–13× faster than Lance, PyIceberg-written Iceberg and S3 Tables right after ingest, and the "latest position of every truck" query took 18 requests instead of 1,733 ([bench/results/S3.md](bench/results/S3.md); the earlier RustFS runs are in [V0.md](bench/results/V0.md)). An IIoT benchmark against InfluxDB 3, TimescaleDB, ClickHouse and QuestDB is next (SPEC §17.6).
 
 ## Quick start
 
@@ -48,7 +48,13 @@ timelake -w s3://lake/wh -o aws_endpoint=http://localhost:9000 -o aws_allow_http
 cd crates/timelake-py && maturin develop --release     # or: pip install .
 ```
 ```python
+import datetime as dt
+
+import pyarrow as pa
 import timelake
+
+schema = pa.schema([("time", pa.timestamp("us", tz="UTC")), ("device_id", pa.string()), ("temp", pa.float64())])
+batch = pa.table({"time": [dt.datetime.now(dt.timezone.utc)], "device_id": ["pump-7"], "temp": [71.5]}, schema=schema)
 
 lake = timelake.Lake("s3://lake/wh", storage_options={"aws_region": "eu-west-1"})
 t = lake.create_table("iot.readings", batch.schema,
@@ -87,7 +93,7 @@ SELECT * FROM iceberg_scan('s3://lake/wh/iot/readings');   -- reads metadata/ver
 | `timelake.chunk-interval` | `day` | `hour`, `day` or `month` partitions |
 | `timelake.dedup` | on if a series key is set | Drop duplicate `(series, time)` rows during compaction; the latest write wins |
 | `timelake.retention` | forever | Drop partitions older than this, e.g. `90d` |
-| `timelake.auto-maintain` | `true` | Run compaction and expiry inline after appends |
+| `timelake.auto-maintain` | `true` | Run compaction, retention and expiry inline after appends |
 | `timelake.compact-min-files` | `8` | Inline compaction merges a size tier once it has this many files |
 | `timelake.target-file-size-bytes` | 256 MiB | Compaction output size |
 | `timelake.row-group-rows` | 1048576 | Parquet row group size (page indexes keep single-series reads selective) |
@@ -97,7 +103,7 @@ SELECT * FROM iceberg_scan('s3://lake/wh/iot/readings');   -- reads metadata/ver
 ### Queries the reader accelerates
 - **Time and series filters** prune files using Iceberg column bounds, then row groups and pages inside the sorted Parquet files.
 - **Latest row per series:** `ROW_NUMBER() OVER (PARTITION BY <series key> ORDER BY <time> DESC) = 1` is rewritten to read the last-value index.
-- **Latest row:** `… WHERE <series key filter> ORDER BY <time> DESC LIMIT 1` is also rewritten to read the index.
+- **Latest row:** `… [WHERE <series key filter>] ORDER BY <time> DESC LIMIT 1` is also rewritten to read the index (tables with a series key).
 - `time_bucket(interval, ts [, origin])` (same as DataFusion's `date_bin`).
 - **Object storage:** every table a query references is loaded concurrently before planning (version hint, metadata, manifests, last-value index), each Parquet footer is fetched once, and scans use more partitions on remote stores (latency-bound I/O). Table versions loaded for planning are reused for 1 s within a process; the process's own commits are always visible.
 
@@ -116,6 +122,9 @@ SELECT * FROM iceberg_scan('s3://lake/wh/iot/readings');   -- reads metadata/ver
 | `scripts/` | Demo warehouse build (`build-demo-warehouse.sh`) and a static server with Range support for testing (`serve-range.mjs`) |
 | `spikes/` | Phase 0 experiments |
 | `SPEC.md` | Design and decisions |
+
+## Documentation
+The [docs](https://timelake.dev/docs) cover a [quick start](https://timelake.dev/docs/quick-start) with sample data, [how it works](https://timelake.dev/docs/how-it-works), the CLI, Python and TypeScript APIs, a [glossary](https://timelake.dev/docs/glossary), a [tour of this codebase](https://timelake.dev/docs/codebase) and [development setup](https://timelake.dev/docs/development). Their source is in `dashboard/app/(site)/docs/`.
 
 ## Development
 ```bash
