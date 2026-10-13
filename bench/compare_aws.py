@@ -152,10 +152,9 @@ def v0():
             if not i:
                 continue
             ms = f"{m['seconds']:.0f} | {m['data_files']} | {m['bytes'] / 1e6:.0f}" if m else "— | — | —"
+            objects = i["objects"] if i["objects"] is not None else "n/a"  # S3 Tables storage can't be listed
             print(f"| {system} | {label} | {i['seconds']:.0f} | {i['commit_ms_p50']:.0f} | {i['commit_ms_p95']:.0f} "
-                  f"| {i['data_files']} | {i['objects']} | {i['bytes'] / 1e6:.0f} | {ms} |")
-            if m and m.get("compaction_after_ingest_s"):
-                print(f"\nS3 Tables managed compaction ran {m['compaction_after_ingest_s']} s after ingest ended (per table).\n")
+                  f"| {i['data_files']} | {objects} | {i['bytes'] / 1e6:.0f} | {ms} |")
     print()
     for suite in ["tsbs_iot", "iot_point"]:
         print(f"### v0 queries: {suite} (geometric mean seconds, first run / best run)\n")

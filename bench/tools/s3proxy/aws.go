@@ -212,6 +212,13 @@ func (p *awsProxy) RoundTrip(r *http.Request) (*http.Response, error) {
 		t = http.DefaultTransport.(*http.Transport)
 	}
 	resp, err := t.RoundTrip(r)
+	// Retry reads on a dropped connection (S3 resets some under load), as SDKs talking to S3 directly do.
+	for attempt := 1; err != nil && attempt <= 3 && (r.Method == http.MethodGet || r.Method == http.MethodHead); attempt++ {
+		countKind("RETRY")
+		log.Printf("retry %d %s %s: %v", attempt, r.Method, r.URL.Path, err)
+		time.Sleep(time.Duration(attempt*100) * time.Millisecond)
+		resp, err = t.RoundTrip(r)
+	}
 	if err != nil {
 		return nil, err
 	}

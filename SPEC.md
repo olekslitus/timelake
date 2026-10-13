@@ -816,6 +816,12 @@ Full results: [`bench/results/BASELINE.md`](bench/results/BASELINE.md).
 - **Parquet vs Vortex ([`VORTEX.md`](bench/results/VORTEX.md)):** Vortex is faster locally (2.4–4× on single-device queries), at parity to slower on object storage (more requests), and not smaller in our layout. → D16.
 - **DataFusion (Rust) vs DuckDB on object storage:** DataFusion was faster on first runs (TSBS 0.29 s vs 0.35 s; single-device 0.12 s vs 0.22 s) but slower on repeats (DuckDB caches file data). → D3 plus a Timelake data cache.
 - **Parquet filter pushdown** in DataFusion is 1.2–1.6× *slower* on object storage (extra range requests) and slightly faster locally. Enable it per query shape.
+- **Real S3 (2026-10-13, laptop → us-east-2, [`S3.md`](bench/results/S3.md)):**
+  - Right after 1,728 five-minute commits, TSBS queries take **1.5 s on Timelake** vs 3.3 s on Lance and 20–22 s on naive Iceberg and **real S3 Tables**, with 65 requests per query vs 1,500–2,800.
+  - S3 Tables' managed compaction ran 2.4–2.6 h after ingest. After it, Timelake was still faster: 1.2 s vs 2.4 s on TSBS, 1.0 s vs 6.7 s on single-truck queries.
+  - Timelake commits fastest: 0.48 s median, vs 0.99 s for Lance, 1.46 s for S3 Tables and 2.41 s for Iceberg.
+  - Every engine is 9–24× slower on S3 than on local disk for first runs. → The reader cache matters.
+  - Lance reads stale versions on S3 Express One Zone (unsorted listings); Timelake doesn't.
 
 ### 17.6 IIoT benchmark (planned)
 TSBS models a truck fleet at ~10 s per device. Industrial plants look different, and that is the market (Polythings' IIoT platform). The IIoT benchmark lives in `bench/iiot` and runs next to TSBS, not instead of it.
