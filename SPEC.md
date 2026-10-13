@@ -72,6 +72,7 @@ The problem we replace: teams today run S3 Tables (or self-managed Iceberg) plus
 | R23 | Connect to Snowflake: Timelake as an optimized time-series store that Snowflake queries in place (§21.5). |
 | R24 | Auto sync: IoT devices write to their own local storage and Timelake syncs it to the lake behind the scenes, so devices don't handle how data travels (§21.6). |
 | R25 | Edge endpoints that devices send metrics, blob uploads, logs and IoT data to, so devices don't need to know how to reach the cloud; the edge also serves data from a local cache (§21.7). |
+| R26 | Modular enough that Timelake can also run as a database: a long-lived server on local disk, with the bucket as the durable copy, as an alternative to a managed time-series database. Experiment first (§21.8). |
 
 ---
 
@@ -968,7 +969,7 @@ The principle: everything needed to run the lake well is open; integrations with
 
 ## 21. Planned features
 
-New product features beyond the original requirements, recorded on 2026-10-13. None of them is built yet. Each one keeps the rule that no always-on Timelake server is required (R13): state lives in the bucket and work is triggered by commits or schedules.
+New product features beyond the original requirements, recorded on 2026-10-13. None of them is built yet. Each one keeps the rule that no always-on Timelake server is required (R13): state lives in the bucket and work is triggered by commits or schedules. F8 adds an optional server; the serverless path stays the default.
 
 | ID | Feature | Req | Builds on | Phase |
 |----|---------|-----|-----------|-------|
@@ -979,6 +980,7 @@ New product features beyond the original requirements, recorded on 2026-10-13. N
 | F5 | Snowflake connection: query Timelake tables from Snowflake in place | R23 | REST catalog (§5.2), caggs (§11.1) | 2 |
 | F6 | Device sync: devices write locally, Timelake moves the data to the lake | R24 | Local tables, idempotent batches, F7 | 6 |
 | F7 | Edge gateway: local endpoints for data, metrics, logs and blobs, plus a local cache | R25 | Ingest (§13), reader | 6 |
+| F8 | Server mode: Timelake as a database on local disk, the bucket as the durable copy (experiment first) | R26 | Reader, hot tier (§8), F7 | Experiment after §17.6 |
 
 ### 21.1 F1: Agent access with permission sets (R19)
 
@@ -1069,3 +1071,46 @@ A single binary on site (factory, vessel, rig, substation) that devices send dat
 - **Rules at the edge:** the gateway runs the ingest pipeline (§13), so alarms fire locally even when offline, and are also forwarded as events (F3).
 - **Security:** devices authenticate to the gateway; only the gateway holds cloud credentials, scoped to its site.
 - This turns the "edge binary" deployment form in §13.1 into a product.
+
+### 21.8 F8: Server mode, Timelake as a database (R26, experiment)
+
+**The question.** Timelake is already fast on local disk. Could the same engine, run as one long-lived server on an instance with local NVMe, compete with a managed time-series database like TimescaleDB, while the bucket stays the durable copy?
+
+**What we measured so far** (indicative: different hardware, not one benchmark):
+- **Latest values:** with a warm process on a laptop's local disk, `last-loc` takes 2.5 ms and one truck's latest row 0.4 ms. In Phase 0, TimescaleDB answered `last-loc` in 2–3 ms and plain lake engines needed 34–317 ms (§17.5). The last-value index closed that gap.
+- **Analytics:** Timelake's TSBS queries take 22–217 ms on the first run from local disk (12 queries).
+  - Tiger Cloud's smallest tier needed 2.0 s (columnstore) and 8.9 s (row store), server time.
+  - In Phase 0, lake engines were 4–44× faster than an uncompressed TimescaleDB on the same laptop.
+- **What a server would remove:** most of today's cost on S3 is per-process cold start, fetching metadata, footers and the index before the first byte of data. A long-lived process keeps those in memory.
+
+**Design: the same modules, assembled as a server.** Nothing in the core may assume a server; the library, the serverless reader, the edge gateway (F7) and server mode are the same crates put together differently.
+- **Storage:** the table format on local NVMe as the primary store. Every commit is also uploaded to the bucket, synchronously (durable on commit) or asynchronously (faster commits, bounded loss window). Old partitions can live only in the bucket and be read through a cache.
+- **Memory:** table metadata, Parquet footers, the last-value index and recent data stay in memory, with the hot tier (§8) as the in-process write buffer. That makes data visible in under a second.
+- **Protocols:**
+  - Postgres wire protocol, so Grafana, psql and BI tools connect unchanged;
+  - Arrow Flight SQL;
+  - the existing HTTP API and MCP (F1).
+- **Operations:** backups and point-in-time restore come from the bucket (snapshots). Failover is a new instance that warms up from the bucket. Readers that don't need the server keep reading the bucket directly.
+
+**The experiment, before building it:**
+- **Setup:** one instance with local NVMe (for example c8gd.2xlarge) and the same data (TSBS IoT, then the IIoT benchmark, §17.6). Compare:
+  - TimescaleDB, as a hypertable and as columnstore;
+  - Timelake behind a thin server: DataFusion plus Flight SQL or Postgres wire.
+  - Then managed Tiger Cloud and InfluxDB 3 at similar $/month.
+- **Measure:**
+  - p50 and p95 latency, cold and warm;
+  - throughput with N concurrent dashboards;
+  - sustained ingest and freshness;
+  - storage;
+  - $ per month;
+  - recovery time after losing the instance.
+- **Bar to build it:**
+  - within about 2× of TimescaleDB on point lookups and concurrency;
+  - faster on analytics;
+  - cheaper per month;
+  - no data loss beyond the configured window when the instance dies.
+- **Known gaps to weigh:**
+  - one writer per table today, so concurrent writers would go through the server;
+  - no multi-statement transactions;
+  - Postgres compatibility limited to the SQL that DataFusion supports;
+  - one server holds one site's working set.
