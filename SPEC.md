@@ -69,6 +69,7 @@ The problem we replace: teams today run S3 Tables (or self-managed Iceberg) plus
 | R20 | Pre-made static read models on the blob store, based on the frontend's Zod schemas, invalidated and regenerated automatically on ingestion, so dashboards for a time range of a device or asset are near instant (§21.2). |
 | R21 | Data → events: produce any type of event into any event stream system, based on incoming data (§21.3). |
 | R22 | Later: a simple compute model. Users define a Python function and the result it should produce (for example a computed metric), and Timelake applies it automatically, the way it does rollups (§21.4). |
+| R23 | Connect to Snowflake: Timelake as an optimized time-series store that Snowflake queries in place (§21.5). |
 
 ---
 
@@ -871,6 +872,7 @@ TSBS models a truck fleet at ~10 s per device. Industrial plants look different,
 | Q19 | F2: tile format (Arrow IPC, Parquet, or JSON) and tile sizes per resolution; how much regeneration a commit may trigger | Arrow IPC (fastest in `timelake-wasm`), sizes chosen by benchmark; debounce per model |
 | Q20 | F3: is the commit-driven trigger an object-store notification (S3 events), a catalog event, or a poll of the newest snapshot? | Support all three; poll as the portable fallback |
 | Q21 | F4: how to run user Python safely in a hosted service | Out of scope until F4; the self-hosted version runs in the user's own process |
+| Q22 | F5: which Iceberg version and features Snowflake reads from external catalogs, how fast it picks up new snapshots, and whether connection setup is open source or premium (§20) | Verify against Snowflake before Phase 2; leaning open source for the connector, premium for managed setup |
 | Q16 | ~~Which import sources ship first?~~ | **Resolved:** Phase 1: CSV, Parquet, Iceberg/S3 Tables. Phase 2: TimescaleDB/Postgres with `--sync` cutover. Then InfluxDB, others via the DuckDB-backed source. Historian connectors are premium (D12) |
 
 ---
@@ -927,7 +929,7 @@ Open from v0:
 |-------|-------------|
 | 0 | This spec. `timelake-bench` skeleton: TSBS IoT generator → Parquet, adapters for DuckDB+Iceberg and TimescaleDB as first baselines. Spikes: ✅ `iceberg-rust` write maturity (Q7); `replace` + deletion-vector commits via our own commit layer (D13); DataFusion vs. embedded DuckDB (Q12); Lakekeeper evaluation (Q2); Iceberg v3 engine-support survey (Q1). Benchmark harness. |
 | 1 | `timelake-core` writer (contract, sorting, partitioning, batching, commits); `timelake-catalog` (object-store backend, REST spec); CLI create/adopt/query; **import** (CSV, Parquet, Iceberg/S3 Tables) and **backfill** (plan, final-layout write, branch staging, publish, resume); DuckDB reads committed tables |
-| 2 | `timelake-maintain`: compaction, re-sort, dedup, retention, snapshot expiry, triggered by catalog events. Immutable deletes + audit table; GDPR erasure workflow. **TimescaleDB/Postgres import** with `--sync` cutover. |
+| 2 | `timelake-maintain`: compaction, re-sort, dedup, retention, snapshot expiry, triggered by catalog events. Immutable deletes + audit table; GDPR erasure workflow. **TimescaleDB/Postgres import** with `--sync` cutover. Snowflake connection (F5, §21.5), first through metadata-file registration, then through the REST catalog. |
 | 3 | Caggs (incremental, hierarchical) + `timelake-functions` core (`time_bucket`, gapfill, locf, `time_weight`, `counter_agg`, percentiles) |
 | 4 | DuckDB extension (functions, dedup-on-read, index-aware scans) |
 | 5 | Hot tier (profile WAL vs. Valkey; ship both behind `HotStore`) + Timelake reader with merge, Puffin indexes, fast paths |
@@ -953,7 +955,7 @@ The principle: everything needed to run the lake well is open; integrations with
 
 ## 21. Planned features
 
-New product features beyond the original requirements, recorded on 2026-10-13. None of them is built yet. Each one keeps the rule that no always-on Timelake server is required (R13): state lives in the bucket and work is triggered by commits or schedules.
+New product features beyond the original requirements, recorded on 2026-10-13 (F5 the same day). None of them is built yet. Each one keeps the rule that no always-on Timelake server is required (R13): state lives in the bucket and work is triggered by commits or schedules.
 
 | ID | Feature | Req | Builds on | Phase |
 |----|---------|-----|-----------|-------|
@@ -961,6 +963,7 @@ New product features beyond the original requirements, recorded on 2026-10-13. N
 | F2 | Static read models in the bucket, generated from the frontend's Zod schemas and refreshed on ingest | R20 | `@timelake/client`, snapshot diffs (§11.1) | 8 |
 | F3 | Data → events: produce any event type into any event stream | R21 | Rules (§13.3) | 6 |
 | F4 | Computed metrics: user-defined Python functions applied automatically, like rollups | R22 | Caggs (§11.1), Python package | Later |
+| F5 | Snowflake connection: query Timelake tables from Snowflake in place | R23 | REST catalog (§5.2), caggs (§11.1) | 2 |
 
 ### 21.1 F1: Agent access with permission sets (R19)
 
@@ -1006,3 +1009,16 @@ Let users define a Python function and the result it produces, for example a com
 - **Contract for functions:** deterministic and per-window by default, so any window can be recomputed. State carried across windows is opt-in.
 - **Where it runs:** in the writer's process (Python bindings), in a scheduled `timelake maintain` run, or in a Lambda. There is still no server. A hosted version needs sandboxing.
 - **Composes:** computed metrics are ordinary tables, so they can feed read models (F2) and events (F3). SQL and Rust functions can follow on the same mechanism.
+
+### 21.5 F5: Snowflake connection (R23)
+
+Pitch: **an optimized time-series store for your Snowflake.** Many data teams, including large oil and gas operators, already land historian and sensor data in Snowflake. Timelake lets them keep that data in their own bucket, laid out for time series, and query it from Snowflake with no copy and no Snowpipe.
+
+- **What the user gets:** Snowflake sees Timelake tables as Iceberg tables. Data never moves into Snowflake storage, so there is no ingest pipeline into Snowflake, no Snowflake storage bill for raw telemetry, and the same tables still serve DuckDB, Spark, dashboards and agents.
+- **Why it is faster and cheaper than plain Iceberg in Snowflake:** Snowflake prunes Iceberg files on manifest column stats. Timelake files are sorted by (series, time), compacted, and time-partitioned, so a query for one asset or a recent window touches few files and burns fewer credits. Rollups (caggs) are Iceberg tables too, so dashboards in Snowflake can read the 1-minute or 1-hour table instead of raw data.
+- **Two ways to connect:**
+  - **Through the REST catalog (preferred):** Snowflake attaches the Timelake catalog through a catalog integration, discovers tables, and picks up new snapshots automatically. Depends on `timelake-catalog` (§5.2).
+  - **Without a catalog server:** each table is registered in Snowflake from its metadata file in object storage, and Timelake refreshes the registration after commits (or on a schedule). Works with today's v0 layout (D17), at the cost of a refresh step.
+- **Setup in one command:** `timelake snowflake connect` creates the external volume, catalog integration and tables (or prints the SQL for a DBA to run), with least-privilege IAM for the bucket.
+- **Time-series helpers in Snowflake:** a published set of SQL views and UDFs that map the function library (§11.2) onto Snowflake built-ins (`TIME_SLICE`, `ASOF JOIN`, window functions), like the DuckDB macro pack.
+- **Proof:** a benchmark of the same IIoT workload (§17.6) as a native Snowflake table, as naive Iceberg in Snowflake, and as Timelake tables in Snowflake, reporting latency and credits per query plus monthly storage cost.
