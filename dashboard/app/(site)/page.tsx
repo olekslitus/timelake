@@ -198,10 +198,7 @@ export default function Home() {
 
       {/* Stack */}
       <section className="flex flex-col gap-6">
-        <SectionHead label="The stack" title="From the device to the dashboard, on one open stack">
-          Data flows from the things that make it, through Timelake, to the things that read it. Timelake runs as a
-          library, and everything below the line is plain files in your own bucket. Dashed items are planned.
-        </SectionHead>
+        <SectionHead label="The stack" title="From the device to the dashboard, on one open stack" />
         <StackDiagram />
       </section>
 

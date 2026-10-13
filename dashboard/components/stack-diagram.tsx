@@ -1,317 +1,220 @@
-import { TimelakeMark } from "@/components/brand/timelake-mark";
-import { cn } from "@/lib/utils";
+"use client"
+
+import { useLayoutEffect, useRef, useState } from "react"
+import { Archive, Bot, BotMessageSquare, ChartCandlestick, Lambda, LayoutDashboard, Radio, Server, type LucideIcon } from "lucide-react"
+
+import { cn } from "@/lib/utils"
 
 /**
- * The stack, left to right: who publishes data, the ingest service, Timelake's layers from the API down to the
- * object store, and who reads. Dashed items are planned; everything else ships today.
+ * The stack as a node graph: publishers → ingest → Timelake → readers. Nodes are laid out with CSS; the connector
+ * lines are measured from the nodes and drawn in SVG, left to right on wide screens and down a bus on narrow ones.
+ * Dashed nodes and lines are planned.
  */
-const PUBLISHERS = [
-  {
-    glyph: "((o))",
-    title: "Field device",
-    what: "PLC · sensor · gateway",
-    via: "MQTT",
-  },
-  {
-    glyph: "_/\\_/",
-    title: "Market data",
-    what: "prices · trades · ticks",
-    via: "REST",
-  },
-  { glyph: "[o_o]", title: "Robot", what: "ROS 2 node", via: "ROS 2 topics" },
-  {
-    glyph: "[csv]",
-    title: "Files & backfill",
-    what: "CSV · Parquet · history",
-    via: "CLI · Python",
-  },
-];
+type Endpoint = { id: string; icon: LucideIcon; kind: string; name: string; via: string; planned?: boolean }
 
-const INGEST = [
-  "decode, validate",
-  "rules → events",
-  "buffer, batch",
-  "append",
-];
+const PUBLISHERS: Endpoint[] = [
+  { id: "device", icon: Radio, kind: "Sensor", name: "Field device", via: "MQTT" },
+  { id: "market", icon: ChartCandlestick, kind: "Feed", name: "Market data", via: "REST" },
+  { id: "robot", icon: Bot, kind: "Robot", name: "Robot arm", via: "ROS 2" },
+]
+const BACKFILL: Endpoint = { id: "files", icon: Archive, kind: "Files", name: "Backfill", via: "Batch" }
 
-type Layer = {
-  layer: string;
-  tech: string;
-  note: string;
-  own?: boolean;
-  planned?: string;
-};
+const READERS: Endpoint[] = [
+  { id: "dashboard", icon: LayoutDashboard, kind: "App", name: "Dashboard", via: "HTTPS" },
+  { id: "lambda", icon: Lambda, kind: "Function", name: "AWS Lambda", via: "SQL" },
+  { id: "engines", icon: Server, kind: "Engines", name: "Spark · Trino · Flink", via: "Iceberg" },
+  { id: "agent", icon: BotMessageSquare, kind: "AI", name: "AI agent", via: "MCP", planned: true },
+]
 
-const RUNTIME: Layer[] = [
-  {
-    layer: "Interfaces",
-    tech: "Python · Rust · CLI · TypeScript",
-    note: "Arrow in, Arrow out",
-  },
-  {
-    layer: "SQL engine",
-    tech: "Apache DataFusion",
-    note: "pruning, time_bucket, latest-value rewrite",
-  },
-  {
-    layer: "In memory",
-    tech: "Apache Arrow",
-    note: "columnar batches, zero-copy",
-  },
-  {
-    layer: "Timelake core",
-    tech: "Writer · maintenance · index",
-    note: "sort, partition, compact, dedup, retention",
-    own: true,
-  },
-];
+const RUNTIME = [
+  ["API", "Python · Rust · CLI · TS"],
+  ["SQL", "DataFusion"],
+  ["Memory", "Arrow"],
+]
+const CORE = ["Core", "Sort · compact · index"]
+const BUCKET = [
+  ["Catalog", "Files, no server"],
+  ["Table", "Iceberg"],
+  ["Files", "Parquet"],
+  ["Storage", "S3 · GCS · Azure · R2"],
+]
 
-const BUCKET: Layer[] = [
-  {
-    layer: "Catalog",
-    tech: "Files, no server",
-    note: "put-if-absent commits",
-    planned: "REST catalog",
-  },
-  {
-    layer: "Table format",
-    tech: "Apache Iceberg",
-    note: "snapshots, manifests, column stats",
-  },
-  {
-    layer: "File format",
-    tech: "Apache Parquet",
-    note: "columnar, ZSTD, sorted by series",
-  },
-  {
-    layer: "Object store",
-    tech: "S3 · R2 · GCS · Azure · MinIO · disk",
-    note: "the only thing that holds state",
-  },
-];
+// Dim stream texture inside the ingest node.
+const STREAM = [".:~=  .,-:;= .~:", ":=.,~:  .-~:;=  ", " .-~:= .,~:;= .,", ".~;= ,-~:= .:~=."]
 
-const READERS = [
-  {
-    glyph: "▁▃▆▅",
-    title: "Dashboard",
-    what: "browser · @timelake/client + WASM",
-    via: "HTTPS range reads",
-  },
-  {
-    glyph: " λ ",
-    title: "AWS Lambda",
-    what: "Python or Rust, any function",
-    via: "Timelake SQL",
-  },
-  {
-    glyph: "[≡≡]",
-    title: "Trino · Spark · Flink",
-    what: "and DuckDB, PyIceberg",
-    via: "Iceberg reads",
-    planned: "Trino, Flink: REST catalog",
-  },
-];
+type Edge = { from: string; to: string; label: string; kind: "in" | "bypass" | "arrow" | "out"; planned?: boolean }
 
-function Planned({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="rounded-sm border border-dashed px-1.5 py-0.5 font-mono text-[10.5px] text-muted-foreground">
-      {children}
-    </span>
-  );
+const EDGES: Edge[] = [
+  ...PUBLISHERS.map((p) => ({ from: p.id, to: "ingest", label: p.via, kind: "in" as const, planned: true })),
+  { from: BACKFILL.id, to: "timelake", label: BACKFILL.via, kind: "bypass" },
+  { from: "ingest", to: "timelake", label: "Arrow", kind: "arrow", planned: true },
+  ...READERS.map((r) => ({ from: "timelake", to: r.id, label: r.via, kind: "out" as const, planned: r.planned })),
+]
+
+type Drawn = { d: string; lx: number; ly: number; label: string; planned?: boolean }
+
+const WIDE = "(min-width: 1280px)"
+const BUS_X = 28
+
+function route(e: Edge, a: DOMRect, b: DOMRect, wide: boolean): Drawn {
+  const base = { label: e.label, planned: e.planned }
+  const acy = a.top + a.height / 2
+  const bcy = b.top + b.height / 2
+  if (wide) {
+    if (e.kind === "in") {
+      // Converge on a short bus just before the ingest node; the label sits on the first run.
+      const mid = b.left - 14
+      return { ...base, d: `M${a.right},${acy} H${mid} V${bcy} H${b.left}`, lx: (a.right + mid) / 2, ly: acy }
+    }
+    // Everything else is a straight run at the height of the small node on either end.
+    const y = e.kind === "out" ? bcy : acy
+    const lx = a.right + Math.min((b.left - a.right) / 2, 48)
+    return { ...base, d: `M${a.right},${y} H${b.left}`, lx, ly: y }
+  }
+  // Narrow: a bus down the left edge; indented nodes hang off it on short stubs that carry the label.
+  if (e.kind === "out") {
+    return { ...base, d: `M${BUS_X},${a.bottom} V${bcy} H${b.left}`, lx: (BUS_X + b.left) / 2, ly: bcy }
+  }
+  if (e.kind === "arrow") {
+    return { ...base, d: `M${a.left},${acy} H${BUS_X} V${b.top}`, lx: BUS_X, ly: (a.bottom + b.top) / 2 }
+  }
+  const end = e.kind === "in" ? `V${bcy} H${b.left}` : `V${b.top}`
+  return { ...base, d: `M${a.left},${acy} H${BUS_X} ${end}`, lx: (BUS_X + a.left) / 2, ly: acy }
 }
 
-function Panel({
-  label,
-  where,
-  className,
-  children,
-}: {
-  label: string;
-  where: string;
-  className?: string;
-  children: React.ReactNode;
-}) {
+function NodeCard({ node }: { node: Endpoint }) {
+  const Icon = node.icon
   return (
     <div
-      className={cn(
-        "flex min-w-0 flex-col rounded-md border bg-card",
-        className,
-      )}
+      data-node={node.id}
+      className={cn("relative flex h-14 items-stretch overflow-hidden rounded-md border bg-card", node.planned && "border-dashed")}
     >
-      <div className="flex flex-col gap-1 border-b px-4 py-3">
-        <div className="label-mono text-primary">{label}</div>
-        <div className="font-mono text-xs text-muted-foreground">{where}</div>
+      <div className="grid w-12 shrink-0 place-items-center border-r bg-muted text-muted-foreground">
+        <Icon className="size-4" />
       </div>
-      {children}
+      <div className="flex min-w-0 flex-col justify-center gap-0.5 px-3">
+        <div className="font-mono text-[10px] tracking-[0.1em] text-muted-foreground uppercase">{node.kind}</div>
+        <div className="truncate text-sm text-foreground">{node.name}</div>
+      </div>
     </div>
-  );
+  )
 }
 
-/** Arrow between panels: right-pointing beside each other (lg), down-pointing when stacked. */
-function Wire() {
+function Row({ k, v, own }: { k: string; v: string; own?: boolean }) {
   return (
-    <div aria-hidden className="flex items-center justify-center text-primary">
-      <span className="py-2 font-mono text-sm lg:hidden">↓</span>
-      <svg
-        viewBox="0 0 40 12"
-        className="hidden w-full lg:block"
-        preserveAspectRatio="none"
-      >
-        <line
-          x1="0"
-          y1="6"
-          x2="33"
-          y2="6"
-          stroke="currentColor"
-          strokeWidth="1.25"
-          strokeDasharray="3 3"
-        />
-        <path
-          d="M32 1.5 L39 6 L32 10.5"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.25"
-        />
-      </svg>
-    </div>
-  );
-}
-
-function Endpoint({
-  glyph,
-  title,
-  what,
-  via,
-  planned,
-}: {
-  glyph: string;
-  title: string;
-  what: string;
-  via: string;
-  planned?: string;
-}) {
-  return (
-    <div className="flex flex-col justify-center bg-card px-4 py-3.5">
-      <div className="flex flex-col gap-2 lg:flex-row lg:gap-3">
-        <pre
-          aria-hidden
-          className="ascii w-11 shrink-0 overflow-visible text-[11px] text-primary lg:pt-0.5"
-        >
-          {glyph}
-        </pre>
-        <div className="flex min-w-0 flex-col gap-1">
-          <div className="text-sm text-foreground">{title}</div>
-          <div className="text-xs text-muted-foreground">{what}</div>
-          <div className="flex flex-wrap gap-1.5 pt-0.5">
-            <span className="rounded-sm border px-1.5 py-0.5 font-mono text-[10.5px] text-muted-foreground">
-              {via}
-            </span>
-            {planned ? <Planned>{planned}</Planned> : null}
-          </div>
-        </div>
+    <div className={cn("grid grid-cols-[5.25rem_minmax(0,1fr)] items-baseline gap-3 px-4 py-2.5", own && "bg-primary/10")}>
+      <div className={cn("font-mono text-[11px] tracking-[0.1em] uppercase", own ? "text-primary" : "text-muted-foreground")}>
+        {k}
       </div>
+      <div className={cn("text-sm", own ? "text-primary" : "text-foreground")}>{v}</div>
     </div>
-  );
-}
-
-function LayerRow({ layer, tech, note, own, planned }: Layer) {
-  return (
-    <div
-      className={cn(
-        "grid grid-cols-[6.5rem_minmax(0,1fr)] gap-3 px-4 py-2.5",
-        own && "bg-primary/[0.06]",
-      )}
-    >
-      <div className={cn("label-mono pt-0.5", own && "text-primary")}>
-        {layer}
-      </div>
-      <div className="flex min-w-0 flex-col gap-0.5">
-        <div className="text-sm text-foreground">{tech}</div>
-        <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-          {note}
-          {planned ? <Planned>{planned} · planned</Planned> : null}
-        </div>
-      </div>
-    </div>
-  );
+  )
 }
 
 export function StackDiagram() {
+  const box = useRef<HTMLDivElement>(null)
+  const [lines, setLines] = useState<{ w: number; h: number; drawn: Drawn[] } | null>(null)
+
+  useLayoutEffect(() => {
+    const root = box.current
+    if (!root) return
+    const measure = () => {
+      const o = root.getBoundingClientRect()
+      const rel = (id: string) => {
+        const r = root.querySelector(`[data-node="${id}"]`)!.getBoundingClientRect()
+        return new DOMRect(r.left - o.left, r.top - o.top, r.width, r.height)
+      }
+      const wide = window.matchMedia(WIDE).matches
+      setLines({ w: o.width, h: o.height, drawn: EDGES.map((e) => route(e, rel(e.from), rel(e.to), wide)) })
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(root)
+    root.querySelectorAll("[data-node]").forEach((el) => ro.observe(el))
+    return () => ro.disconnect()
+  }, [])
+
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_2.25rem_minmax(0,0.8fr)_2.25rem_minmax(0,1.55fr)_2.25rem_minmax(0,1fr)]">
-      <Panel label="Publishers" where="anything that makes data">
-        <div className="grid flex-1 grid-cols-2 gap-px rounded-b-md bg-border sm:grid-cols-4 lg:auto-rows-fr lg:grid-cols-1">
-          {PUBLISHERS.map((p) => (
-            <Endpoint key={p.title} {...p} />
+    <div
+      ref={box}
+      className="relative mx-auto flex w-full max-w-lg flex-col gap-3 xl:grid xl:max-w-none xl:grid-cols-[12.5rem_5.5rem_9.5rem_5.5rem_minmax(0,1fr)_5.5rem_12.5rem] xl:items-center xl:gap-0"
+    >
+      {lines ? (
+        <svg aria-hidden className="pointer-events-none absolute inset-0 text-muted-foreground/50" width={lines.w} height={lines.h}>
+          {lines.drawn.map((l) => (
+            <path key={l.d} d={l.d} fill="none" stroke="currentColor" strokeWidth={1.25} strokeDasharray={l.planned ? "4 4" : undefined} />
           ))}
-        </div>
-      </Panel>
+        </svg>
+      ) : null}
 
-      <Wire />
+      {/* Publishers */}
+      <div className="flex flex-col gap-3 pl-24 xl:col-start-1 xl:pl-0">
+        {[...PUBLISHERS, BACKFILL].map((p) => (
+          <NodeCard key={p.id} node={p} />
+        ))}
+      </div>
 
-      <Panel
-        label="Ingest"
-        where="Lambda · container · edge"
-        className="border-dashed"
+      {/* Ingest */}
+      <div
+        data-node="ingest"
+        className="relative mt-3 ml-24 overflow-hidden rounded-md border border-dashed bg-card xl:col-start-3 xl:mt-0 xl:ml-0 xl:-translate-y-8"
       >
-        <div className="flex flex-1 flex-col justify-center gap-4 p-4">
-          <div className="text-sm text-foreground">timelake-ingest</div>
-          <pre className="ascii text-muted-foreground">
-            {INGEST.map((s, i) => (
-              <span key={s}>
-                {i ? "\n  |\n" : ""}
-                <span className={i === INGEST.length - 1 ? "hi" : "fg"}>
-                  {s}
-                </span>
-              </span>
-            ))}
-          </pre>
-          <div className="flex flex-col items-start gap-1.5">
-            <Planned>planned</Planned>
-            <p className="text-xs text-muted-foreground">
-              Today: append from Python, Rust or the CLI.
-            </p>
-          </div>
-        </div>
-      </Panel>
-
-      <Wire />
-
-      <div className="flex min-w-0 flex-col rounded-md border border-primary/45 bg-card">
-        <div className="flex items-center gap-2.5 border-b px-4 py-3">
-          <TimelakeMark className="size-5 text-foreground" />
-          <div className="flex flex-col gap-0.5">
-            <div className="label-mono text-primary">Timelake</div>
-            <div className="font-mono text-xs text-muted-foreground">
-              a library in your process
-            </div>
-          </div>
-        </div>
-        <div className="divide-y">
-          {RUNTIME.map((l) => (
-            <LayerRow key={l.layer} {...l} />
+        <pre aria-hidden className="ascii overflow-hidden px-3 pt-3 text-[11px] leading-[1.5]">
+          {STREAM.map((s, i) => (
+            <span key={i}>
+              {i ? "\n" : ""}
+              <span className={i % 2 ? undefined : "hi opacity-60"}>{s}</span>
+            </span>
           ))}
+        </pre>
+        <div className="flex items-baseline justify-between gap-2 px-3 pt-2 pb-3 font-mono text-[10.5px] tracking-[0.1em] uppercase">
+          <span className="text-foreground">Ingest</span>
+          <span className="text-muted-foreground">Planned</span>
         </div>
-        <div className="flex items-center gap-2 border-y border-dashed px-4 py-1.5">
-          <span className="font-mono text-[11px] text-primary">↓ ↑</span>
-          <span className="label-mono">in your bucket</span>
+      </div>
+
+      {/* Timelake */}
+      <div
+        data-node="timelake"
+        className="relative mt-10 overflow-hidden rounded-md border border-primary/50 bg-card xl:col-start-5 xl:mt-0"
+      >
+        <div className="border-b px-4 py-3 font-mono text-xs tracking-[0.12em] text-primary uppercase">Timelake</div>
+        <div className="divide-y">
+          {RUNTIME.map(([k, v]) => (
+            <Row key={k} k={k} v={v} />
+          ))}
+          <Row k={CORE[0]} v={CORE[1]} own />
+        </div>
+        <div className="border-y border-dashed px-4 py-1.5 font-mono text-[10.5px] tracking-[0.12em] text-muted-foreground uppercase">
+          Your bucket
         </div>
         <div className="divide-y">
-          {BUCKET.map((l) => (
-            <LayerRow key={l.layer} {...l} />
+          {BUCKET.map(([k, v]) => (
+            <Row key={k} k={k} v={v} />
           ))}
         </div>
       </div>
 
-      <Wire />
+      {/* Readers */}
+      <div className="mt-6 flex flex-col gap-3 pl-24 xl:col-start-7 xl:mt-0 xl:gap-7 xl:pl-0">
+        {READERS.map((r) => (
+          <NodeCard key={r.id} node={r} />
+        ))}
+      </div>
 
-      <Panel label="Readers" where="query the same files">
-        <div className="grid flex-1 gap-px rounded-b-md bg-border sm:grid-cols-3 lg:auto-rows-fr lg:grid-cols-1">
-          {READERS.map((r) => (
-            <Endpoint key={r.title} {...r} />
-          ))}
-        </div>
-      </Panel>
+      {lines?.drawn.map((l) => (
+        <span
+          key={`${l.label}-${l.d}`}
+          aria-hidden
+          className={cn(
+            "pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 rounded-sm border bg-background px-1.5 py-px font-mono text-[10px] tracking-[0.08em] whitespace-nowrap uppercase",
+            l.planned ? "border-dashed text-muted-foreground" : "text-foreground",
+          )}
+          style={{ left: l.lx, top: l.ly }}
+        >
+          {l.label}
+        </span>
+      ))}
     </div>
-  );
+  )
 }
