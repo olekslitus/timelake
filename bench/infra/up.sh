@@ -9,7 +9,7 @@ source env.sh
 AZ=${AZ:-use2-az1}
 REF=$(git rev-parse HEAD)
 if aws cloudformation describe-stacks --stack-name "$STACK" > /dev/null 2>&1; then
-  echo "$STACK already exists. Update code on the instance with: ssm.sh 'git pull'"; exit 1
+  echo "$STACK already exists. Update code on the instance with: ssm.sh 'git fetch -q && git checkout -q origin/main'"; exit 1
 fi
 git branch -r --contains "$REF" | grep -q . || { echo "push $REF first: the instance clones it from GitHub"; exit 1; }
 vpc=$(aws ec2 describe-vpcs --filters Name=is-default,Values=true --query 'Vpcs[0].VpcId' --output text)
