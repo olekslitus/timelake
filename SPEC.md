@@ -953,7 +953,7 @@ Open from v0:
 | Later | Computed metrics from user-defined Python functions (F4, §21.4) |
 
 ### 19.1 Performance plan (planned, not started)
-**Status:** planned. It starts after the codebase and CI/CD cleanup. Gains below are estimates until measured.
+**Status:** planned. It starts after the codebase and CI/CD cleanup ([CLEANUP.md](CLEANUP.md)). Gains below are estimates until measured.
 
 **Where time goes today** (Timelake reader, laptop → AWS S3 us-east-2, after maintenance, [`bench/results/S3.md`](bench/results/S3.md)):
 
