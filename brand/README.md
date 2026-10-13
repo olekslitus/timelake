@@ -1,0 +1,56 @@
+# Timelake brand
+
+The source of truth for how Timelake looks and talks. The site, README, docs and package descriptions follow it.
+
+## Words
+
+- **Headline:** The open time-series lakehouse
+- **Short description** (GitHub, packages, page titles): The open time-series lakehouse. Fast queries on your own object storage, with no database and no maintenance jobs.
+- **Three promises, in this order:**
+  1. **Fast every day.** Dashboards, trends and latest values read only what they need; latest values come from an index.
+  2. **Nothing to maintain.** Compaction, deduplication, retention and snapshot cleanup run inside the writer.
+  3. **Pay for storage, not a database.** No instance running all month; the bill is object-storage bytes and requests.
+- **Supporting row:** open format · any object store · Apache 2.0.
+- **Use:** time-series lakehouse, object store, series, open table format, nothing to run, maintains itself, latest value.
+- **Avoid:** serverless; "on Apache Iceberg" in headlines (Iceberg is named under "how it works" and in the docs); time-series store; private preview.
+- **Benchmarks are honest and in context** (SPEC D21): every claim comes with its cost and scale, and we publish where Timelake is slower.
+
+## Mark
+
+Parallel lines that turn together at sharp, mitered corners, inside a circle. Each line is a series; they change at the same moments, like readings from one machine. Black on light, white on dark; never colored.
+
+| Version | File | Notes |
+|---|---|---|
+| **v0** (current) | `logo/timelake-mark-v0.svg` | Five lines, vertical copies of one pulse. Spacing tightens on the slopes. |
+| v0.1 | `logo/timelake-mark-v0.1.svg` | Five truly parallel lines: the gap across lines is the same on slopes and flats, so the outer lines become nested chevrons. |
+| v0.2 | `logo/timelake-mark-v0.2.svg` | Three bold parallel lines. Clearest at 16–32 px; candidate for the favicon. |
+
+Each has a `-white` file for dark backgrounds. The files are generated: edit `marks.mjs`, then run `bun brand/marks.mjs`.
+
+**Wordmark:** `timelake`, lowercase, Geist Medium, letter-spacing −0.045em, set to the right of the mark.
+
+## Color
+
+Instrument-panel look (inspired by Oxide): near-black panels with hairline borders, mono labels, ASCII illustrations, and **one accent**.
+
+| Token | Dark | Light |
+|---|---|---|
+| background | `#0B0D0E` | `#F4F5F5` |
+| panel | `#101315` | `#FFFFFF` |
+| line (hairlines) | `#23292C` | `#D9DEE0` |
+| dim (ASCII fields) | `#343C40` | `#C3CACD` |
+| foreground | `#E6EBED` | `#0D1113` |
+| muted | `#8B969B` | `#59656A` |
+| **accent: Ice** (Timelake) | `#67D4F0` | `#0B7FA6` |
+
+**Reserved accents** for future Polythings projects or spin-offs (not used by Timelake):
+
+| Accent | Dark | Light |
+|---|---|---|
+| Phosphor | `#5EE09A` | `#13844F` |
+| Amber | `#F0B44C` | `#9A6206` |
+
+## Type
+
+- **Geist** (light and regular) for headlines and text; **Geist Mono** for labels, numbers, code and ASCII illustrations.
+- Labels: Geist Mono, uppercase, letter-spacing 0.1em, muted color.

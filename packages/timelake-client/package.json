@@ -6,7 +6,7 @@
   "homepage": "https://timelake.dev/docs/typescript",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/olekslitus/timelake.git",
+    "url": "git+https://github.com/polythings/timelake.git",
     "directory": "packages/timelake-client"
   },
   "private": true,

@@ -13,7 +13,7 @@ dependencies = ["pyarrow>=14"]
 [project.urls]
 Homepage = "https://timelake.dev"
 Documentation = "https://timelake.dev/docs/python"
-Repository = "https://github.com/olekslitus/timelake"
+Repository = "https://github.com/polythings/timelake"
 
 [tool.maturin]
 python-source = "python"

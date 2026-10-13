@@ -4,7 +4,7 @@ description = "Timelake reader for WebAssembly: metadata, pruning, Parquet decod
 version = "0.0.1"
 edition = "2024"
 license = "Apache-2.0"
-repository = "https://github.com/olekslitus/timelake"
+repository = "https://github.com/polythings/timelake"
 homepage = "https://timelake.dev"
 publish = false
 
