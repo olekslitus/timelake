@@ -13,6 +13,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -21,6 +22,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -51,7 +53,10 @@ func kindCounts() map[string]int64 {
 	return out
 }
 
-var sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var (
+	sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	errorCode = regexp.MustCompile(`<Code>[^<]*</Code>`)
+)
 
 type awsProxy struct {
 	clientBucket string
@@ -156,7 +161,7 @@ func (p *awsProxy) RoundTrip(r *http.Request) (*http.Response, error) {
 			return nil, fmt.Errorf("aws-chunked body without x-amz-decoded-content-length")
 		}
 		r.Body = io.NopCloser(io.LimitReader(newChunkDecoder(r.Body), n))
-		r.ContentLength = n
+		r.ContentLength, r.TransferEncoding = n, nil
 		enc := strings.TrimPrefix(strings.TrimPrefix(r.Header.Get("Content-Encoding"), "aws-chunked"), ",")
 		if enc == "" {
 			r.Header.Del("Content-Encoding")
@@ -169,6 +174,15 @@ func (p *awsProxy) RoundTrip(r *http.Request) (*http.Response, error) {
 		payload = "UNSIGNED-PAYLOAD"
 	} else if !sha256Hex.MatchString(payload) {
 		payload = "UNSIGNED-PAYLOAD"
+	}
+	if r.ContentLength < 0 && r.Body != nil && r.Body != http.NoBody {
+		// A chunked upload (e.g. pyarrow's multipart parts): S3 needs a length, so buffer it (bounded by part size).
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			return nil, err
+		}
+		r.Body, r.ContentLength = io.NopCloser(bytes.NewReader(body)), int64(len(body))
+		r.TransferEncoding = nil
 	}
 	for _, h := range []string{"Authorization", "X-Amz-Date", "X-Amz-Security-Token", "X-Amz-S3session-Token"} {
 		r.Header.Del(h)
@@ -200,6 +214,20 @@ func (p *awsProxy) RoundTrip(r *http.Request) (*http.Response, error) {
 	}
 	if resp.StatusCode >= 500 {
 		countKind(fmt.Sprintf("HTTP%d", resp.StatusCode))
+	}
+	if resp.StatusCode == 400 || resp.StatusCode == 403 || resp.StatusCode >= 500 {
+		// Header names only: values include credentials.
+		names := make([]string, 0, len(r.Header))
+		for h := range r.Header {
+			names = append(names, h)
+		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		resp.Body.Close()
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		log.Printf("%d %s %s headers=%v response=%s", resp.StatusCode, r.Method, r.URL.Path, names, errorCode.Find(body))
+		if os.Getenv("S3PROXY_DEBUG") != "" {
+			log.Printf("%s", body)
+		}
 	}
 	resp.Body = &countingBody{resp.Body}
 	return resp, nil

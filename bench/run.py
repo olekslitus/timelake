@@ -181,7 +181,7 @@ def setup_duckdb(suite: str, iceberg: bool = False, vortex: bool = False):
             create = (QUERIES / "clickbench" / "duckdb-parquet-partitioned_create.sql").read_text()
             create = create.replace(
                 "read_parquet('hits_*.parquet', binary_as_string=True)",
-                f"read_vortex('{base()}/clickbench/vortex/hits_*.vortex')",
+                f"read_vortex('{base()}/clickbench/vortex/*.vortex')",
             )
             con.execute(create)
     elif suite == "tpch":
@@ -200,7 +200,8 @@ def setup_duckdb(suite: str, iceberg: bool = False, vortex: bool = False):
                 con.execute(f"CREATE VIEW {t} AS SELECT * FROM read_parquet('{path}')")
     elif suite == "clickbench":
         create = (QUERIES / "clickbench" / "duckdb-parquet-partitioned_create.sql").read_text()
-        con.execute(create.replace("'hits_*.parquet'", f"'{base()}/clickbench/hits_*.parquet'"))
+        # "*.parquet", not "hits_*": S3 Express rejects list prefixes that don't end in "/". Same 10 files.
+        con.execute(create.replace("'hits_*.parquet'", f"'{base()}/clickbench/*.parquet'"))
     return lambda sql: con.execute(sql).fetch_arrow_table()
 
 
@@ -259,7 +260,7 @@ def setup_polars(suite: str):
                 lf = lf.with_columns(pl.col("time").dt.replace_time_zone(None))
             ctx.register(t, lf)
     elif suite == "clickbench":
-        lf = pl.scan_parquet(f"{base()}/clickbench/hits_*.parquet", storage_options=opts)
+        lf = pl.scan_parquet(f"{base()}/clickbench/*.parquet", storage_options=opts)
         schema = lf.collect_schema()
         casts = [pl.col(c).cast(pl.Utf8) for c, dt in schema.items() if dt == pl.Binary]
         lf = lf.with_columns(*casts, pl.col("EventDate").cast(pl.Int32).cast(pl.Date))

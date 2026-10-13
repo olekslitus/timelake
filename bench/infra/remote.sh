@@ -106,9 +106,17 @@ direct() {
 v0() {
   target "$1"
   export V0_TAG=v0-aws-$1 TTFB_MS=0
-  for s in iceberg lance timelake; do $PY v0/ingest.py --system $s --storage "$storage" | tail -1; done
+  local systems="iceberg lance timelake"
+  if [ "$1" = s3x ]; then
+    # Lance 13 finds the latest version from listing order, and S3 Express listings are unsorted, so it reads
+    # stale versions there (an append is invisible to a fresh reader). Not benchmarked on s3x.
+    systems="iceberg timelake"
+    export ENGINES="v0-iceberg v0-timelake v0-timelake-duckdb"
+    rm -f results/*."$V0_TAG"-*.jsonl
+  fi
+  for s in $systems; do $PY v0/ingest.py --system $s --storage "$storage" | tail -1; done
   v0/run_queries.sh "$storage" ingested
-  for s in iceberg lance timelake; do $PY v0/ingest.py --system $s --storage "$storage" --maintain-only | tail -1; done
+  for s in $systems; do $PY v0/ingest.py --system $s --storage "$storage" --maintain-only | tail -1; done
   v0/run_queries.sh "$storage" maintained
 }
 
