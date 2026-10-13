@@ -9,7 +9,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
-type Bar = { engine: string; label: string; timelake: boolean; first: number; best: number }
+type Bar = { engine: string; label: string; timelake: boolean; first: number; best: number; requests: number | null }
 type QueryRow = { query: string; times: Record<string, number | null>; rows: Record<string, number | null> }
 type Panel = { suite: string; state: string; bars: Bar[]; queries: number; perQuery: QueryRow[] }
 
@@ -49,6 +49,12 @@ function PanelChart({ panel }: { panel: Panel }) {
                       <span className="text-right">{fmtSeconds(b.first)}</span>
                       <span className="text-muted-foreground">best repeat</span>
                       <span className="text-right">{fmtSeconds(b.best)}</span>
+                      {b.requests != null && (
+                        <>
+                          <span className="text-muted-foreground">requests</span>
+                          <span className="text-right">{Math.round(b.requests).toLocaleString("en-US")}</span>
+                        </>
+                      )}
                     </div>
                   </div>
                 )

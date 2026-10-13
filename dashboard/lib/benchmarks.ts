@@ -15,13 +15,15 @@ export const ENGINES = [
   { id: "v0-lance-df", label: "Lance + DataFusion", timelake: false },
   { id: "v0-lance-duckdb", label: "Lance + DuckDB", timelake: false },
   { id: "v0-iceberg", label: "Iceberg (PyIceberg) + DuckDB", timelake: false },
+  { id: "v0-s3tables", label: "S3 Tables + DuckDB", timelake: false },
 ] as const
 
+// The real-S3 run (bench/run_aws.sh): a laptop reading S3 in us-east-2. S3 Tables is its own table bucket.
 export const STATES = [
-  { storage: "s3", phase: "ingested", label: "S3 · right after ingest" },
-  { storage: "s3", phase: "maintained", label: "S3 · after maintenance" },
-  { storage: "local", phase: "ingested", label: "Local disk · right after ingest" },
-  { storage: "local", phase: "maintained", label: "Local disk · after maintenance" },
+  { files: ["v0-laptop-aws-s3-ingested", "v0-laptop-aws-s3tables-ingested"], label: "AWS S3 · right after ingest" },
+  { files: ["v0-laptop-aws-s3-maintained", "v0-laptop-aws-s3tables-maintained"], label: "AWS S3 · after compaction" },
+  { files: ["v0-laptop-local-ingested"], label: "Local disk · right after ingest" },
+  { files: ["v0-laptop-local-maintained"], label: "Local disk · after compaction" },
 ] as const
 
 export const SUITES = [
@@ -35,10 +37,10 @@ export const TSDB_ENGINES = [
   { id: "tsdb-tiered", label: "Tiered to S3 (tiered reads)" },
 ] as const
 
-export type BenchBar = { engine: string; label: string; timelake: boolean; first: number; best: number }
+export type BenchBar = { engine: string; label: string; timelake: boolean; first: number; best: number; requests: number | null }
 export type QueryRow = { query: string; times: Record<string, number | null>; rows: Record<string, number | null> }
 export type BenchPanel = { suite: string; state: string; bars: BenchBar[]; queries: number; perQuery: QueryRow[] }
-export type IngestRow = { storage: string; system: string; seconds: number; p50: number; p95: number; objects: number }
+export type IngestRow = { storage: string; system: string; seconds: number; p50: number; p95: number; files: number }
 export type TsdbRow = {
   suite: string
   engine: string
@@ -54,7 +56,16 @@ export type TsdbRow = {
   reference?: boolean
 }
 
-type Rec = { engine: string; query: string; status: string; times: number[]; rows?: number; server_ms?: number[]; suite?: string }
+type Rec = {
+  engine: string
+  query: string
+  status: string
+  times: number[]
+  rows?: number
+  requests?: number[]
+  server_ms?: number[]
+  suite?: string
+}
 
 async function lines<T>(file: string): Promise<T[]> {
   try {
@@ -69,34 +80,37 @@ async function lines<T>(file: string): Promise<T[]> {
 
 const gm = (xs: number[]) => Math.exp(xs.reduce((s, x) => s + Math.log(Math.max(x, 1e-4)), 0) / xs.length)
 
-/** Geometric-mean first-run time per engine, over queries every engine completed (as bench/v0/summarize.py). */
+/** Geometric-mean first-run time per engine, over queries every engine in the panel completed (as bench/v0/summarize.py). */
 export async function loadPanels(): Promise<BenchPanel[]> {
   "use cache" // read at build time: results change only when benchmarks are re-run (then redeploy)
   cacheLife("max")
   const panels: BenchPanel[] = []
   for (const suite of SUITES) {
     for (const st of STATES) {
-      const all = await lines<Rec>(`${suite.id}.v0-${st.storage}-${st.phase}.jsonl`)
+      const all = (await Promise.all(st.files.map((f) => lines<Rec>(`${suite.id}.${f}.jsonl`)))).flat()
       const recs = all.filter((r) => r.status === "ok")
       if (recs.length === 0) continue
       const by = new Map(recs.map((r) => [`${r.engine}|${r.query}`, r]))
+      const engines = ENGINES.filter((e) => recs.some((r) => r.engine === e.id))
       const allQueries = [...new Set(all.map((r) => r.query))]
-      const queries = allQueries.filter((q) => ENGINES.every((e) => by.has(`${e.id}|${q}`)))
+      const queries = allQueries.filter((q) => engines.every((e) => by.has(`${e.id}|${q}`)))
       if (queries.length === 0) continue
-      const bars = ENGINES.map((e) => {
+      const bars = engines.map((e) => {
         const rs = queries.map((q) => by.get(`${e.id}|${q}`)!)
+        const counted = rs.filter((r) => r.requests?.length)
         return {
           engine: e.id,
           label: e.label,
           timelake: e.timelake,
           first: gm(rs.map((r) => r.times[0])),
           best: gm(rs.map((r) => Math.min(...(r.times.length > 1 ? r.times.slice(1) : r.times)))),
+          requests: counted.length === rs.length ? rs.reduce((s, r) => s + r.requests![0], 0) / rs.length : null,
         }
       })
       const perQuery = allQueries.map((q) => ({
         query: q,
-        times: Object.fromEntries(ENGINES.map((e) => [e.id, by.get(`${e.id}|${q}`)?.times[0] ?? null])),
-        rows: Object.fromEntries(ENGINES.map((e) => [e.id, by.get(`${e.id}|${q}`)?.rows ?? null])),
+        times: Object.fromEntries(engines.map((e) => [e.id, by.get(`${e.id}|${q}`)?.times[0] ?? null])),
+        rows: Object.fromEntries(engines.map((e) => [e.id, by.get(`${e.id}|${q}`)?.rows ?? null])),
       }))
       panels.push({ suite: suite.id, state: st.label, bars, queries: queries.length, perQuery })
     }
@@ -104,15 +118,34 @@ export async function loadPanels(): Promise<BenchPanel[]> {
   return panels
 }
 
+type IngestRec = {
+  system: string
+  storage: string
+  phase: string
+  seconds: number
+  commit_ms_p50: number
+  commit_ms_p95: number
+  data_files: number
+  compaction_after_ingest_s?: Record<string, number>
+}
+
 export async function loadIngest(): Promise<IngestRow[]> {
   "use cache" // read at build time: results change only when benchmarks are re-run (then redeploy)
   cacheLife("max")
-  type R = { system: string; storage: string; phase: string; seconds: number; commit_ms_p50: number; commit_ms_p95: number; objects: number }
-  const latest = new Map<string, R>()
-  for (const r of await lines<R>("v0_ingest.jsonl")) if (r.phase === "ingest") latest.set(`${r.storage}|${r.system}`, r)
+  const latest = new Map<string, IngestRec>()
+  for (const r of await lines<IngestRec>("v0_ingest.laptop.jsonl")) if (r.phase === "ingest") latest.set(`${r.storage}|${r.system}`, r)
   return [...latest.values()]
     .sort((a, b) => b.storage.localeCompare(a.storage) || a.seconds - b.seconds)
-    .map((r) => ({ storage: r.storage, system: r.system, seconds: r.seconds, p50: r.commit_ms_p50, p95: r.commit_ms_p95, objects: r.objects }))
+    .map((r) => ({ storage: r.storage, system: r.system, seconds: r.seconds, p50: r.commit_ms_p50, p95: r.commit_ms_p95, files: r.data_files }))
+}
+
+/** Hours from the end of ingest until S3 Tables' managed compaction had run, per table: [min, max]. */
+export async function loadS3TablesDelay(): Promise<[number, number] | null> {
+  "use cache"
+  cacheLife("max")
+  const m = (await lines<IngestRec>("v0_ingest.laptop.jsonl")).findLast((r) => r.system === "s3tables" && r.phase === "maintain")
+  const s = Object.values(m?.compaction_after_ingest_s ?? {})
+  return s.length ? [Math.min(...s) / 3600, Math.max(...s) / 3600] : null
 }
 
 /** TimescaleDB on Tiger Cloud (bench/results/tsdb_cloud.jsonl), if that run exists. Works with partial data. */
@@ -151,8 +184,8 @@ export async function loadTsdb(): Promise<TsdbRow[] | null> {
     }
     // Timelake's reader over the same queries, after maintenance, for reference.
     for (const [state, label] of [
-      ["s3-maintained", "Timelake reader · RustFS +20 ms"],
-      ["local-maintained", "Timelake reader · local disk"],
+      ["laptop-aws-s3-maintained", "Timelake reader · AWS S3 from the same laptop"],
+      ["laptop-local-maintained", "Timelake reader · local disk"],
     ] as const) {
       const tl = new Map(
         (await lines<Rec>(`${suite.id}.v0-${state}.jsonl`))

@@ -6,9 +6,16 @@ import { BenchCharts } from "@/components/bench-charts"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { SUITES, loadIngest, loadPanels, loadTsdb, type TsdbRow } from "@/lib/benchmarks"
+import { SUITES, loadIngest, loadPanels, loadS3TablesDelay, loadTsdb, type TsdbRow } from "@/lib/benchmarks"
 
 export const metadata: Metadata = { title: "Benchmarks" }
+
+const SYSTEMS: Record<string, string> = {
+  timelake: "Timelake",
+  lance: "Lance",
+  iceberg: "Iceberg (PyIceberg)",
+  s3tables: "S3 Tables (PyIceberg)",
+}
 
 function fmt(s: number | null) {
   if (s == null) return "—"
@@ -22,7 +29,7 @@ export default function BenchmarksPage() {
         <h1 className="text-3xl font-semibold tracking-tight">Benchmarks</h1>
         <p className="text-muted-foreground">
           Does Timelake beat what a team would otherwise build for time series on object storage? We stream the same IoT data
-          into Timelake, naive Iceberg (the S3 Tables write pattern) and Lance, then run the same queries against each.
+          into Timelake, naive Iceberg, AWS S3 Tables and Lance, then run the same queries against each.
         </p>
       </header>
 
@@ -60,12 +67,12 @@ export default function BenchmarksPage() {
           </CardHeader>
           <CardContent className="space-y-2 text-sm text-muted-foreground">
             <p>
-              One M1 Pro laptop (10 cores). &ldquo;S3&rdquo; is RustFS behind a proxy that adds 20 ms before each response,
-              roughly S3 in-region; it is not AWS.
+              One M1 Pro laptop writing to and reading from AWS S3 in us-east-2, about 45 ms away. Times include that trip,
+              the same for every system.
             </p>
             <p>
-              Naive Iceberg is PyIceberg appends read by DuckDB; its maintenance simulates S3 Tables&apos; default binpack
-              compaction. Lance is read by DuckDB and by DataFusion with Lance&apos;s scanner.
+              Naive Iceberg and S3 Tables get the same PyIceberg appends and are read by DuckDB. S3 Tables compacts on its
+              own schedule. Lance is read by DuckDB and by DataFusion with Lance&apos;s scanner.
             </p>
           </CardContent>
         </Card>
@@ -78,14 +85,14 @@ export default function BenchmarksPage() {
       <section className="space-y-3 text-sm text-muted-foreground">
         <h2 className="text-xl font-semibold tracking-tight text-foreground">Caveats</h2>
         <ul className="ml-5 list-disc space-y-1.5">
-          <li>One dataset and one machine. Real S3 adds bandwidth limits and latency variance that the proxy does not.</li>
+          <li>One dataset, from one laptop over the internet. Inside the AWS region every system would be faster.</li>
           <li>
-            S3 Tables&apos; managed compaction runs asynchronously and can sort if a sort order is configured; here it is
-            binpack only, with all snapshots kept.
+            Right after ingest on S3, five queries failed when S3 reset connections under many parallel reads (four on
+            Iceberg, one on DuckDB over Timelake). Charts use the queries every system completed.
           </li>
           <li>
-            Lance compaction on RustFS needed upload concurrency 1 (concurrent multipart uploads failed), so Lance&apos;s S3
-            maintenance time is not comparable.
+            S3 Tables&apos; compaction is its default (binpack, no sort). Iceberg&apos;s is simulated the same way. Lance and
+            Timelake run their own.
           </li>
           <li>Timelake keeps replaced files for 1 hour (snapshot retention), so storage on disk exceeds the live table size until then.</li>
           <li>Timelake&apos;s reader reuses a table version loaded in the last second for planning; its own commits are always visible.</li>
@@ -96,13 +103,17 @@ export default function BenchmarksPage() {
 }
 
 async function Results() {
-  const [panels, ingest, tsdb] = await Promise.all([loadPanels(), loadIngest(), loadTsdb()])
+  const [panels, ingest, tsdb, delay] = await Promise.all([loadPanels(), loadIngest(), loadTsdb(), loadS3TablesDelay()])
   return (
     <>
       <section className="space-y-4">
         <div>
           <h2 className="text-xl font-semibold tracking-tight">Query time</h2>
-          <p className="text-sm text-muted-foreground">Timelake&apos;s reader in blue; the multiplier is relative to the fastest engine.</p>
+          <p className="text-sm text-muted-foreground">
+            Timelake&apos;s reader in blue; the multiplier is relative to the fastest engine.
+            {delay &&
+              ` S3 Tables compacted ${delay[0].toFixed(1)}–${delay[1].toFixed(1)} hours after ingest; until then its readers see the first panel.`}
+          </p>
         </div>
         <BenchCharts panels={panels} suites={[...SUITES]} />
       </section>
@@ -111,7 +122,9 @@ async function Results() {
         <Card>
           <CardHeader>
             <CardTitle>Ingest</CardTitle>
-            <CardDescription>1,728 commits, 23.3M rows. Timelake&apos;s times include its inline compaction and snapshot expiry.</CardDescription>
+            <CardDescription>
+              1,728 commits, 23.3M rows. Timelake&apos;s times include its inline compaction and snapshot expiry.
+            </CardDescription>
           </CardHeader>
           <CardContent className="overflow-x-auto">
             <Table>
@@ -122,20 +135,20 @@ async function Results() {
                   <TableHead className="text-right">Wall time</TableHead>
                   <TableHead className="text-right">Commit p50</TableHead>
                   <TableHead className="text-right">Commit p95</TableHead>
-                  <TableHead className="text-right">Objects written</TableHead>
+                  <TableHead className="text-right">Data files</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {ingest.map((r) => (
                   <TableRow key={`${r.storage}-${r.system}`}>
                     <TableCell>
-                      <Badge variant="outline">{r.storage === "s3" ? "S3 (RustFS +20 ms)" : "local disk"}</Badge>
+                      <Badge variant="outline">{r.storage === "s3" ? "AWS S3" : "local disk"}</Badge>
                     </TableCell>
-                    <TableCell className={r.system === "timelake" ? "font-medium" : undefined}>{r.system}</TableCell>
+                    <TableCell className={r.system === "timelake" ? "font-medium" : undefined}>{SYSTEMS[r.system] ?? r.system}</TableCell>
                     <TableCell className="text-right font-mono tabular-nums">{r.seconds.toFixed(1)} s</TableCell>
                     <TableCell className="text-right font-mono tabular-nums">{Math.round(r.p50)} ms</TableCell>
                     <TableCell className="text-right font-mono tabular-nums">{Math.round(r.p95)} ms</TableCell>
-                    <TableCell className="text-right font-mono tabular-nums">{r.objects.toLocaleString("en-US")}</TableCell>
+                    <TableCell className="text-right font-mono tabular-nums">{r.files.toLocaleString("en-US")}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -159,9 +172,9 @@ function TsdbSection({ rows }: { rows: TsdbRow[] }) {
         <p className="mt-1 text-sm text-muted-foreground">
           The same data and queries in a disposable Tiger Cloud service (us-east-1, DEV, shared CPU and memory: the
           smallest tier), as a plain hypertable and after converting every chunk to the columnstore. Client times are
-          measured from a laptop and include the network round trip; server time subtracts the median round trip of{" "}
-          <code className="font-mono">SELECT 1</code>. Timelake rows are its reader on this page&apos;s other setups, for
-          reference: different hardware, so read ratios as indicative. Full write-up in{" "}
+          measured from the same laptop and include the network round trip; server time subtracts the median round trip
+          of <code className="font-mono">SELECT 1</code>. Timelake rows are its reader on this page&apos;s AWS S3 and local
+          runs, for reference: different hardware, so read ratios as indicative. Full write-up in{" "}
           <code className="font-mono">bench/results/TIMESCALE.md</code>.
         </p>
         {!rows.some((r) => r.engine === "tsdb-tiered" && r.completed > 0) && (

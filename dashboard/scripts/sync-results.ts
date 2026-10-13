@@ -10,7 +10,8 @@ import path from "node:path"
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..")
 const src = path.resolve(root, "../bench/results")
 const dst = path.resolve(root, "data/results")
-const WANTED = [/^tsbs_iot\.v0-.*\.jsonl$/, /^iot_point\.v0-.*\.jsonl$/, /^v0_ingest\.jsonl$/, /^tsdb_cloud\.jsonl$/]
+// The real-S3 run (bench/run_aws.sh) and TimescaleDB on Tiger Cloud.
+const WANTED = [/^(tsbs_iot|iot_point)\.v0-laptop-.*\.jsonl$/, /^v0_ingest\.laptop\.jsonl$/, /^tsdb_cloud\.jsonl$/]
 
 const files = (await readdir(src)).filter((f) => WANTED.some((re) => re.test(f))).sort()
 if (files.length === 0) {
