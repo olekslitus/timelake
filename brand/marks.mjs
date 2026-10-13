@@ -6,8 +6,8 @@ import path from "node:path"
 
 // The pulse: flat, a sharp rise, a deeper fall, back to flat. v0 uses it as drawn; the parallel
 // versions use a lower pulse, because offsetting grows the spike on the outer lines.
-const PULSE = [[-6, 0], [30, 0], [43, -14], [67, 12], [78, 0], [106, 0]]
-const PULSE_LOW = [[-6, 0], [32, 0], [42, -10], [60, 8], [68, 0], [106, 0]]
+export const PULSE = [[-6, 0], [30, 0], [43, -14], [67, 12], [78, 0], [106, 0]]
+export const PULSE_LOW = [[-6, 0], [32, 0], [42, -10], [60, 8], [68, 0], [106, 0]]
 
 // Offsets a polyline along its normal by d (positive = down for a rightward line), with miter joins.
 // Segments that would reverse direction on the inner side of a sharp turn are dropped, the way a
@@ -48,8 +48,10 @@ export const MARKS = {
   "v0.2": { lines: 3, gap: 20, width: 8.6, mode: "parallel", center: 51, pulse: PULSE_LOW },
 }
 
+// `name` is a key of MARKS, or a spec object { lines, gap, width, mode, center, pulse, id }.
 export function markSvg(name, { color = "currentColor", size } = {}) {
-  const m = MARKS[name]
+  const m = typeof name === "string" ? MARKS[name] : name
+  if (typeof name !== "string") name = m.id
   const lines = Array.from({ length: m.lines }, (_, i) => {
     const d = (i - (m.lines - 1) / 2) * m.gap
     const pulse = m.pulse ?? PULSE
