@@ -3,6 +3,7 @@
   "version": "0.0.1",
   "description": "Read Timelake tables over HTTPS from the browser, Node, or serverless functions (WASM reader, Zod-typed rows)",
   "license": "Apache-2.0",
+  "homepage": "https://timelake.dev/docs/typescript",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/olekslitus/timelake.git",

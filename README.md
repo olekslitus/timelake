@@ -2,6 +2,8 @@
 
 **A serverless time-series lake on Apache Iceberg.** Point it at any object store (S3, R2, GCS, Azure, RustFS/MinIO) or a local directory. Stream or batch-load time-series data. Query it fast. No catalog server, no database, no Glue jobs.
 
+Website and docs: **[timelake.dev](https://timelake.dev)**
+
 - **Plain Iceberg + Parquet.** DuckDB, Spark, Trino and PyIceberg read Timelake tables directly.
 - **Time-series layout built in.** Data is partitioned by time and sorted by `(series key, time)`. Small files from frequent appends are compacted inline, and duplicates are removed (the latest write wins).
 - **Fast reads.** The reader prunes files on time and series, and answers "latest value per device" queries from a last-value index instead of a scan.
