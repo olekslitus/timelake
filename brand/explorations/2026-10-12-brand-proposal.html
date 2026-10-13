@@ -1,0 +1,441 @@
+<title>Timelake Brand Proposal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600&family=Geist+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: instrument-panel grid. Hairline-bordered cells, mono labels, ASCII illustrations in a dim ink with one accent. Dark-first. */
+:root {
+  --acc-d: #67D4F0; --acc-l: #0B7FA6;
+  --bg: #0B0D0E; --panel: #101315; --line: #23292C; --dim: #343C40; --fg: #E6EBED; --muted: #8B969B;
+  --accent: var(--acc-d); --on-accent: #0B0D0E;
+  --sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+:root[data-accent="phosphor"] { --acc-d: #5EE09A; --acc-l: #13844F; }
+:root[data-accent="amber"] { --acc-d: #F0B44C; --acc-l: #9A6206; }
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) {
+  --bg: #F4F5F5; --panel: #FFFFFF; --line: #D9DEE0; --dim: #C3CACD; --fg: #0D1113; --muted: #59656A;
+  --accent: var(--acc-l); --on-accent: #FFFFFF; color-scheme: light; } }
+:root[data-theme="light"] {
+  --bg: #F4F5F5; --panel: #FFFFFF; --line: #D9DEE0; --dim: #C3CACD; --fg: #0D1113; --muted: #59656A;
+  --accent: var(--acc-l); --on-accent: #FFFFFF; color-scheme: light; }
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font: 16px/1.55 var(--sans); padding-inline: 20px; padding-block: 0 96px; }
+.wrap { max-width: 1160px; margin: 0 auto; display: flex; flex-direction: column; gap: 88px; }
+.col { max-width: 740px; }
+h1, h2, h3 { margin: 0; text-wrap: balance; font-weight: 400; letter-spacing: -0.02em; }
+h1 { font-size: clamp(34px, 5.4vw, 60px); line-height: 1.04; font-weight: 300; }
+h2 { font-size: clamp(24px, 3vw, 32px); line-height: 1.15; font-weight: 300; }
+h3 { font-size: 20px; font-weight: 400; }
+p { margin: 0; }
+.label { font: 500 12px/1.2 var(--mono); text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
+.label b { color: var(--accent); font-weight: 500; }
+.lead { color: var(--muted); font-size: 17px; }
+.stack { display: flex; flex-direction: column; gap: 16px; }
+.stack-sm { display: flex; flex-direction: column; gap: 10px; }
+code, .mono { font-family: var(--mono); font-size: .88em; }
+section { display: flex; flex-direction: column; gap: 26px; }
+
+header.top { display: flex; align-items: center; gap: 12px; padding-block: 26px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+header.top svg { width: 26px; height: 26px; color: var(--fg); }
+header.top .wm { font-weight: 500; letter-spacing: -0.03em; font-size: 19px; }
+.switch { margin-left: auto; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.switch button { font: 500 12px var(--mono); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 4px; padding: 6px 9px; cursor: pointer; display: inline-flex; gap: 7px; align-items: center; }
+.switch button i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+.switch button[aria-pressed="true"] { color: var(--fg); border-color: var(--accent); }
+.switch button:focus-visible, .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Grid of hairline cells, the house style */
+.cells { display: grid; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--line); gap: 1px; }
+.cell { background: var(--panel); padding: 26px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+pre.ascii { margin: 0; font: 13px/1.45 var(--mono); color: var(--dim); white-space: pre; overflow-x: auto; }
+pre.ascii .a { color: var(--accent); }
+pre.ascii .f { color: var(--fg); }
+pre.ascii .m { color: var(--muted); }
+
+/* Hero */
+.hero { grid-template-columns: 1.35fr 1fr; }
+.hero .copy { padding: clamp(26px, 5vw, 56px); gap: 22px; justify-content: center; }
+.hero .sub { color: var(--muted); font-size: 18px; max-width: 46ch; }
+.btns { display: flex; flex-wrap: wrap; gap: 10px; }
+.btn { font: 500 13px var(--mono); text-transform: uppercase; letter-spacing: .06em; padding: 10px 14px; border-radius: 4px; border: 1px solid var(--line); color: var(--fg); background: transparent; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.hero .art { display: grid; place-items: center; padding: 30px 18px; position: relative; overflow: hidden; }
+.hero .art pre { position: absolute; inset: 0; padding: 14px; font-size: 12px; line-height: 1.5; color: var(--dim); overflow: hidden; }
+.hero .art .disc { position: relative; width: min(220px, 60%); aspect-ratio: 1; background: var(--panel); border-radius: 50%; padding: 14px; color: var(--fg); }
+.hero .art .disc svg { width: 100%; height: 100%; display: block; }
+
+.desc-line { font: 15px/1.5 var(--mono); color: var(--fg); border-left: 2px solid var(--accent); padding: 4px 0 4px 14px; }
+
+/* Pillars */
+.pillars { grid-template-columns: repeat(3, 1fr); }
+.pillar pre.ascii { min-height: 168px; }
+.pillar h3 { margin-top: 6px; }
+.pillar p { color: var(--muted); font-size: 15px; }
+.proof { font: 13px/1.5 var(--mono); color: var(--fg); border-top: 1px dashed var(--line); padding-top: 12px; margin-top: auto; }
+.proof span { color: var(--muted); }
+.thread { grid-template-columns: repeat(3, 1fr); }
+.thread .cell { flex-direction: row; gap: 14px; align-items: flex-start; padding: 20px 22px; }
+.thread svg { width: 22px; height: 22px; flex: none; color: var(--accent); margin-top: 2px; }
+.thread b { font-weight: 400; font-size: 17px; display: block; }
+.thread span { color: var(--muted); font-size: 14px; }
+
+/* Logo board */
+.logos { grid-template-columns: repeat(3, 1fr); }
+.logo { padding: 0; gap: 0; }
+.logo .pair { display: grid; grid-template-columns: 1fr 1fr; }
+.logo .sw { display: grid; place-items: center; gap: 14px; padding: 26px 10px 18px; }
+.logo .sw.paper { background: #FFFFFF; color: #0A0A0A; }
+.logo .sw.ink { background: #0A0A0A; color: #FFFFFF; }
+.logo .sw svg.big { width: 104px; height: 104px; }
+.logo .sizes { display: flex; align-items: center; gap: 12px; }
+.logo .sizes svg { display: block; }
+.logo .meta { padding: 18px 22px 22px; display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--line); }
+.logo .meta .label { display: flex; justify-content: space-between; gap: 8px; }
+.logo .meta p { color: var(--muted); font-size: 14px; }
+.rec { color: var(--accent) !important; }
+.lockups { grid-template-columns: 1fr 1fr; }
+.lockups .cell { flex-direction: row; align-items: center; gap: 14px; padding: 30px; }
+.lockups .cell.paper { background: #FFFFFF; color: #0A0A0A; }
+.lockups .cell.ink { background: #0A0A0A; color: #FFFFFF; }
+.lockups svg { width: 44px; height: 44px; flex: none; }
+.lockups b { font-weight: 500; font-size: 34px; letter-spacing: -0.045em; }
+
+/* Topology diagram */
+.topo-wrap { overflow-x: auto; }
+.topo { min-width: 980px; display: grid; grid-template-columns: 1.25fr 0.85fr 1fr 0.95fr; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.zone { background: var(--panel); padding: 20px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.zone .where { font: 12px var(--mono); color: var(--muted); margin-top: -6px; }
+.zone pre.ascii { font-size: 12.5px; color: var(--muted); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto; }
+.chips span { font: 11px var(--mono); border: 1px solid var(--line); border-radius: 3px; padding: 3px 6px; color: var(--muted); }
+.chips span.plan { border-style: dashed; }
+.wire { background: var(--panel); padding: 8px 20px 10px; font: 12px/1.5 var(--mono); color: var(--muted); display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.wire .arrow { color: var(--accent); }
+.bucket { grid-column: 1 / -1; background: var(--panel); padding: 22px 24px; display: grid; grid-template-columns: 1fr auto; gap: 18px 32px; align-items: start; }
+.bucket .side { display: flex; flex-direction: column; gap: 10px; max-width: 280px; }
+.bucket .side p { color: var(--muted); font-size: 14px; }
+.legend { display: flex; gap: 18px; flex-wrap: wrap; font: 12px var(--mono); color: var(--muted); }
+
+/* Benchmarks note */
+.bench { grid-template-columns: repeat(2, 1fr); }
+.bench .cell p { color: var(--muted); font-size: 15px; }
+
+.decide { grid-template-columns: repeat(3, 1fr); }
+.decide .cell p { color: var(--muted); font-size: 14px; }
+.note { color: var(--muted); font-size: 14px; }
+
+@media (max-width: 860px) {
+  .hero, .pillars, .thread, .logos, .lockups, .bench, .decide { grid-template-columns: 1fr; }
+  .hero .art { min-height: 260px; }
+  .bucket { grid-template-columns: 1fr; }
+}
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <svg viewBox="0 0 100 100" id="hdr-mark" aria-hidden="true"></svg>
+    <span class="wm">timelake</span>
+    <div class="switch" role="group" aria-label="Accent color">
+      <span class="label">Accent</span>
+      <button type="button" id="acc-ice" data-acc="ice" aria-pressed="true"><i style="background:#67D4F0"></i>Ice</button>
+      <button type="button" id="acc-phosphor" data-acc="phosphor" aria-pressed="false"><i style="background:#5EE09A"></i>Phosphor</button>
+      <button type="button" id="acc-amber" data-acc="amber" aria-pressed="false"><i style="background:#F0B44C"></i>Amber</button>
+    </div>
+  </header>
+
+  <section>
+    <div class="col stack">
+      <div class="label">Brand proposal · <b>v3</b></div>
+      <h2>Decided: the open time-series lakehouse, three practical promises, the Pulse mark (v0, with v0.1 and v0.2 to compare) and the Ice accent. Phosphor and Amber stay on file for future projects.</h2>
+    </div>
+  </section>
+
+  <!-- HERO -->
+  <section>
+    <div class="label">01 · How the site opens</div>
+    <div class="cells hero">
+      <div class="cell copy">
+        <div class="label">Open source · Apache 2.0</div>
+        <h1>The open time&#8209;series lakehouse</h1>
+        <p class="sub">Keep time series in your own bucket on S3, R2, GCS, Azure or a disk. Query them fast, run no database, and schedule no maintenance.</p>
+        <div class="btns"><span class="btn primary">Quick start</span><span class="btn">Benchmarks</span><span class="btn">GitHub</span></div>
+      </div>
+      <div class="cell art">
+        <pre aria-hidden="true" id="hero-bg"></pre>
+        <div class="disc"><svg viewBox="0 0 100 100" id="hero-mark" aria-hidden="true"></svg></div>
+      </div>
+    </div>
+    <div class="stack-sm col">
+      <div class="label">Short description (GitHub, packages, page title)</div>
+      <p class="desc-line">The open time-series lakehouse. Fast queries on your own object storage, with no database and no maintenance jobs.</p>
+    </div>
+  </section>
+
+  <!-- PILLARS -->
+  <section>
+    <div class="col stack-sm">
+      <div class="label">02 · What we promise, in this order</div>
+      <h2>Speed you feel every day, no maintenance work, a smaller bill</h2>
+    </div>
+    <div class="cells pillars">
+      <div class="cell pillar">
+<pre class="ascii" aria-hidden="true">+ + + + + + + + + + + + + +
++ + [ ] [ ] [ ] [ ] [ ] + +
++ + [ ] [ ] <span class="a">[#]</span> [ ] [ ] + +
++ + [ ] [ ] <span class="a">[#]</span> [ ] [ ] + +
++ + [ ] [ ] [ ] [ ] [ ] + +
++ + + + + + + + + + + + + +
+<span class="m">  query reads 2 of 25 files</span></pre>
+        <h3>Fast every day</h3>
+        <p>Dashboards, trends and "what is the value now" read only the files and row groups they need. The latest value of every series comes from an index, not a scan.</p>
+        <div class="proof">12 requests vs 1,700+ <span>for latest values</span><br>3.7× Lance · 16× naive Iceberg <span>right after ingest</span></div>
+      </div>
+      <div class="cell pillar">
+<pre class="ascii" aria-hidden="true"><span class="f">[][][][][][][][][][][][][]</span>
+ \/  \/  \/  \/  \/  \/
+<span class="f">[==][==][==][==][==][==]</span>
+   \___\___|___/___/
+<span class="a">[======================]</span>
+<span class="m">  merged while you write</span></pre>
+        <h3>Nothing to maintain</h3>
+        <p>Compaction, deduplication, retention and snapshot cleanup run inside the writer. No Spark or Glue jobs to schedule, size, monitor or pay for.</p>
+        <div class="proof">1,728 commits · 0 external jobs<br><span>one optional command for a full rewrite</span></div>
+      </div>
+      <div class="cell pillar">
+<pre class="ascii" aria-hidden="true"><span class="f">STORAGE </span>  GB-month x $0.023
+<span class="f">GET     </span>  per 1k   x $0.0004
+<span class="f">PUT     </span>  per 1k   x $0.005
+<span class="f">SERVERS </span>  ............ <span class="a">$0</span>
+<span class="f">JOBS    </span>  ............ <span class="a">$0</span>
+<span class="m">  S3 standard, us-east-1</span></pre>
+        <h3>Pay for storage, not a database</h3>
+        <p>No instance running all month. Your bill is bytes and requests on object storage, and Timelake keeps both low: compact files, sorted data, few requests per query.</p>
+        <div class="proof">228 MB vs 449 MB <span>(Lance) for the same data</span><br><span>$ per month per workload: from the new benchmark</span></div>
+      </div>
+    </div>
+    <div class="cells thread">
+      <div class="cell"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h10"/></svg><div><b>Open format</b><span>Parquet files and open table metadata. DuckDB, Spark and PyIceberg read them today.</span></div></div>
+      <div class="cell"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="1"/><path d="M3 10h18"/></svg><div><b>Any object store</b><span>S3, R2, GCS, Azure, MinIO or a disk. Read-only from any HTTPS host.</span></div></div>
+      <div class="cell"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M8 7l-5 5 5 5M16 7l5 5-5 5"/></svg><div><b>Apache 2.0</b><span>The whole engine, the CLI and the clients. No closed core.</span></div></div>
+    </div>
+  </section>
+
+  <!-- LOGO -->
+  <section>
+    <div class="col stack-sm">
+      <div class="label">03 · Mark</div>
+      <h2>Parallel lines that change together, inside a circle</h2>
+      <p class="lead">Black, with sharp mitered corners. Each line is one series; they turn at the same moments, the way readings from one machine do. Shown at 104, 32 and 16 px, on paper and on ink.</p>
+    </div>
+    
+    <div class="label">Pulse, iterated</div>
+    <div class="cells logos"><div class="cell logo"><div class="pair">
+  <div class="sw paper"><svg class="big" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><title>Timelake</title><defs><clipPath id="tl-v0"><circle cx="50" cy="50" r="47"/></clipPath></defs><g clip-path="url(#tl-v0)" fill="none" stroke="currentColor" stroke-width="4.8" stroke-linejoin="miter" stroke-miterlimit="12" stroke-linecap="butt"><polyline points="-6,26 30,26 43,12 67,38 78,26 106,26"/><polyline points="-6,39 30,39 43,25 67,51 78,39 106,39"/><polyline points="-6,52 30,52 43,38 67,64 78,52 106,52"/><polyline points="-6,65 30,65 43,51 67,77 78,65 106,65"/><polyline points="-6,78 30,78 43,64 67,90 78,78 106,78"/></g></svg>
+<div class="sizes"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="32" height="32"><title>Timelake</title><defs><clipPath id="tl-v0"><circle cx="50" cy="50" r="47"/></clipPath></defs><g clip-path="url(#tl-v0)" fill="none" stroke="currentColor" stroke-width="4.8" stroke-linejoin="miter" stroke-miterlimit="12" stroke-linecap="butt"><polyline points="-6,26 30,26 43,12 67,38 78,26 106,26"/><polyline points="-6,39 30,39 43,25 67,51 78,39 106,39"/><polyline points="-6,52 30,52 43,38 67,64 78,52 106,52"/><polyline points="-6,65 30,65 43,51 67,77 78,65 106,65"/><polyline points="-6,78 30,78 43,64 67,90 78,78 106,78"/></g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="16" height="16"><title>Timelake</title><defs><clipPath id="tl-v0"><circle cx="50" cy="50" r="47"/></clipPath></defs><g clip-path="url(#tl-v0)" fill="none" stroke="currentColor" stroke-width="4.8" stroke-linejoin="miter" stroke-miterlimit="12" stroke-linecap="butt"><polyline points="-6,26 30,26 43,12 67,38 78,26 106,26"/><polyline points="-6,39 30,39 43,25 67,51 78,39 106,39"/><polyline points="-6,52 30,52 43,38 67,64 78,52 106,52"/><polyline points="-6,65 30,65 43,51 67,77 78,65 106,65"/><polyline points="-6,78 30,78 43,64 67,90 78,78 106,78"/></g></svg>
+</div></div>
+  <div class="sw ink"><svg class="big" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><title>Timelake</title><defs><clipPath id="tl-v0"><circle cx="50" cy="50" r="47"/></clipPath></defs><g clip-path="url(#tl-v0)" fill="none" stroke="currentColor" stroke-width="4.8" stroke-linejoin="miter" stroke-miterlimit="12" stroke-linecap="butt"><polyline points="-6,26 30,26 43,12 67,38 78,26 106,26"/><polyline points="-6,39 30,39 43,25 67,51 78,39 106,39"/><polyline points="-6,52 30,52 43,38 67,64 78,52 106,52"/><polyline points="-6,65 30,65 43,51 67,77 78,65 106,65"/><polyline points="-6,78 30,78 43,64 67,90 78,78 106,78"/></g></svg>
+<div class="sizes"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="32" height="32"><title>Timelake</title><defs><clipPath id="tl-v0"><circle cx="50" cy="50" r="47"/></clipPath></defs><g clip-path="url(#tl-v0)" fill="none" stroke="currentColor" stroke-width="4.8" stroke-linejoin="miter" stroke-miterlimit="12" stroke-linecap="butt"><polyline points="-6,26 30,26 43,12 67,38 78,26 106,26"/><polyline points="-6,39 30,39 43,25 67,51 78,39 106,39"/><polyline points="-6,52 30,52 43,38 67,64 78,52 106,52"/><polyline points="-6,65 30,65 43,51 67,77 78,65 106,65"/><polyline points="-6,78 30,78 43,64 67,90 78,78 106,78"/></g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="16" height="16"><title>Timelake</title><defs><clipPath id="tl-v0"><circle cx="50" cy="50" r="47"/></clipPath></defs><g clip-path="url(#tl-v0)" fill="none" stroke="currentColor" stroke-width="4.8" stroke-linejoin="miter" stroke-miterlimit="12" stroke-linecap="butt"><polyline points="-6,26 30,26 43,12 67,38 78,26 106,26"/><polyline points="-6,39 30,39 43,25 67,51 78,39 106,39"/><polyline points="-6,52 30,52 43,38 67,64 78,52 106,52"/><polyline points="-6,65 30,65 43,51 67,77 78,65 106,65"/><polyline points="-6,78 30,78 43,64 67,90 78,78 106,78"/></g></svg>
+</div></div>
+  </div><div class="meta"><div class="label"><span>v0 · current</span></div><p>Five lines, vertical copies of one pulse. Recorded as the current mark.</p></div></div><div class="cell logo"><div class="pair">
+  <div class="sw paper"><svg class="big" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><title>Timelake</title><defs><clipPath id="tl-v0-1"><circle cx="50" cy="50" r="47"/></clipPath></defs><g clip-path="url(#tl-v0-1)" fill="none" stroke="currentColor" stroke-width="4.8" stroke-linejoin="miter" stroke-miterlimit="12" stroke-linecap="butt"><polyline points="-6,27 22.06,27 42,7.06 61.94,27 106,27"/><polyline points="-6,39 27.03,39 42,24.03 60,42.03 63.03,39 106,39"/><polyline points="-6,51 32,51 42,41 60,59 68,51 106,51"/><polyline points="-6,63 36.97,63 42,57.97 60,75.97 72.97,63 106,63"/><polyline points="-6,75 41.94,75 42,74.94 60,92.94 77.94,75 106,75"/></g></svg>
+<div class="sizes"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="32" height="32"><title>Timelake</title><defs><clipPath id="tl-v0-1"><circle cx="50" cy="50" r="47"/></clipPath></defs><g clip-path="url(#tl-v0-1)" fill="none" stroke="currentColor" stroke-width="4.8" stroke-linejoin="miter" stroke-miterlimit="12" stroke-linecap="butt"><polyline points="-6,27 22.06,27 42,7.06 61.94,27 106,27"/><polyline points="-6,39 27.03,39 42,24.03 60,42.03 63.03,39 106,39"/><polyline points="-6,51 32,51 42,41 60,59 68,51 106,51"/><polyline points="-6,63 36.97,63 42,57.97 60,75.97 72.97,63 106,63"/><polyline points="-6,75 41.94,75 42,74.94 60,92.94 77.94,75 106,75"/></g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="16" height="16"><title>Timelake</title><defs><clipPath id="tl-v0-1"><circle cx="50" cy="50" r="47"/></clipPath></defs><g clip-path="url(#tl-v0-1)" fill="none" stroke="currentColor" stroke-width="4.8" stroke-linejoin="miter" stroke-miterlimit="12" stroke-linecap="butt"><polyline points="-6,27 22.06,27 42,7.06 61.94,27 106,27"/><polyline points="-6,39 27.03,39 42,24.03 60,42.03 63.03,39 106,39"/><polyline points="-6,51 32,51 42,41 60,59 68,51 106,51"/><polyline points="-6,63 36.97,63 42,57.97 60,75.97 72.97,63 106,63"/><polyline points="-6,75 41.94,75 42,74.94 60,92.94 77.94,75 106,75"/></g></svg>
+</div></div>
+  <div class="sw ink"><svg class="big" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><title>Timelake</title><defs><clipPath id="tl-v0-1"><circle cx="50" cy="50" r="47"/></clipPath></defs><g clip-path="url(#tl-v0-1)" fill="none" stroke="currentColor" stroke-width="4.8" stroke-linejoin="miter" stroke-miterlimit="12" stroke-linecap="butt"><polyline points="-6,27 22.06,27 42,7.06 61.94,27 106,27"/><polyline points="-6,39 27.03,39 42,24.03 60,42.03 63.03,39 106,39"/><polyline points="-6,51 32,51 42,41 60,59 68,51 106,51"/><polyline points="-6,63 36.97,63 42,57.97 60,75.97 72.97,63 106,63"/><polyline points="-6,75 41.94,75 42,74.94 60,92.94 77.94,75 106,75"/></g></svg>
+<div class="sizes"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="32" height="32"><title>Timelake</title><defs><clipPath id="tl-v0-1"><circle cx="50" cy="50" r="47"/></clipPath></defs><g clip-path="url(#tl-v0-1)" fill="none" stroke="currentColor" stroke-width="4.8" stroke-linejoin="miter" stroke-miterlimit="12" stroke-linecap="butt"><polyline points="-6,27 22.06,27 42,7.06 61.94,27 106,27"/><polyline points="-6,39 27.03,39 42,24.03 60,42.03 63.03,39 106,39"/><polyline points="-6,51 32,51 42,41 60,59 68,51 106,51"/><polyline points="-6,63 36.97,63 42,57.97 60,75.97 72.97,63 106,63"/><polyline points="-6,75 41.94,75 42,74.94 60,92.94 77.94,75 106,75"/></g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="16" height="16"><title>Timelake</title><defs><clipPath id="tl-v0-1"><circle cx="50" cy="50" r="47"/></clipPath></defs><g clip-path="url(#tl-v0-1)" fill="none" stroke="currentColor" stroke-width="4.8" stroke-linejoin="miter" stroke-miterlimit="12" stroke-linecap="butt"><polyline points="-6,27 22.06,27 42,7.06 61.94,27 106,27"/><polyline points="-6,39 27.03,39 42,24.03 60,42.03 63.03,39 106,39"/><polyline points="-6,51 32,51 42,41 60,59 68,51 106,51"/><polyline points="-6,63 36.97,63 42,57.97 60,75.97 72.97,63 106,63"/><polyline points="-6,75 41.94,75 42,74.94 60,92.94 77.94,75 106,75"/></g></svg>
+</div></div>
+  </div><div class="meta"><div class="label"><span>v0.1</span></div><p>Truly parallel lines: the gap across the lines is the same on the slopes as on the flats. The outer lines become nested chevrons.</p></div></div><div class="cell logo"><div class="pair">
+  <div class="sw paper"><svg class="big" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><title>Timelake</title><defs><clipPath id="tl-v0-2"><circle cx="50" cy="50" r="47"/></clipPath></defs><g clip-path="url(#tl-v0-2)" fill="none" stroke="currentColor" stroke-width="8.6" stroke-linejoin="miter" stroke-miterlimit="12" stroke-linecap="butt"><polyline points="-6,31 23.72,31 42,12.72 60.28,31 106,31"/><polyline points="-6,51 32,51 42,41 60,59 68,51 106,51"/><polyline points="-6,71 40.28,71 42,69.28 60,87.28 76.28,71 106,71"/></g></svg>
+<div class="sizes"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="32" height="32"><title>Timelake</title><defs><clipPath id="tl-v0-2"><circle cx="50" cy="50" r="47"/></clipPath></defs><g clip-path="url(#tl-v0-2)" fill="none" stroke="currentColor" stroke-width="8.6" stroke-linejoin="miter" stroke-miterlimit="12" stroke-linecap="butt"><polyline points="-6,31 23.72,31 42,12.72 60.28,31 106,31"/><polyline points="-6,51 32,51 42,41 60,59 68,51 106,51"/><polyline points="-6,71 40.28,71 42,69.28 60,87.28 76.28,71 106,71"/></g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="16" height="16"><title>Timelake</title><defs><clipPath id="tl-v0-2"><circle cx="50" cy="50" r="47"/></clipPath></defs><g clip-path="url(#tl-v0-2)" fill="none" stroke="currentColor" stroke-width="8.6" stroke-linejoin="miter" stroke-miterlimit="12" stroke-linecap="butt"><polyline points="-6,31 23.72,31 42,12.72 60.28,31 106,31"/><polyline points="-6,51 32,51 42,41 60,59 68,51 106,51"/><polyline points="-6,71 40.28,71 42,69.28 60,87.28 76.28,71 106,71"/></g></svg>
+</div></div>
+  <div class="sw ink"><svg class="big" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><title>Timelake</title><defs><clipPath id="tl-v0-2"><circle cx="50" cy="50" r="47"/></clipPath></defs><g clip-path="url(#tl-v0-2)" fill="none" stroke="currentColor" stroke-width="8.6" stroke-linejoin="miter" stroke-miterlimit="12" stroke-linecap="butt"><polyline points="-6,31 23.72,31 42,12.72 60.28,31 106,31"/><polyline points="-6,51 32,51 42,41 60,59 68,51 106,51"/><polyline points="-6,71 40.28,71 42,69.28 60,87.28 76.28,71 106,71"/></g></svg>
+<div class="sizes"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="32" height="32"><title>Timelake</title><defs><clipPath id="tl-v0-2"><circle cx="50" cy="50" r="47"/></clipPath></defs><g clip-path="url(#tl-v0-2)" fill="none" stroke="currentColor" stroke-width="8.6" stroke-linejoin="miter" stroke-miterlimit="12" stroke-linecap="butt"><polyline points="-6,31 23.72,31 42,12.72 60.28,31 106,31"/><polyline points="-6,51 32,51 42,41 60,59 68,51 106,51"/><polyline points="-6,71 40.28,71 42,69.28 60,87.28 76.28,71 106,71"/></g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="16" height="16"><title>Timelake</title><defs><clipPath id="tl-v0-2"><circle cx="50" cy="50" r="47"/></clipPath></defs><g clip-path="url(#tl-v0-2)" fill="none" stroke="currentColor" stroke-width="8.6" stroke-linejoin="miter" stroke-miterlimit="12" stroke-linecap="butt"><polyline points="-6,31 23.72,31 42,12.72 60.28,31 106,31"/><polyline points="-6,51 32,51 42,41 60,59 68,51 106,51"/><polyline points="-6,71 40.28,71 42,69.28 60,87.28 76.28,71 106,71"/></g></svg>
+</div></div>
+  </div><div class="meta"><div class="label"><span>v0.2</span></div><p>Three bold parallel lines. The clearest at 16 and 32 px, so the favicon candidate even if v0 or v0.1 stays the main mark.</p></div></div></div>
+    <div class="label">The six first explorations</div>
+    <div class="cells logos" id="logos"></div>
+    <div class="cells lockups">
+      <div class="cell paper"><svg viewBox="0 0 100 100" id="lock-a" aria-hidden="true"></svg><b>timelake</b></div>
+      <div class="cell ink"><svg viewBox="0 0 100 100" id="lock-b" aria-hidden="true"></svg><b>timelake</b></div>
+    </div>
+    <p class="note col">Wordmark: lowercase Geist Medium, tight tracking. Type for the site stays Geist and Geist Mono, used the way Oxide does: light sans for headlines, mono for labels, numbers and illustrations.</p>
+  </section>
+
+  <!-- TOPOLOGY -->
+  <section>
+    <div class="col stack-sm">
+      <div class="label">04 · Diagram</div>
+      <h2>Where every part of Timelake runs</h2>
+      <p class="lead">Four places code can run, one bucket underneath, and exactly what crosses the wire. Every box is something we ship; the one dashed item is planned.</p>
+    </div>
+    <div class="topo-wrap">
+      <div class="topo">
+        <div class="zone">
+          <div class="label"><b>Your process</b></div>
+          <div class="where">server · laptop · edge gateway · Lambda</div>
+<pre class="ascii"><span class="f">python</span> --+ PyO3
+<span class="f">cli   </span> --+
+<span class="f">rust  </span> --+
+           v
+<span class="a">[ timelake core ]</span>
+  writer    sort, partition,
+            Parquet + LVI
+  commit    put-if-absent,
+            retry
+  maintain  inline, tiered
+  reader    DataFusion SQL,
+            pruning, LVI</pre>
+          <div class="chips"><span>Rust</span><span>Apache Arrow</span><span>Apache DataFusion</span><span>Parquet</span><span>object_store</span><span>PyO3</span></div>
+        </div>
+        <div class="zone">
+          <div class="label"><b>Scheduled</b> · optional</div>
+          <div class="where">cron · Lambda · K8s CronJob</div>
+<pre class="ascii"><span class="a">$ timelake maintain</span>
+
+  full compaction
+  one sorted file
+  per partition
+  retention
+  snapshot cleanup</pre>
+          <div class="chips"><span>same binary</span><span>stateless</span></div>
+        </div>
+        <div class="zone">
+          <div class="label"><b>Browser &amp; edge</b></div>
+          <div class="where">web apps · Vercel · Workers</div>
+<pre class="ascii"><span class="f">@timelake/client</span>
+  TypeScript, Zod
+        v
+<span class="a">[ timelake-wasm ]</span>
+  metadata, pruning,
+  Parquet decode,
+  latest / range /
+  bucket queries</pre>
+          <div class="chips"><span>Rust → WebAssembly</span><span>TypeScript</span><span>Zod</span></div>
+        </div>
+        <div class="zone">
+          <div class="label"><b>Other engines</b></div>
+          <div class="where">same files, no export</div>
+<pre class="ascii"><span class="f">DuckDB   </span> iceberg_scan
+<span class="f">Spark    </span> Hadoop catalog
+<span class="f">PyIceberg</span> static table</pre>
+          <div class="chips"><span class="plan">Trino · Athena · Snowflake via REST catalog · planned</span></div>
+        </div>
+
+        <div class="wire"><span class="arrow">|  ^</span><span>PUT data, PUT-if-absent</span><span>metadata · GET ranges</span></div>
+        <div class="wire"><span class="arrow">|  ^</span><span>GET, PUT rewritten</span><span>files, DELETE old</span></div>
+        <div class="wire"><span class="arrow">   ^</span><span>GET byte ranges</span><span>over HTTPS, read-only</span></div>
+        <div class="wire"><span class="arrow">   ^</span><span>GET, standard</span><span>Iceberg reads</span></div>
+
+        <div class="bucket">
+          <div class="stack-sm">
+            <div class="label"><b>Your bucket</b> · S3, R2, GCS, Azure Blob, MinIO, local disk</div>
+<pre class="ascii"><span class="f">s3://your-bucket/lake/</span>
++-- <span class="a">timelake-tables.json</span> ............ table list for HTTPS readers
++-- <span class="f">iot/readings/</span>
+    +-- metadata/
+    |   +-- <span class="a">v42.metadata.json</span> ........... schema, contract, snapshots
+    |   +-- <span class="a">version-hint.text</span> ........... newest version, for DuckDB and Spark
+    |   +-- <span class="a">snap-*.avro</span> ................. manifest list
+    |   +-- <span class="a">*-m.avro</span> .................... manifests: column stats per file
+    |   +-- <span class="a">lvi-*.parquet</span> ............... last-value index
+    +-- data/time_day=2026-10-12/
+        +-- <span class="a">*.parquet</span> ................... sorted by (series, time), ZSTD</pre>
+          </div>
+          <div class="side">
+            <div class="label">No catalog server</div>
+            <p>A commit is one conditional write of the next <code>vN.metadata.json</code>. Two writers can't both win, so there is no lock service and no database.</p>
+            <div class="chips"><span>Iceberg v2 layout</span><span>Apache Parquet</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DECIDE -->
+  <section>
+    <div class="col stack-sm">
+      <div class="label">05 · Your call</div>
+      <h2>Two picks, then I apply it everywhere</h2>
+    </div>
+    <div class="cells decide">
+      <div class="cell"><div class="label">Mark</div><h3>v0, v0.1 or v0.2</h3><p>Pulse is chosen. Pick the version for the main mark; v0.2 can be the favicon either way.</p></div>
+      <div class="cell"><div class="label">Accent · decided</div><h3>Ice</h3><p>Phosphor and Amber are recorded in brand/README.md for spin-offs. The switch at the top still previews them.</p></div>
+      <div class="cell"><div class="label">Already decided</div><h3>Headline, promises, no "serverless"</h3><p>"The open time-series lakehouse"; speed, maintenance and cost as the three promises; Iceberg named only in how it works.</p></div>
+    </div>
+  </section>
+</div>
+
+<script>
+// Marks: N parallel polylines with mitered corners, clipped to a circle. Pattern points are [x, dy] in a 100-unit box.
+const P = {
+  // Slopes stay near 1 so the gap between parallel lines never closes at a corner.
+  pulse:  [[-6,0],[30,0],[43,-14],[67,12],[78,0],[106,0]],
+  shift:  [[-6,9],[40,9],[57,-9],[106,-9]],
+  trace:  [[-6,0],[12,0],[22,-10],[42,10],[62,-10],[82,10],[92,0],[106,0]],
+  ridge:  [[-6,8],[16,-10],[38,10],[60,-12],[82,8],[106,-12]],
+};
+const MARKS = [
+  { id: "pulse", name: "Pulse", rec: true, pat: P.pulse, n: 5, gap: 13, w: 4.8,
+    desc: "Five series, one sharp spike. Reads as a signal and as a lake's surface; holds up at 16 px." },
+  { id: "ring", name: "Ring", pat: P.pulse, n: 4, gap: 13, w: 4.6, ring: true,
+    desc: "The same lines inside a drawn circle. More of a badge, a little busier when small." },
+  { id: "shift", name: "Shift", pat: P.shift, n: 5, gap: 13, w: 4.8,
+    desc: "All lines step up together. Calm and architectural; the change is a level shift, not a spike." },
+  { id: "trace", name: "Trace", pat: P.trace, n: 5, gap: 13, w: 4,
+    desc: "A fast sawtooth, like a high-rate sensor. Most technical; fills in below 24 px." },
+  { id: "ridge", name: "Ridge", pat: P.ridge, n: 6, gap: 12, w: 4,
+    desc: "Steep diagonal zigzags, like contour lines or a mountain lake. Strong at large sizes." },
+  { id: "disc", name: "Disc", pat: P.pulse, n: 5, gap: 13, w: 4.6, disc: true,
+    desc: "A solid circle with the lines cut out. Best as an app icon or favicon; heavier in running text." },
+];
+let uid = 0;
+function mark(m, { scale = 1 } = {}) {
+  const id = `c${uid++}`;
+  const r = m.ring ? 38 : 47;
+  const y0 = 50 - ((m.n - 1) * m.gap) / 2 + 2;
+  const lines = Array.from({ length: m.n }, (_, i) =>
+    `<polyline points="${m.pat.map(([x, dy]) => `${x},${(y0 + i * m.gap + dy).toFixed(1)}`).join(" ")}"/>`).join("");
+  const stroke = m.disc ? "var(--cut, #fff)" : "currentColor";
+  return `<defs><clipPath id="${id}"><circle cx="50" cy="50" r="${r}"/></clipPath></defs>
+    ${m.disc ? `<circle cx="50" cy="50" r="48" fill="currentColor"/>` : ""}
+    ${m.ring ? `<circle cx="50" cy="50" r="46" fill="none" stroke="currentColor" stroke-width="${4.6 * scale}"/>` : ""}
+    <g clip-path="url(#${id})" fill="none" stroke="${stroke}" stroke-width="${m.w * scale}" stroke-linejoin="miter" stroke-miterlimit="12" stroke-linecap="butt">${lines}</g>`;
+}
+const svg = (m, attrs, scale) => `<svg viewBox="0 0 100 100" ${attrs} aria-hidden="true">${mark(m, { scale })}</svg>`;
+
+const logos = document.getElementById("logos");
+for (const m of MARKS) {
+  const side = (cls, cut) => `<div class="sw ${cls}" style="--cut:${cut}">${svg(m, 'class="big"')}
+    <div class="sizes">${svg(m, 'width="32" height="32"', 1.1)}${svg(m, 'width="16" height="16"', 1.35)}</div></div>`;
+  logos.insertAdjacentHTML("beforeend", `<div class="cell logo">
+    <div class="pair">${side("paper", "#FFFFFF")}${side("ink", "#0A0A0A")}</div>
+    <div class="meta"><div class="label"><span>${m.name}</span>${m.rec ? '<span class="rec">recommended</span>' : ""}</div><p>${m.desc}</p></div></div>`);
+}
+const pulse = MARKS[0];
+document.getElementById("hdr-mark").innerHTML = mark(pulse, { scale: 1.2 });
+document.getElementById("hero-mark").innerHTML = mark(pulse);
+document.getElementById("lock-a").innerHTML = mark(pulse, { scale: 1.1 });
+document.getElementById("lock-b").innerHTML = mark(pulse, { scale: 1.1 });
+
+// Dim ASCII field behind the hero mark.
+document.getElementById("hero-bg").textContent = Array.from({ length: 24 }, (_, r) =>
+  (r % 2 ? "\\/".repeat(40) : "/\\".repeat(40))).join("\n");
+
+// Accent switch.
+const root = document.documentElement;
+function setAccent(a) {
+  root.dataset.accent = a;
+  document.querySelectorAll(".switch button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.acc === a)));
+  try { localStorage.setItem("tl-accent", a); } catch {}
+}
+document.querySelectorAll(".switch button").forEach(b => b.addEventListener("click", () => setAccent(b.dataset.acc)));
+try { const saved = localStorage.getItem("tl-accent"); if (saved) setAccent(saved); } catch {}
+</script>

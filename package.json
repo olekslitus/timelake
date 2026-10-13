@@ -2,5 +2,9 @@
   "name": "timelake-monorepo",
   "private": true,
   "license": "Apache-2.0",
-  "workspaces": ["dashboard", "packages/*"]
+  "workspaces": [
+    "dashboard",
+    "packages/*",
+    "brand"
+  ]
 }

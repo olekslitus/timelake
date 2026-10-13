@@ -265,6 +265,9 @@ const SHAPES = {
 const base = { center: 51, blend: 1, anchor: null, style: "open", r: 47, ring: 4.6, ringGap: 4, join: "miter" };
 const shape = (k) => { const [x1, x2, h, x3, d, x4] = SHAPES[k]; return { x1, x2, h, x3, d, x4 }; };
 const PRESETS = [
+  ["v1 (current)", { ...base, lines: 3, gap: 17.5, width: 7.9, blend: 0.55, center: 50, ...shape("v0") }],
+  ["Disc alt", { ...base, lines: 3, gap: 17.5, width: 9, blend: 0.45, center: 64, style: "disc", r: 45.5, x1: 24.5, x2: 44.5, h: 5.5, x3: 57.5, d: 4.5, x4: 81 }],
+  ["Ring alt", { ...base, lines: 4, gap: 14, width: 7.4, center: 75, style: "ring", ...shape("low") }],
   ["v0", { ...base, lines: 5, gap: 13, width: 4.8, blend: 0, center: 52, ...shape("v0") }],
   ["v0.1", { ...base, lines: 5, gap: 12, width: 4.8, ...shape("low") }],
   ["v0.2", { ...base, lines: 3, gap: 20, width: 8.6, ...shape("low") }],
@@ -279,7 +282,7 @@ const PRESETS = [
 
 const WDEF = { case: "lower", font: "sans", layout: "row", weight: 500, track: -0.045, size: 0.62, gap: 0.24 };
 let W = { ...WDEF };
-let S = { ...PRESETS[3][1] };
+let S = { ...PRESETS[0][1] };
 try { const w = JSON.parse(localStorage.getItem("tl-mark-wordmark") || "null"); if (w && typeof w === "object") W = { ...W, ...w }; } catch {}
 try { const saved = JSON.parse(localStorage.getItem("tl-mark-draft") || "null"); if (saved && typeof saved === "object") S = { ...S, ...saved }; } catch {}
 

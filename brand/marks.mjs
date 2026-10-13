@@ -105,7 +105,16 @@ export const MARKS = {
   "v0.1": { lines: 5, gap: 12, width: 4.8, mode: "parallel", center: 51, pulse: PULSE_LOW },
   // v0.2: three bold parallel lines.
   "v0.2": { lines: 3, gap: 20, width: 8.6, mode: "parallel", center: 51, pulse: PULSE_LOW },
+  // v1 (current, chosen 2026-10-13 in the editor): three lines, v0's pulse, about halfway between
+  // copies and parallel, so the bottom line keeps a clear first rise and the gaps stay even.
+  "v1": { lines: 3, gap: 17.5, width: 7.9, center: 50, pulse: PULSE, mode: "parallel", blend: 0.55 },
+  // Considered alternates, kept for later: a solid disc with a low, wide pulse cut out, and a ring.
+  "alt-disc": { lines: 3, gap: 17.5, width: 9, center: 64, pulse: [[-6, 0], [24.5, 0], [44.5, -5.5], [57.5, 4.5], [81, 0], [106, 0]], mode: "parallel", blend: 0.45, disc: true, r: 45.5 },
+  "alt-ring": { lines: 4, gap: 14, width: 7.4, center: 75, pulse: PULSE_LOW, mode: "parallel", ring: 4.6, ringGap: 4 },
 }
+
+// The wordmark set next to the mark (sizes relative to the mark's height).
+export const WORDMARK = { text: "timelake", font: "Geist", weight: 500, letterSpacingEm: -0.045, sizeOfMark: 0.62, gapOfMark: 0.24, layout: "row" }
 
 if (import.meta.main) {
   const dir = path.join(import.meta.dir, "logo")

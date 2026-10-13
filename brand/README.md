@@ -19,17 +19,26 @@ The source of truth for how Timelake looks and talks. The site, README, docs and
 
 Parallel lines that turn together at sharp, mitered corners, inside a circle. Each line is a series; they change at the same moments, like readings from one machine. Black on light, white on dark; never colored.
 
+**Current: v1** (chosen 2026-10-13 in the editor). Three lines with v0's pulse, about halfway between identical copies and true parallels (`blend: 0.55`), so the gaps stay close to even and the bottom line keeps a clear first rise.
+
+| File | Use |
+|---|---|
+| `logo/timelake-mark-v1.svg`, `-white.svg` | The mark alone: favicon, avatar, app icon |
+| `logo/timelake-lockup-v1.svg`, `-white.svg` | Mark + wordmark, text outlined (no font needed) |
+
+**Wordmark:** `timelake`, lowercase, Geist Medium, letter-spacing −0.045em, text size 62% of the mark's height, gap 24% of it, set to the right and centered on the mark (`WORDMARK` in `marks.mjs`). Geist is under the SIL Open Font License, which allows outlining it in a logo.
+
+**Kept for later:**
+
 | Version | File | Notes |
 |---|---|---|
-| **v0** (current) | `logo/timelake-mark-v0.svg` | Five lines, vertical copies of one pulse. Spacing tightens on the slopes. |
-| v0.1 | `logo/timelake-mark-v0.1.svg` | Five truly parallel lines: the gap across lines is the same on slopes and flats, so the outer lines become nested chevrons. |
-| v0.2 | `logo/timelake-mark-v0.2.svg` | Three bold parallel lines. Clearest at 16–32 px; candidate for the favicon. |
+| alt-disc | `logo/timelake-mark-alt-disc.svg` | Solid disc with a low, wide pulse cut out of its lower half |
+| alt-ring | `logo/timelake-mark-alt-ring.svg` | Four lines low inside a drawn ring |
+| v0, v0.1, v0.2 | `logo/timelake-mark-v0*.svg` | Earlier Pulse versions: five copies, five parallels, three bold parallels |
 
-Each has a `-white` file for dark backgrounds. The files are generated: edit `marks.mjs`, then run `bun brand/marks.mjs`.
+Everything is generated: edit `marks.mjs` and run `bun brand/marks.mjs` (marks) and `bun brand/lockup.mjs` (lockups; needs `bun install` for Geist and opentype.js).
 
-**Editor:** `bun brand/build-editor.mjs` writes `brand/editor.html`, an interactive page for the mark and wordmark (lines, spacing, boldness, pulse shape, circle style, text). It draws with the same geometry code as `marks.mjs`, so a spec copied from it renders identically here.
-
-**Wordmark:** `timelake`, lowercase, Geist Medium, letter-spacing −0.045em, set to the right of the mark.
+**Editor:** `bun brand/build-editor.mjs` writes `brand/editor.html`, an interactive page for the mark and wordmark (lines, spacing, boldness, pulse shape, circle style, text). It draws with the same geometry code as `marks.mjs`, so a spec copied from it renders identically here. The history of how the mark was chosen is in `explorations/`.
 
 ## Color
 
