@@ -34,10 +34,10 @@ cd dashboard && bun run dev               # http://127.0.0.1:3000/explore`}
         </div>
         {detail && <p className="font-mono text-xs text-muted-foreground">{detail}</p>}
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" render={<Link href="/docs/quick-start" />}>
+          <Button variant="outline" size="sm" nativeButton={false} render={<Link href="/docs/quick-start" />}>
             Quick start
           </Button>
-          <Button variant="outline" size="sm" render={<Link href="/benchmarks" />}>
+          <Button variant="outline" size="sm" nativeButton={false} render={<Link href="/benchmarks" />}>
             Benchmarks
           </Button>
         </div>

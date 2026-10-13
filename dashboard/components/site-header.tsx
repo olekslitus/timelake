@@ -54,7 +54,7 @@ export function SiteHeader() {
           <ActiveNavLinks />
         </Suspense>
         <div className="flex-1" />
-        <Button variant="ghost" size="icon" aria-label="Timelake on GitHub" render={<a href={REPO_URL} target="_blank" rel="noreferrer" />}>
+        <Button variant="ghost" size="icon" aria-label="Timelake on GitHub" nativeButton={false} render={<a href={REPO_URL} target="_blank" rel="noreferrer" />}>
           <GithubIcon className="size-4" />
         </Button>
         <ThemeToggle />

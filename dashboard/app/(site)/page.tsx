@@ -5,6 +5,7 @@ import { TimelakeMark } from "@/components/brand/timelake-mark"
 import { CodeBlock } from "@/components/code-block"
 import { GithubIcon } from "@/components/github-icon"
 import { Button } from "@/components/ui/button"
+import { StackDiagram } from "@/components/stack-diagram"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { WhereItRuns } from "@/components/where-it-runs"
 import { REPO_URL } from "@/lib/site"
@@ -171,21 +172,21 @@ export default function Home() {
             schedule no maintenance.
           </p>
           <div className="flex flex-wrap gap-2.5">
-            <Button size="lg" className={BTN} render={<Link href="/docs/quick-start" />}>
+            <Button size="lg" className={BTN} nativeButton={false} render={<Link href="/docs/quick-start" />}>
               Quick start <ArrowRight />
             </Button>
-            <Button size="lg" variant="outline" className={BTN} render={<Link href="/benchmarks" />}>
+            <Button size="lg" variant="outline" className={BTN} nativeButton={false} render={<Link href="/benchmarks" />}>
               Benchmarks
             </Button>
-            <Button size="lg" variant="outline" className={BTN} render={<Link href="/explore" />}>
+            <Button size="lg" variant="outline" className={BTN} nativeButton={false} render={<Link href="/explore" />}>
               Explorer
             </Button>
-            <Button size="lg" variant="ghost" className={BTN} render={<a href={REPO_URL} target="_blank" rel="noreferrer" />}>
+            <Button size="lg" variant="ghost" className={BTN} nativeButton={false} render={<a href={REPO_URL} target="_blank" rel="noreferrer" />}>
               <GithubIcon /> GitHub
             </Button>
           </div>
         </div>
-        <div className="relative grid min-h-64 place-items-center overflow-hidden p-8">
+        <div className="relative hidden min-h-64 place-items-center overflow-hidden p-8 md:grid">
           <pre aria-hidden className="ascii absolute inset-0 overflow-hidden p-3 text-xs leading-normal">
             {FIELD}
           </pre>
@@ -193,6 +194,15 @@ export default function Home() {
             <TimelakeMark className="size-full" />
           </div>
         </div>
+      </section>
+
+      {/* Stack */}
+      <section className="flex flex-col gap-6">
+        <SectionHead label="The stack" title="From the device to the dashboard, on one open stack">
+          Data flows from the things that make it, through Timelake, to the things that read it. Timelake runs as a
+          library, and everything below the line is plain files in your own bucket. Dashed items are planned.
+        </SectionHead>
+        <StackDiagram />
       </section>
 
       {/* Promises */}
@@ -322,7 +332,7 @@ SELECT device_id, max(time) FROM iceberg_scan('s3://my-bucket/lake/iot/readings'
             TSBS IoT data (23.3M rows) streamed as 1,728 five-minute micro-batches into Timelake, Lance and naive Iceberg
             (PyIceberg appends, the S3 Tables write pattern), then queried with the 12 TSBS IoT queries.
           </SectionHead>
-          <Button variant="outline" className={BTN} render={<Link href="/benchmarks" />}>
+          <Button variant="outline" className={BTN} nativeButton={false} render={<Link href="/benchmarks" />}>
             All results <ArrowRight />
           </Button>
         </div>
