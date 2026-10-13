@@ -52,12 +52,20 @@ export const MARKS = {
 export function markSvg(name, { color = "currentColor", size } = {}) {
   const m = typeof name === "string" ? MARKS[name] : name
   if (typeof name !== "string") name = m.id
-  const lines = Array.from({ length: m.lines }, (_, i) => {
-    const d = (i - (m.lines - 1) / 2) * m.gap
+  const polys = Array.from({ length: m.lines }, (_, i) => {
+    // `anchor` is the line that keeps the pulse exactly as drawn (default: the middle one); the
+    // others are offset from it. `blend` mixes parallel (1) with identical copies (0).
+    const anchor = m.anchor ?? (m.lines - 1) / 2
+    const d = (i - anchor) * m.gap
     const pulse = m.pulse ?? PULSE
-    const pts = m.mode === "translate" ? pulse.map(([x, y]) => [x, y + d]) : offsetPolyline(pulse, d)
-    return `<polyline points="${pts.map(([x, y]) => `${+x.toFixed(2)},${+(y + m.center).toFixed(2)}`).join(" ")}"/>`
-  }).join("")
+    const copy = pulse.map(([x, y]) => [x, y + d])
+    let pts = m.mode === "translate" ? copy : offsetPolyline(pulse, d)
+    if (m.mode !== "translate" && m.blend != null && pts.length === copy.length)
+      pts = pts.map(([x, y], k) => [copy[k][0] + (x - copy[k][0]) * m.blend, copy[k][1] + (y - copy[k][1]) * m.blend])
+    if (m.anchor != null) pts = pts.map(([x, y]) => [x, y + (anchor - (m.lines - 1) / 2) * m.gap])
+    return pts.map(([x, y]) => [x, y + m.center])
+  })
+  const lines = polys.map(pts => `<polyline points="${pts.map(([x, y]) => `${+x.toFixed(2)},${+y.toFixed(2)}`).join(" ")}"/>`).join("")
   const dim = size ? ` width="${size}" height="${size}"` : ""
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"${dim}><title>Timelake</title><defs><clipPath id="tl-${name.replace(".", "-")}"><circle cx="50" cy="50" r="47"/></clipPath></defs><g clip-path="url(#tl-${name.replace(".", "-")})" fill="none" stroke="${color}" stroke-width="${m.width}" stroke-linejoin="miter" stroke-miterlimit="12" stroke-linecap="butt">${lines}</g></svg>\n`
 }
