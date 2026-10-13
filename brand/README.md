@@ -36,7 +36,7 @@ Parallel lines that turn together at sharp, mitered corners, inside a circle. Ea
 | alt-ring | `logo/timelake-mark-alt-ring.svg` | Four lines low inside a drawn ring |
 | v0, v0.1, v0.2 | `logo/timelake-mark-v0*.svg` | Earlier Pulse versions: five copies, five parallels, three bold parallels |
 
-Everything is generated: edit `marks.mjs` and run `bun brand/marks.mjs` (marks) and `bun brand/lockup.mjs` (lockups; needs `bun install` for Geist and opentype.js).
+Everything is generated: edit `marks.mjs` and run `bun brand/marks.mjs` (marks) and `bun brand/lockup.mjs` (lockups; needs `bun install` for Geist and opentype.js). `bun brand/export-web.mjs` copies the current mark into the web app (`dashboard/components/brand/mark-geometry.ts` and the favicon `dashboard/app/icon.svg`).
 
 **Editor:** `bun run brand:editor` opens an interactive page for the mark and wordmark (lines, spacing, boldness, pulse shape, circle style, text) at http://127.0.0.1:4321. It draws with the same geometry code as `marks.mjs`, so what you see is what the generator writes. **Save** writes `designs/<name>.json` (mark spec and wordmark settings) and `designs/<name>.svg`; commit them like any other file. `designs/` holds v1 and both alternates. To promote a design, copy its `spec` into `MARKS` in `marks.mjs`. How the mark was chosen is in `explorations/`.
 

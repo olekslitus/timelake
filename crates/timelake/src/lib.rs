@@ -1,4 +1,4 @@
-//! Timelake: a serverless time-series lake on Apache Iceberg.
+//! Timelake: the open time-series lakehouse.
 //!
 //! ```no_run
 //! # async fn demo(batch: arrow::array::RecordBatch) -> timelake::Result<()> {

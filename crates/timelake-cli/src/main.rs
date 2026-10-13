@@ -13,7 +13,7 @@ use timelake::datafusion::prelude::{CsvReadOptions, DataFrame, ParquetReadOption
 use timelake::{AppendOptions, Chunk, Lake, MaintainOptions, Session, TableOptions};
 
 #[derive(Parser)]
-#[command(name = "timelake", version, about = "Serverless time-series lake on Apache Iceberg")]
+#[command(name = "timelake", version, about = "Timelake: the open time-series lakehouse")]
 struct Cli {
     /// Warehouse location: s3://bucket/prefix, gs://…, az://…, file:///… or a local path.
     #[arg(short, long, env = "TIMELAKE_WAREHOUSE", global = true, default_value = "./warehouse")]

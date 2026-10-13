@@ -1,4 +1,4 @@
-"""Timelake: a serverless time-series lake on Apache Iceberg.
+"""Timelake: the open time-series lakehouse.
 
     import timelake, pyarrow as pa
     lake = timelake.Lake("s3://bucket/warehouse")           # or a local path

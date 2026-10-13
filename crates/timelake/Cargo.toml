@@ -1,6 +1,6 @@
 [package]
 name = "timelake"
-description = "Serverless time-series lake on Apache Iceberg"
+description = "The open time-series lakehouse: fast queries on your own object storage, with no database and no maintenance jobs"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

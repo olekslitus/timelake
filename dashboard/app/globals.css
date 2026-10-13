@@ -49,72 +49,76 @@
 }
 
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: #2a78d6;
-  --chart-2: #8a8983;
-  --chart-3: #1baf7a;
-  --chart-4: #eda100;
-  --chart-5: #e87ba4;
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  /* Light: paper panels on a light gray ground; Ice (darker for contrast) is the one accent. See brand/README.md. */
+  --background: #F4F5F5;
+  --foreground: #0D1113;
+  --card: #FFFFFF;
+  --card-foreground: #0D1113;
+  --popover: #FFFFFF;
+  --popover-foreground: #0D1113;
+  --primary: #0B7FA6;
+  --primary-foreground: #FFFFFF;
+  --secondary: #EEF1F2;
+  --secondary-foreground: #0D1113;
+  --muted: #EEF1F2;
+  --muted-foreground: #59656A;
+  --accent: #E7ECEE;
+  --accent-foreground: #0D1113;
+  --destructive: #C2412D;
+  --border: #D9DEE0;
+  --input: #D9DEE0;
+  --ring: #0B7FA6;
+  --ascii: #C3CACD;
+  --chart-1: #0B7FA6;
+  --chart-2: #9AA5AA;
+  --chart-3: #1B9E70;
+  --chart-4: #B07A00;
+  --chart-5: #C94F7C;
+  --radius: 0.375rem;
+  --sidebar: #FFFFFF;
+  --sidebar-foreground: #0D1113;
+  --sidebar-primary: #0B7FA6;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: #EEF1F2;
+  --sidebar-accent-foreground: #0D1113;
+  --sidebar-border: #D9DEE0;
+  --sidebar-ring: #0B7FA6;
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: #3987e5;
-  --chart-2: #6b6a64;
-  --chart-3: #199e70;
-  --chart-4: #c98500;
-  --chart-5: #d55181;
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  /* Dark (default): near-black instrument panels, hairline borders, Ice accent. */
+  --background: #0B0D0E;
+  --foreground: #E6EBED;
+  --card: #101315;
+  --card-foreground: #E6EBED;
+  --popover: #101315;
+  --popover-foreground: #E6EBED;
+  --primary: #67D4F0;
+  --primary-foreground: #0B0D0E;
+  --secondary: #161A1C;
+  --secondary-foreground: #E6EBED;
+  --muted: #161A1C;
+  --muted-foreground: #8B969B;
+  --accent: #1A1F22;
+  --accent-foreground: #E6EBED;
+  --destructive: #F07A62;
+  --border: #23292C;
+  --input: #2B3236;
+  --ring: #67D4F0;
+  --ascii: #343C40;
+  --chart-1: #67D4F0;
+  --chart-2: #5C676C;
+  --chart-3: #3DBF8E;
+  --chart-4: #D9A23A;
+  --chart-5: #E07AA2;
+  --sidebar: #0E1112;
+  --sidebar-foreground: #E6EBED;
+  --sidebar-primary: #67D4F0;
+  --sidebar-primary-foreground: #0B0D0E;
+  --sidebar-accent: #161A1C;
+  --sidebar-accent-foreground: #E6EBED;
+  --sidebar-border: #23292C;
+  --sidebar-ring: #67D4F0;
 }
 
 @layer base {
@@ -128,18 +132,29 @@
     @apply font-sans;
   }
 }
+/* House style: mono labels, hairline cell grids, dim ASCII illustrations. */
+@layer components {
+  .label-mono { @apply font-mono text-[11px] font-medium uppercase tracking-[0.1em] text-muted-foreground; }
+  .cells { @apply grid gap-px overflow-hidden rounded-md border bg-border; }
+  .cells > * { @apply min-w-0 bg-card; }
+  .ascii { @apply overflow-x-auto font-mono text-[12.5px] leading-[1.45] whitespace-pre; color: var(--ascii); }
+  .ascii .hi { @apply text-primary; }
+  .ascii .fg { @apply text-foreground; }
+  .ascii .mu { @apply text-muted-foreground; }
+}
+
 /* Long-form docs/prose. */
 .prose-docs {
   @apply text-[15px] leading-7 text-foreground;
 }
-.prose-docs h1 { @apply mb-2 text-3xl font-semibold tracking-tight; }
-.prose-docs h2 { @apply mt-12 mb-3 scroll-mt-20 border-b pb-2 text-xl font-semibold tracking-tight; }
+.prose-docs h1 { @apply mb-2 text-3xl font-light tracking-tight; }
+.prose-docs h2 { @apply mt-12 mb-3 scroll-mt-20 border-b pb-2 text-xl font-normal tracking-tight; }
 .prose-docs h3 { @apply mt-8 mb-2 scroll-mt-20 text-base font-semibold; }
 .prose-docs p { @apply my-4 text-muted-foreground; }
 .prose-docs p strong, .prose-docs li strong { @apply text-foreground; }
 .prose-docs ul { @apply my-4 ml-5 list-disc space-y-1.5 text-muted-foreground; }
 .prose-docs ol { @apply my-4 ml-5 list-decimal space-y-1.5 text-muted-foreground; }
-.prose-docs a { @apply font-medium text-foreground underline underline-offset-4; }
+.prose-docs a { @apply font-medium text-foreground underline decoration-primary underline-offset-4; }
 .prose-docs :not(pre) > code { @apply rounded bg-muted px-1.5 py-0.5 font-mono text-[0.85em] text-foreground; }
 .prose-docs pre { @apply my-4 overflow-x-auto rounded-lg border bg-muted/50 p-4 font-mono text-[13px] leading-6; }
 .prose-docs table { @apply my-4 w-full text-sm; }

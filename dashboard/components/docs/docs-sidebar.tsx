@@ -12,7 +12,7 @@ function Nav({ pathname }: { pathname: string | null }) {
     <nav className="space-y-6 text-sm">
       {DOCS_NAV.map((g) => (
         <div key={g.title} className="space-y-1">
-          <div className="px-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">{g.title}</div>
+          <div className="label-mono px-2">{g.title}</div>
           {g.items.map((i) => (
             <Link
               key={i.href}

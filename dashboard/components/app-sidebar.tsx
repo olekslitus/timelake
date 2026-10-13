@@ -3,7 +3,9 @@
 import { Suspense } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { BookOpen, Database, Gauge, House, LayoutDashboard, SquareTerminal, Waves } from "lucide-react"
+import { BookOpen, Database, Gauge, House, LayoutDashboard, SquareTerminal } from "lucide-react"
+
+import { TimelakeMark } from "@/components/brand/timelake-mark"
 
 import {
   Sidebar,
@@ -58,12 +60,12 @@ export function AppSidebar({ warehouse }: { warehouse: string }) {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" render={<Link href="/explore" />}>
-              <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-                <Waves className="size-4" />
+              <div className="flex aspect-square size-8 items-center justify-center">
+                <TimelakeMark className="!size-7" />
               </div>
-              <div className="grid flex-1 text-left text-sm leading-tight">
-                <span className="truncate font-semibold">Timelake</span>
-                <span className="truncate text-xs text-muted-foreground">explorer</span>
+              <div className="grid flex-1 text-left leading-tight">
+                <span className="truncate text-[17px] font-medium tracking-[-0.045em]">timelake</span>
+                <span className="label-mono truncate text-[10px]">explorer</span>
               </div>
             </SidebarMenuButton>
           </SidebarMenuItem>

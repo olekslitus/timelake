@@ -3,8 +3,9 @@
 import { Suspense } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { Menu, Waves } from "lucide-react"
+import { Menu } from "lucide-react"
 
+import { TimelakeLockup } from "@/components/brand/timelake-mark"
 import { GithubIcon } from "@/components/github-icon"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
@@ -27,7 +28,7 @@ function NavLinks({ pathname }: { pathname: string | null }) {
           key={l.href}
           href={l.href}
           className={cn(
-            "rounded-md px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground",
+            "rounded-md px-3 py-1.5 font-mono text-xs uppercase tracking-[0.08em] text-muted-foreground transition-colors hover:text-foreground",
             pathname?.startsWith(l.href) && "text-foreground",
           )}
         >
@@ -46,11 +47,8 @@ export function SiteHeader() {
   return (
     <header className="sticky top-0 z-40 border-b bg-background/80 backdrop-blur">
       <div className="mx-auto flex h-14 max-w-6xl items-center gap-4 px-4">
-        <Link href="/" className="flex items-center gap-2 font-semibold">
-          <span className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
-            <Waves className="size-4" />
-          </span>
-          Timelake
+        <Link href="/" aria-label="Timelake home" className="flex items-center">
+          <TimelakeLockup size={26} />
         </Link>
         <Suspense fallback={<NavLinks pathname={null} />}>
           <ActiveNavLinks />
@@ -66,7 +64,7 @@ export function SiteHeader() {
           </SheetTrigger>
           <SheetContent side="left" className="w-72 overflow-y-auto">
             <SheetHeader>
-              <SheetTitle>Timelake</SheetTitle>
+              <SheetTitle><TimelakeLockup size={22} /></SheetTitle>
             </SheetHeader>
             <div className="space-y-6 px-4 pb-6">
               <div className="space-y-1">

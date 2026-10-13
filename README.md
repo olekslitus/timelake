@@ -1,15 +1,23 @@
-# Timelake
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="brand/logo/timelake-lockup-v1-white.svg">
+    <img alt="Timelake" src="brand/logo/timelake-lockup-v1.svg" height="64">
+  </picture>
+</p>
 
-**A serverless time-series lake on Apache Iceberg.** Point it at any object store (S3, R2, GCS, Azure, RustFS/MinIO) or a local directory. Stream or batch-load time-series data. Query it fast. No catalog server, no database, no Glue jobs.
+<h3 align="center">The open time-series lakehouse</h3>
 
-Website and docs: **[timelake.dev](https://timelake.dev)**
+<p align="center">Fast queries on your own object storage, with no database and no maintenance jobs.<br><a href="https://timelake.dev">timelake.dev</a> · <a href="https://timelake.dev/docs">Docs</a> · <a href="https://timelake.dev/benchmarks">Benchmarks</a></p>
 
-- **Plain Iceberg + Parquet.** DuckDB, Spark, Trino and PyIceberg read Timelake tables directly.
-- **Time-series layout built in.** Data is partitioned by time and sorted by `(series key, time)`. Small files from frequent appends are compacted inline, and duplicates are removed (the latest write wins).
-- **Fast reads.** The reader prunes files on time and series, and answers "latest value per device" queries from a last-value index instead of a scan.
-- **Maintenance included.** Compaction, retention and snapshot expiry run inside the writer, or as one stateless `timelake maintain` command (cron, Lambda, Kubernetes CronJob).
+Keep time series in your own bucket on S3, R2, GCS, Azure, MinIO or a local disk. Stream or batch-load them, query them fast, and run nothing else.
 
-> Status: **v0**, private, under active development. See [SPEC.md](SPEC.md) for the design (§19.0 covers v0's scope), and [bench/results/V0.md](bench/results/V0.md) for v0 against naive Iceberg (the S3 Tables write pattern) and Lance. On S3-compatible storage with 20 ms latency, Timelake is 1.2–16× faster on TSBS IoT and 2.2–9× faster on single-truck queries, depending on table state.
+- **Fast every day.** Dashboards, trends and "what is the value now" read only the files and row groups they need: data is partitioned by time and sorted by `(series key, time)`, and the latest value of every series comes from an index, not a scan.
+- **Nothing to maintain.** Compaction, deduplication (the latest write wins), retention and snapshot cleanup run inside the writer, or as one stateless `timelake maintain` command (cron, Lambda, Kubernetes CronJob). No Spark or Glue jobs.
+- **Pay for storage, not a database.** No server, no catalog service: the catalog is a few files next to the data. The bill is object-storage bytes and requests.
+
+**Open format** (Parquet files and Apache Iceberg metadata today; DuckDB, Spark and PyIceberg read the tables, and Trino, Athena and Snowflake will through the planned REST catalog) · **any object store** · **Apache 2.0**.
+
+> **Status: v0, open source, under active development.** See [SPEC.md](SPEC.md) for the design (§19.0 covers v0's scope) and [bench/results/V0.md](bench/results/V0.md) for v0 against naive Iceberg (the S3 Tables write pattern) and Lance. On S3-compatible storage with 20 ms of added latency (RustFS on one laptop, not AWS), Timelake is 1.2–16× faster on TSBS IoT and 2.2–9× faster on single-truck queries, depending on table state. Real-S3 runs and an IIoT benchmark against InfluxDB 3, TimescaleDB, ClickHouse and QuestDB are next (SPEC §17.6).
 
 ## Quick start
 
@@ -103,6 +111,7 @@ SELECT * FROM iceberg_scan('s3://lake/wh/iot/readings');   -- reads metadata/ver
 | `crates/timelake-wasm` | WebAssembly reader: metadata, pruning, Parquet decoding, latest/range/bucket queries (no I/O) |
 | `packages/timelake-client` | `@timelake/client`: TypeScript client around the WASM reader, with Zod-typed rows |
 | `dashboard/` | Web app: website, docs, benchmark results, and the Explorer (`/explore`). Deploys to Vercel; see its README |
+| `brand/` | Logo, wordmark, colors and words ([brand/README.md](brand/README.md)); `bun run brand:editor` opens the mark editor |
 | `bench/` | Benchmarks: TSBS IoT, TPC-H, ClickBench, the v0 comparison (`bench/v0`), TimescaleDB on Tiger Cloud |
 | `scripts/` | Demo warehouse build (`build-demo-warehouse.sh`) and a static server with Range support for testing (`serve-range.mjs`) |
 | `spikes/` | Phase 0 experiments |

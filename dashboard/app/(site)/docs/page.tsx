@@ -10,12 +10,13 @@ export default function Page() {
     <DocPage href="/docs">
       <h1>Introduction</h1>
       <p>
-        Timelake is a time-series store on Apache Iceberg. It writes ordinary Iceberg tables with Parquet data files to object
-        storage (S3 and S3-compatible stores, Google Cloud Storage, Azure Blob Storage) or a local directory, keeps them laid
-        out for time-series queries, and reads them with a query engine that uses that layout.
+        Timelake is the open time-series lakehouse. It keeps time series in your own bucket (S3 and S3-compatible stores,
+        Google Cloud Storage, Azure Blob Storage) or a local directory, keeps them laid out for time-series queries without
+        maintenance jobs, and reads them with a query engine that uses that layout. Today tables are stored as Apache Iceberg
+        tables with Parquet data files, so other engines can read them too.
       </p>
       <p>
-        It is a Rust library with a command-line tool (<code>timelake</code>) and a Python package. There is no server: the
+        It is a Rust library with a command-line tool (<code>timelake</code>), a Python package and a TypeScript client. There is no server: the
         catalog is files in the warehouse, commits are atomic through conditional writes, and maintenance runs inside the
         writer or as one stateless command.
       </p>

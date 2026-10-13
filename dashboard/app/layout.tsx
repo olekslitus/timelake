@@ -11,9 +11,10 @@ const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"]
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
-  title: { default: "Timelake: a serverless time-series lake on Apache Iceberg", template: "%s · Timelake" },
+  title: { default: "Timelake · The open time-series lakehouse", template: "%s · Timelake" },
   description:
-    "Timelake stores time series as open Iceberg tables on any object store, keeps them compacted and sorted without external jobs, and reads them with a time-series-aware query engine.",
+    "The open time-series lakehouse. Fast queries on your own object storage, with no database and no maintenance jobs.",
+  openGraph: { siteName: "Timelake", type: "website" },
 }
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
