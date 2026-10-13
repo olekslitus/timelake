@@ -12,6 +12,8 @@ dependencies = [
     "pytz",
     "pylance>=13.0.0",
     "psycopg[binary]>=3.3.6",
+    "boto3>=1.43.112",
+    "botocore[crt]>=1.43.112",
 ]
 
 [tool.uv]

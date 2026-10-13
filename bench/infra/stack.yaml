@@ -1,14 +1,21 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  timelake-bench (SPEC 17.4): one benchmark instance next to an S3 Standard bucket and an S3 Express One Zone
-  bucket in the same zone. Access via SSM only (no SSH, no inbound ports). The instance stops itself after
-  AutoStopMinutes. Delete with bench/infra/down.sh.
+  timelake-bench (SPEC 17.4): an S3 Standard bucket, an S3 Express One Zone bucket and an S3 Tables table bucket,
+  plus (Instance=true) one benchmark instance in the same zone. Access via SSM only (no SSH, no inbound ports).
+  The instance stops itself after AutoStopMinutes. Delete with bench/infra/down.sh.
 
 Parameters:
+  Instance:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Create the benchmark instance (false = buckets only, for runs from a laptop).
   VpcId:
-    Type: AWS::EC2::VPC::Id
+    Type: String
+    Default: ""
   SubnetId:
-    Type: AWS::EC2::Subnet::Id
+    Type: String
+    Default: ""
     Description: A subnet in AzId with a route to the internet (the default VPC's subnet).
   AzId:
     Type: String
@@ -24,10 +31,14 @@ Parameters:
     Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
   RepoRef:
     Type: String
+    Default: ""
     Description: Git commit of github.com/polythings/timelake to check out on the instance.
   AutoStopMinutes:
     Type: Number
     Default: 720
+
+Conditions:
+  WithInstance: !Equals [!Ref Instance, "true"]
 
 Resources:
   DataBucket:
@@ -45,8 +56,14 @@ Resources:
       DataRedundancy: SingleAvailabilityZone
       LocationName: !Ref AzId
 
+  TableBucket:
+    Type: AWS::S3Tables::TableBucket
+    Properties:
+      TableBucketName: !Sub "timelake-bench-${AWS::AccountId}"
+
   Role:
     Type: AWS::IAM::Role
+    Condition: WithInstance
     Properties:
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
@@ -69,20 +86,28 @@ Resources:
               - Effect: Allow
                 Action: s3express:*
                 Resource: !GetAtt ExpressBucket.Arn
+              - Effect: Allow
+                Action: s3tables:*
+                Resource:
+                  - !GetAtt TableBucket.TableBucketARN
+                  - !Sub "${TableBucket.TableBucketARN}/*"
 
   InstanceProfile:
     Type: AWS::IAM::InstanceProfile
+    Condition: WithInstance
     Properties:
       Roles: [!Ref Role]
 
   SecurityGroup:
     Type: AWS::EC2::SecurityGroup
+    Condition: WithInstance
     Properties:
       GroupDescription: timelake-bench, outbound only
       VpcId: !Ref VpcId
 
-  Instance:
+  BenchInstance:
     Type: AWS::EC2::Instance
+    Condition: WithInstance
     Properties:
       ImageId: !Ref ImageId
       InstanceType: !Ref InstanceType
@@ -108,8 +133,11 @@ Resources:
 
 Outputs:
   InstanceId:
-    Value: !Ref Instance
+    Condition: WithInstance
+    Value: !Ref BenchInstance
   DataBucket:
     Value: !Ref DataBucket
   ExpressBucket:
     Value: !Ref ExpressBucket
+  TableBucketArn:
+    Value: !GetAtt TableBucket.TableBucketARN

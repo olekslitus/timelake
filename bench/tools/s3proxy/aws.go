@@ -4,8 +4,9 @@ package main
 //
 // Clients keep talking path-style plain HTTP to the proxy with dummy keys, so every engine reads the same
 // s3://bench/... paths as with the local RustFS. The proxy maps the client-facing bucket to the real one,
-// re-signs each request with the instance's credentials (SigV4; S3 Express via CreateSession), and counts
-// requests by kind and response bytes. Each client connection gets its own upstream connection, so a fresh
+// re-signs each request with the default AWS credentials (SigV4; S3 Express via CreateSession), and counts
+// requests by kind and response bytes. Requests for any other bucket go to that bucket in the same region
+// (e.g. the storage behind an S3 Tables table, whose metadata names it). Each client connection gets its own upstream connection, so a fresh
 // client process pays its own DNS, TCP and TLS setup as it would talking to S3 directly.
 //
 //	s3proxy -aws-bucket my-bucket -aws-region us-east-2
@@ -116,21 +117,23 @@ func serveAWS(listen, clientBucket, bucket, region string) {
 	log.Fatal(srv.ListenAndServe())
 }
 
-// rewrite maps a path-style request for the client bucket to a virtual-hosted request for the real bucket.
+// rewrite maps a path-style request to a virtual-hosted one: the client bucket to the real bucket, any other
+// bucket to itself.
 func (p *awsProxy) rewrite(pr *httputil.ProxyRequest) {
 	in := pr.In
 	raw, query, _ := strings.Cut(in.RequestURI, "?")
-	rest := strings.TrimPrefix(raw, "/"+p.clientBucket)
-	if rest == "" {
-		rest = "/"
+	bucket, rest, _ := strings.Cut(strings.TrimPrefix(raw, "/"), "/")
+	host := p.host
+	if bucket != p.clientBucket {
+		host = fmt.Sprintf("%s.s3.%s.amazonaws.com", bucket, p.region)
 	}
-	u, err := url.Parse("https://" + p.host + rest)
+	u, err := url.Parse("https://" + host + "/" + rest)
 	if err != nil {
-		u = &url.URL{Scheme: "https", Host: p.host, Path: "/"}
+		u = &url.URL{Scheme: "https", Host: host, Path: "/"}
 	}
 	u.RawQuery = query
 	pr.Out.URL = u
-	pr.Out.Host = p.host
+	pr.Out.Host = host
 }
 
 func classify(r *http.Request) string {
@@ -189,15 +192,18 @@ func (p *awsProxy) RoundTrip(r *http.Request) (*http.Response, error) {
 	}
 	r.Header.Set("X-Amz-Content-Sha256", payload)
 
-	creds, err := p.credentials(r.Context())
+	express := p.service == "s3express" && r.URL.Host == p.host
+	creds, err := p.credentials(r.Context(), express)
 	if err != nil {
 		return nil, err
 	}
-	if p.service == "s3express" {
+	service := "s3"
+	if express {
+		service = "s3express"
 		r.Header.Set("X-Amz-S3session-Token", creds.SessionToken)
 		creds.SessionToken = ""
 	}
-	if err := p.signer.SignHTTP(r.Context(), creds, r, payload, p.service, p.region, time.Now().UTC()); err != nil {
+	if err := p.signer.SignHTTP(r.Context(), creds, r, payload, service, p.region, time.Now().UTC()); err != nil {
 		return nil, err
 	}
 
@@ -233,8 +239,8 @@ func (p *awsProxy) RoundTrip(r *http.Request) (*http.Response, error) {
 	return resp, nil
 }
 
-func (p *awsProxy) credentials(ctx context.Context) (aws.Credentials, error) {
-	if p.service == "s3" {
+func (p *awsProxy) credentials(ctx context.Context, express bool) (aws.Credentials, error) {
+	if !express {
 		return p.cfg.Credentials.Retrieve(ctx)
 	}
 	p.mu.Lock()

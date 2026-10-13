@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
-# Create the benchmark stack: an instance plus S3 Standard and S3 Express buckets in one zone (stack.yaml).
-# The instance checks out the current commit, which must be pushed. Log in first: aws login --profile timelake
-#   bench/infra/up.sh                          then: bench/infra/ssm.sh --bg 'bench/infra/remote.sh all'
-#   AZ=use2-az2 INSTANCE_TYPE=c8gd.4xlarge bench/infra/up.sh
+# Create or update the benchmark stack (stack.yaml): S3 Standard, S3 Express and S3 Tables buckets, and with
+# INSTANCE=true a benchmark instance in the same zone. Log in first: aws login --profile timelake
+#   bench/infra/up.sh                        buckets only; run bench/run_aws.sh from this machine
+#   INSTANCE=true bench/infra/up.sh          plus the instance (checks out the current commit, which must be
+#                                            pushed); then: bench/infra/ssm.sh --bg 'bench/infra/remote.sh all'
 set -euo pipefail
 cd "$(dirname "$0")"
 source env.sh
 AZ=${AZ:-use2-az1}
-REF=$(git rev-parse HEAD)
-if aws cloudformation describe-stacks --stack-name "$STACK" > /dev/null 2>&1; then
-  echo "$STACK already exists. Update code on the instance with: ssm.sh 'git fetch -q && git checkout -q origin/main'"; exit 1
+params=(Instance="${INSTANCE:-false}" AzId="$AZ")
+if [ "${INSTANCE:-false}" = true ]; then
+  REF=$(git rev-parse HEAD)
+  git branch -r --contains "$REF" | grep -q . || { echo "push $REF first: the instance clones it from GitHub"; exit 1; }
+  vpc=$(aws ec2 describe-vpcs --filters Name=is-default,Values=true --query 'Vpcs[0].VpcId' --output text)
+  subnet=$(aws ec2 describe-subnets --filters Name=vpc-id,Values="$vpc" Name=availability-zone-id,Values="$AZ" \
+    --query 'Subnets[0].SubnetId' --output text)
+  params+=(VpcId="$vpc" SubnetId="$subnet" RepoRef="$REF" ${INSTANCE_TYPE:+InstanceType=$INSTANCE_TYPE})
 fi
-git branch -r --contains "$REF" | grep -q . || { echo "push $REF first: the instance clones it from GitHub"; exit 1; }
-vpc=$(aws ec2 describe-vpcs --filters Name=is-default,Values=true --query 'Vpcs[0].VpcId' --output text)
-subnet=$(aws ec2 describe-subnets --filters Name=vpc-id,Values="$vpc" Name=availability-zone-id,Values="$AZ" \
-  --query 'Subnets[0].SubnetId' --output text)
 aws cloudformation deploy --stack-name "$STACK" --template-file stack.yaml --capabilities CAPABILITY_IAM \
-  --tags project=timelake-bench \
-  --parameter-overrides VpcId="$vpc" SubnetId="$subnet" AzId="$AZ" RepoRef="$REF" \
-  ${INSTANCE_TYPE:+InstanceType=$INSTANCE_TYPE}
+  --tags project=timelake-bench --parameter-overrides "${params[@]}"
 aws cloudformation describe-stacks --stack-name "$STACK" --query 'Stacks[0].Outputs' --output table

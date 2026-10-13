@@ -102,6 +102,7 @@ for _e in RUST_ENGINES:
 # v0 benchmark (v0/README.md): the same TSBS tables streamed into each system by v0/ingest.py.
 V0_ENGINES = {
     "v0-iceberg": "duckdb",          # DuckDB iceberg_scan over PyIceberg-appended tables (S3 Tables pattern)
+    "v0-s3tables": "duckdb",         # the same over real S3 Tables tables (AWS)
     "v0-lance-duckdb": "duckdb",     # DuckDB over Lance datasets (pyarrow dataset interface)
     "v0-lance-df": "datafusion",     # DataFusion + Lance's own scanner (FFILanceTableProvider)
     "v0-timelake": "datafusion",     # Timelake reader (timelake CLI, DataFusion inside)
@@ -190,7 +191,7 @@ def setup_duckdb(suite: str, iceberg: bool = False, vortex: bool = False):
     elif suite in TSBS_SUITES:
         if iceberg:
             con.execute("INSTALL iceberg; LOAD iceberg")
-            meta_dir = "iceberg-s3" if STORAGE == "s3" else "iceberg"
+            meta_dir = os.environ.get("BENCH_ICEBERG_S3_DIR", "iceberg-s3") if STORAGE == "s3" else "iceberg"
             meta = json.loads((DATA / "tsbs" / meta_dir / "metadata.json").read_text())
             for t in TSBS_TABLES:
                 con.execute(f"CREATE VIEW {t} AS SELECT * FROM iceberg_scan('{meta[t]}')")
@@ -276,8 +277,8 @@ def v0_state(system: str) -> dict:
 
 
 def setup_v0(engine: str):
-    tables = v0_state({"v0-iceberg": "iceberg", "v0-timelake-duckdb": "timelake"}.get(engine, "lance"))
-    if engine in ("v0-iceberg", "v0-timelake-duckdb"):
+    tables = v0_state({"v0-iceberg": "iceberg", "v0-s3tables": "s3tables", "v0-timelake-duckdb": "timelake"}.get(engine, "lance"))
+    if engine in ("v0-iceberg", "v0-s3tables", "v0-timelake-duckdb"):
         import duckdb
 
         con = duckdb.connect()

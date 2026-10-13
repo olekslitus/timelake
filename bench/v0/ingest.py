@@ -9,11 +9,15 @@ Systems, each used the way its docs suggest for this workload:
             Maintenance = binpack compaction (S3 Tables' default), simulated by rewriting each table.
   lance     lance.write_dataset(mode="append"). Maintenance = compact_files + cleanup_old_versions.
   timelake  Table.append (inline auto-maintenance on). Maintenance = Table.maintain().
+  s3tables  Real S3 Tables (AWS, --storage s3, BENCH_TABLE_BUCKET_ARN): the iceberg system's appends, committed
+            through the S3 Tables Iceberg REST endpoint. Maintenance = S3 Tables' own managed compaction, which
+            runs asynchronously: --maintain-only waits until it has run on both time-series tables.
 Every system gets identical rows (Timelake dedup is off so TSBS's 16 duplicate rows stay).
 """
 
 import argparse
 import os
+from datetime import datetime, timezone
 import shutil
 import statistics
 import sys
@@ -75,6 +79,60 @@ class Iceberg:
             t = self.catalog.load_table(f"tsbs.{n}")
             data = t.scan().to_arrow()
             t.overwrite(data)
+
+
+class S3Tables(Iceberg):
+    def __init__(self, storage):
+        import boto3
+        from pyiceberg.catalog.rest import RestCatalog
+
+        assert storage == "s3", "S3 Tables runs on AWS only"
+        region = os.environ["AWS_REGION"]
+        self.arn = os.environ["BENCH_TABLE_BUCKET_ARN"]
+        self.client = boto3.client("s3tables", region_name=region)
+        self.catalog = RestCatalog(
+            "s3tables", uri=f"https://s3tables.{region}.amazonaws.com/iceberg", warehouse=self.arn,
+            **{"rest.sigv4-enabled": "true", "rest.signing-name": "s3tables", "rest.signing-region": region},
+            **PYICEBERG_S3,  # data and metadata files through the counting proxy, which passes them to the table's bucket
+        )
+        self.tables = {}
+
+    def reset(self):
+        for n in TABLES:
+            if self.catalog.table_exists(f"tsbs.{n}"):
+                self.client.delete_table(tableBucketARN=self.arn, namespace="tsbs", name=n)
+
+    def stats(self) -> dict:
+        """Table buckets can't be listed, so count from Iceberg metadata: live data files, plus manifests."""
+        data_files = data_bytes = manifests = 0
+        for n in TABLES:
+            t = self.catalog.load_table(f"tsbs.{n}")
+            files = t.inspect.files()
+            data_files += files.num_rows
+            data_bytes += sum(files["file_size_in_bytes"].to_pylist())
+            manifests += t.inspect.all_manifests().num_rows
+        return {"objects": data_files + manifests, "data_files": data_files, "data_bytes": data_bytes,
+                "bytes": data_bytes}
+
+    def maintain(self):
+        """Wait for S3 Tables' managed compaction to run on both time-series tables (up to V0_S3TABLES_WAIT_S)."""
+        import datetime as dt
+
+        since = dt.datetime.fromisoformat(load_state("s3", "s3tables")["ingested_at"])
+        deadline = time.time() + int(os.environ.get("V0_S3TABLES_WAIT_S", 6 * 3600))
+        self.compaction = {}
+        while time.time() < deadline:
+            for n in ("readings", "diagnostics"):
+                job = self.client.get_table_maintenance_job_status(tableBucketARN=self.arn, namespace="tsbs", name=n)
+                c = job["status"].get("icebergCompaction", {})
+                ran = c.get("lastRunTimestamp")
+                if ran and ran > since and c.get("status") == "Successful":
+                    self.compaction[n] = round((ran - since).total_seconds())
+            print(f"  waiting for compaction: {self.compaction or 'not yet'}", flush=True)
+            if len(self.compaction) == 2:
+                return
+            time.sleep(120)
+        print("  compaction did not run before the deadline", flush=True)
 
 
 class Lance:
@@ -139,7 +197,7 @@ class Timelake:
             print(n, self.lake.table(f"tsbs.{n}").maintain())
 
 
-SYSTEMS = {"iceberg": Iceberg, "lance": Lance, "timelake": Timelake}
+SYSTEMS = {"iceberg": Iceberg, "lance": Lance, "timelake": Timelake, "s3tables": S3Tables}
 
 
 def main():
@@ -162,6 +220,8 @@ def main():
                                    endpoint_override="http://localhost:59000", scheme="http")
             fs.delete_dir_contents(f"bench/v0/{a.system}", missing_dir_ok=True)
         sys_ = SYSTEMS[a.system](a.storage)
+        if hasattr(sys_, "reset"):
+            sys_.reset()
         src = {n: pq.read_table(DATA / "tsbs" / "parquet" / f"{n}.parquet") for n in TABLES}
         for n in TABLES:
             sys_.create(n, src[n].schema, n != "tags")
@@ -180,14 +240,15 @@ def main():
                 print(f"  window {i}/{len(r_w)}  {time.perf_counter() - t0:.1f}s  last commit {lat[-1] * 1000:.0f} ms", flush=True)
         total = time.perf_counter() - t0
         rows = sum(b.num_rows for b in r_w) + sum(b.num_rows for b in d_w)
-        save_state(a.storage, a.system, {"tables": sys_.state(), "phase": "ingested"})
+        save_state(a.storage, a.system, {"tables": sys_.state(), "phase": "ingested",
+                                         "ingested_at": datetime.now(timezone.utc).isoformat()})
         rec = {
             "system": a.system, "storage": a.storage, "phase": "ingest", "window_minutes": a.window_minutes,
             "commits": len(lat), "rows": rows, "seconds": round(total, 2),
             "commit_ms_p50": round(statistics.median(lat) * 1000, 1),
             "commit_ms_p95": round(float(np.percentile(lat, 95)) * 1000, 1),
             "commit_ms_max": round(max(lat) * 1000, 1),
-            **storage_stats(a.storage, a.system),
+            **(sys_.stats() if hasattr(sys_, "stats") else storage_stats(a.storage, a.system)),
         }
         if a.system == "timelake":
             rec["inline_compactions"] = sys_.maint
@@ -203,7 +264,10 @@ def main():
         state.update(tables=sys_.state(), phase="maintained")
         save_state(a.storage, a.system, state)
         rec = {"system": a.system, "storage": a.storage, "phase": "maintain",
-               "seconds": round(time.perf_counter() - t0, 2), **storage_stats(a.storage, a.system)}
+               "seconds": round(time.perf_counter() - t0, 2),
+               **(sys_.stats() if hasattr(sys_, "stats") else storage_stats(a.storage, a.system))}
+        if getattr(sys_, "compaction", None) is not None:
+            rec["compaction_after_ingest_s"] = sys_.compaction
         record(rec)
         print(rec)
 

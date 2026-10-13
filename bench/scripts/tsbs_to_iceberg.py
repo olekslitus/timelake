@@ -9,6 +9,7 @@ mapping table -> current metadata file, for DuckDB's iceberg_scan.
 """
 
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -27,7 +28,8 @@ S3_PROPS = {
 
 
 def main(target: str):
-    out = DATA / ("iceberg-s3" if target == "s3" else "iceberg")
+    # BENCH_ICEBERG_S3_DIR keeps catalogs for different S3 targets apart (e.g. RustFS vs AWS).
+    out = DATA / (os.environ.get("BENCH_ICEBERG_S3_DIR", "iceberg-s3") if target == "s3" else "iceberg")
     shutil.rmtree(out, ignore_errors=True)
     (out / "warehouse").mkdir(parents=True)
     warehouse = "s3://bench/tsbs/iceberg" if target == "s3" else f"file://{out}/warehouse"
