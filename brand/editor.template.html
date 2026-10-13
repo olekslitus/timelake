@@ -1,0 +1,496 @@
+<title>Timelake Mark Editor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@300;400;500;600;700&display=swap">
+<style>
+/* Layout: an instrument panel. Controls on the left in hairline groups, the mark large on paper and ink on the right, then sizes, in-context mockups and the saved shelf. */
+:root {
+  --bg: #0B0D0E; --panel: #101315; --raise: #161A1C; --line: #23292C; --fg: #E6EBED; --muted: #8B969B; --accent: #67D4F0; --on-accent: #0B0D0E; --warn: #F0B44C;
+  --sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) {
+  --bg: #F4F5F5; --panel: #FFFFFF; --raise: #EEF1F2; --line: #D9DEE0; --fg: #0D1113; --muted: #59656A; --accent: #0B7FA6; --on-accent: #FFFFFF; --warn: #9A6206; color-scheme: light; } }
+:root[data-theme="light"] {
+  --bg: #F4F5F5; --panel: #FFFFFF; --raise: #EEF1F2; --line: #D9DEE0; --fg: #0D1113; --muted: #59656A; --accent: #0B7FA6; --on-accent: #FFFFFF; --warn: #9A6206; color-scheme: light; }
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font: 14px/1.5 var(--sans); margin: 0; padding-inline: 16px; padding-block: 0 48px; }
+.app { max-width: 1320px; margin: 0 auto; display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 20px; align-items: start; }
+header.top { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; padding-block: 18px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+header.top svg { width: 24px; height: 24px; color: var(--fg); flex: none; }
+header.top .wm { font-weight: 500; letter-spacing: -0.04em; font-size: 18px; }
+header.top .sub { color: var(--muted); font: 12px var(--mono); text-transform: uppercase; letter-spacing: .1em; }
+.label { font: 500 11px/1.2 var(--mono); text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
+.label b { color: var(--accent); font-weight: 500; }
+
+/* Controls */
+.controls { position: sticky; top: env(safe-area-inset-top, 0px); max-height: 100vh; overflow-y: auto; padding-block: 16px; display: flex; flex-direction: column; gap: 12px; }
+.group { border: 1px solid var(--line); border-radius: 6px; background: var(--panel); padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+.row { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: center; }
+.row label { font-size: 13px; }
+.row output { font: 12px var(--mono); color: var(--accent); min-width: 44px; text-align: right; }
+.row input[type=range] { grid-column: 1 / -1; width: 100%; accent-color: var(--accent); margin: 0; }
+.row .hint { grid-column: 1 / -1; font-size: 12px; color: var(--muted); margin-top: -2px; }
+.seg { display: flex; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; }
+.seg button { flex: 1; font: 500 11px var(--mono); text-transform: uppercase; letter-spacing: .06em; padding: 7px 4px; background: transparent; color: var(--muted); border: 0; border-right: 1px solid var(--line); cursor: pointer; }
+.seg button:last-child { border-right: 0; }
+.seg button[aria-pressed="true"] { background: var(--raise); color: var(--fg); box-shadow: inset 0 -2px 0 var(--accent); }
+.presets { display: flex; flex-wrap: wrap; gap: 6px; }
+button.chip, button.btn { font: 500 12px var(--mono); letter-spacing: .04em; padding: 6px 10px; border-radius: 4px; border: 1px solid var(--line); background: transparent; color: var(--fg); cursor: pointer; }
+button.chip:hover, button.btn:hover { border-color: var(--accent); }
+button.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.check { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.check input { accent-color: var(--accent); }
+
+/* Stage */
+.stage { padding-block: 16px; display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.cells { display: grid; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.hero { grid-template-columns: 1fr 1fr; }
+.sw { display: grid; place-items: center; padding: 28px 12px; position: relative; min-width: 0; }
+.paper { background: #FFFFFF; color: #0A0A0A; }
+.ink { background: #0A0A0A; color: #FFFFFF; }
+.hero .sw svg { width: min(300px, 100%); height: auto; aspect-ratio: 1; display: block; }
+.guides { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
+.guides svg { width: min(300px, calc(100% - 24px)); height: auto; aspect-ratio: 1; }
+.sizes { grid-template-columns: 1fr 1fr; }
+.sizes .sw { display: flex; align-items: flex-end; justify-content: center; gap: 18px; padding: 20px 12px; flex-wrap: wrap; }
+.sizes figure { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.sizes figcaption { font: 10px var(--mono); opacity: .55; }
+.sizes svg { display: block; }
+.context { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.ctx { background: var(--panel); padding: 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.tabbar { background: #DEE1E6; border-radius: 8px 8px 0 0; padding: 8px 8px 0; display: flex; gap: 6px; }
+.tab { background: #FFFFFF; color: #202124; border-radius: 8px 8px 0 0; padding: 7px 10px; display: flex; align-items: center; gap: 8px; font: 12px system-ui, sans-serif; min-width: 0; }
+.tab span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tab svg { flex: none; }
+.tab.dim { background: transparent; color: #5F6368; }
+.sitebar { background: #0B0D0E; color: #E6EBED; border: 1px solid #23292C; border-radius: 6px; padding: 12px 14px; display: flex; align-items: center; gap: 9px; }
+.sitebar b { font-weight: 500; letter-spacing: -0.04em; font-size: 18px; }
+.sitebar i { margin-left: auto; font: 11px var(--mono); font-style: normal; color: #8B969B; text-transform: uppercase; letter-spacing: .08em; }
+.icons { display: flex; gap: 14px; align-items: center; }
+.appicon { width: 64px; height: 64px; border-radius: 15px; background: #0A0A0A; color: #FFFFFF; display: grid; place-items: center; }
+.appicon svg { width: 46px; height: 46px; }
+.avatar { width: 56px; height: 56px; border-radius: 50%; background: #FFFFFF; color: #0A0A0A; display: grid; place-items: center; border: 1px solid #D9DEE0; }
+.avatar svg { width: 44px; height: 44px; }
+.lockup { display: flex; align-items: center; gap: 10px; }
+.lockup b { font-weight: 500; letter-spacing: -0.045em; font-size: 30px; }
+
+.lockups { grid-template-columns: 1fr 1fr; }
+.lockups .sw { padding: 36px 16px; }
+.lk { display: flex; align-items: center; min-width: 0; }
+.lk svg { flex: none; display: block; }
+.lk span { white-space: nowrap; line-height: 1; }
+.stats { display: flex; flex-wrap: wrap; gap: 8px 20px; font: 12px var(--mono); color: var(--muted); padding: 2px 2px; }
+.stats b { color: var(--fg); font-weight: 500; }
+.stats .warn { color: var(--warn); }
+
+.out { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.out pre { margin: 0; font: 12px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; color: var(--fg); background: var(--raise); padding: 10px; border-radius: 4px; max-height: 160px; overflow: auto; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.actions input[type=text] { flex: 1; min-width: 140px; font: 13px var(--sans); padding: 7px 9px; border-radius: 4px; border: 1px solid var(--line); background: var(--raise); color: var(--fg); }
+.status { font: 12px var(--mono); color: var(--muted); }
+
+.shelf { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.saved { background: var(--panel); display: flex; flex-direction: column; min-width: 0; }
+.saved .thumbs { display: grid; grid-template-columns: 1fr 1fr; }
+.saved .thumbs div { display: grid; place-items: center; padding: 12px 6px; }
+.saved .thumbs svg { width: 56px; height: 56px; }
+.saved .meta { padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--line); }
+.saved .name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.saved .when { font: 10px var(--mono); color: var(--muted); }
+.saved .acts { display: flex; gap: 6px; }
+.saved .acts button { font-size: 11px; padding: 4px 7px; }
+.empty { background: var(--panel); padding: 18px; color: var(--muted); font-size: 13px; grid-column: 1 / -1; }
+
+@media (max-width: 900px) {
+  .app { grid-template-columns: 1fr; }
+  .controls { position: static; max-height: none; overflow: visible; }
+  .context { grid-template-columns: 1fr; }
+}
+@media (max-width: 520px) { .hero, .sizes { grid-template-columns: 1fr; } }
+</style>
+
+<div class="app">
+  <header class="top">
+    <span id="hdr"></span>
+    <span class="sub">Mark editor</span>
+  </header>
+
+  <aside class="controls" aria-label="Mark controls">
+    <div class="group">
+      <div class="label">Start from</div>
+      <div class="presets" id="presets"></div>
+    </div>
+
+    <div class="group">
+      <div class="label">Lines</div>
+      <div class="row"><label for="lines">Number of lines</label><output id="lines-o"></output><input type="range" id="lines" min="1" max="9" step="1"></div>
+      <div class="row"><label for="gap">Spacing</label><output id="gap-o"></output><input type="range" id="gap" min="4" max="40" step="0.5"></div>
+      <div class="row"><label for="width">Boldness</label><output id="width-o"></output><input type="range" id="width" min="1" max="22" step="0.1"></div>
+      <div class="row"><label for="center">Vertical position</label><output id="center-o"></output><input type="range" id="center" min="25" max="75" step="0.5"></div>
+    </div>
+
+    <div class="group">
+      <div class="label">How lines follow each other</div>
+      <div class="row"><label for="blend">Copies ↔ parallel</label><output id="blend-o"></output><input type="range" id="blend" min="0" max="1" step="0.05">
+        <span class="hint">0: identical copies, gaps narrow on slopes. 1: truly parallel, even gaps, outer spikes change size.</span></div>
+      <div class="row"><label for="anchor">Line that keeps the exact shape</label><output id="anchor-o"></output><input type="range" id="anchor" min="0" max="8" step="0.5">
+        <span class="hint">Top, middle or bottom. Other lines grow or shrink from it.</span></div>
+    </div>
+
+    <div class="group">
+      <div class="label">Pulse shape</div>
+      <div class="row"><label for="x1">Rise starts at</label><output id="x1-o"></output><input type="range" id="x1" min="5" max="60" step="0.5"></div>
+      <div class="row"><label for="x2">Peak at</label><output id="x2-o"></output><input type="range" id="x2" min="10" max="80" step="0.5"></div>
+      <div class="row"><label for="h">Peak height</label><output id="h-o"></output><input type="range" id="h" min="0" max="30" step="0.5"></div>
+      <div class="row"><label for="x3">Dip at</label><output id="x3-o"></output><input type="range" id="x3" min="20" max="90" step="0.5"></div>
+      <div class="row"><label for="d">Dip depth</label><output id="d-o"></output><input type="range" id="d" min="0" max="30" step="0.5"></div>
+      <div class="row"><label for="x4">Back to flat at</label><output id="x4-o"></output><input type="range" id="x4" min="30" max="96" step="0.5"></div>
+    </div>
+
+    <div class="group">
+      <div class="label">Circle</div>
+      <div class="seg" role="group" aria-label="Circle style">
+        <button type="button" id="style-open" data-style="open">Open</button>
+        <button type="button" id="style-ring" data-style="ring">Ring</button>
+        <button type="button" id="style-disc" data-style="disc">Disc</button>
+      </div>
+      <div class="row"><label for="r">Circle size</label><output id="r-o"></output><input type="range" id="r" min="30" max="50" step="0.5"></div>
+      <div class="row" id="ring-rows"><label for="ring">Ring thickness</label><output id="ring-o"></output><input type="range" id="ring" min="1" max="12" step="0.25"></div>
+      <div class="row" id="ringgap-rows"><label for="ringGap">Ring gap</label><output id="ringGap-o"></output><input type="range" id="ringGap" min="0" max="14" step="0.25"></div>
+      <div class="label">Corners</div>
+      <div class="seg" role="group" aria-label="Corner style">
+        <button type="button" id="join-miter" data-join="miter">Sharp</button>
+        <button type="button" id="join-bevel" data-join="bevel">Cut</button>
+        <button type="button" id="join-round" data-join="round">Round</button>
+      </div>
+      <label class="check"><input type="checkbox" id="guides"> Show guides on paper</label>
+    </div>
+
+    <div class="group">
+      <div class="label">Wordmark</div>
+      <div class="seg" role="group" aria-label="Letter case">
+        <button type="button" id="case-lower" data-case="lower">timelake</button>
+        <button type="button" id="case-title" data-case="title">Timelake</button>
+        <button type="button" id="case-upper" data-case="upper">TIMELAKE</button>
+      </div>
+      <div class="seg" role="group" aria-label="Typeface">
+        <button type="button" id="font-sans" data-font="sans">Geist</button>
+        <button type="button" id="font-mono" data-font="mono">Geist Mono</button>
+      </div>
+      <div class="seg" role="group" aria-label="Layout">
+        <button type="button" id="layout-row" data-layout="row">Side by side</button>
+        <button type="button" id="layout-stack" data-layout="stack">Stacked</button>
+      </div>
+      <div class="row"><label for="wWeight">Weight</label><output id="wWeight-o"></output><input type="range" id="wWeight" min="300" max="700" step="100"></div>
+      <div class="row"><label for="wTrack">Letter spacing</label><output id="wTrack-o"></output><input type="range" id="wTrack" min="-0.1" max="0.15" step="0.005"></div>
+      <div class="row"><label for="wSize">Text size vs mark</label><output id="wSize-o"></output><input type="range" id="wSize" min="0.3" max="1.4" step="0.01"></div>
+      <div class="row"><label for="wGap">Space between</label><output id="wGap-o"></output><input type="range" id="wGap" min="0" max="0.8" step="0.01"></div>
+    </div>
+  </aside>
+
+  <main class="stage">
+    <div class="cells hero">
+      <div class="sw paper"><div id="big-paper"></div><div class="guides" id="guides-layer" hidden></div></div>
+      <div class="sw ink"><div id="big-ink"></div></div>
+    </div>
+    <div class="stats" id="stats" aria-live="polite"></div>
+
+    <div class="cells lockups">
+      <div class="sw paper" id="lockup-paper"></div>
+      <div class="sw ink" id="lockup-ink"></div>
+    </div>
+
+    <div class="cells sizes">
+      <div class="sw paper" id="sizes-paper"></div>
+      <div class="sw ink" id="sizes-ink"></div>
+    </div>
+
+    <div class="cells context">
+      <div class="ctx">
+        <div class="label">Browser tab · 16 px</div>
+        <div class="tabbar">
+          <div class="tab"><span id="fav"></span><span>Timelake · The open time-series lakehouse</span></div>
+          <div class="tab dim"><span>GitHub</span></div>
+        </div>
+      </div>
+      <div class="ctx">
+        <div class="label">Site header · 24 px</div>
+        <div class="sitebar"><span id="hdr-ctx"></span><i>Docs</i></div>
+      </div>
+      <div class="ctx">
+        <div class="label">App icon · avatar</div>
+        <div class="icons"><div class="appicon" id="appicon"></div><div class="avatar" id="avatar"></div></div>
+      </div>
+      <div class="ctx" style="grid-column: 1 / -1">
+        <div class="label">Small lockups · 20 and 32 px marks</div>
+        <div class="cells" style="grid-template-columns: 1fr 1fr">
+          <div class="sw paper" style="gap:18px;justify-items:start" id="lock-paper"></div>
+          <div class="sw ink" style="gap:18px;justify-items:start" id="lock-ink"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="out">
+      <div class="label">Save this design</div>
+      <div class="actions">
+        <input type="text" id="name" placeholder="Name it, e.g. Pulse 3 bold" maxlength="80">
+        <button type="button" class="btn primary" id="save">Save</button>
+        <button type="button" class="btn" id="copy-spec">Copy spec</button>
+        <button type="button" class="btn" id="copy-svg">Copy SVG</button>
+        <button type="button" class="btn" id="download" hidden>Download SVG</button>
+      </div>
+      <div class="status" id="status" aria-live="polite"></div>
+      <pre id="spec"></pre>
+    </div>
+
+    <div class="label">Saved designs <b id="saved-where"></b></div>
+    <div class="shelf" id="shelf"><div class="empty">Nothing saved yet. Shape a mark, give it a name and press Save; it shows up here, and Claude can read it.</div></div>
+  </main>
+</div>
+
+<script>
+/*__GEOMETRY__*/
+
+// Pulse presets, as [rise start, peak x, peak height, dip x, dip depth, back to flat].
+const SHAPES = {
+  v0:      [30, 43, 14, 67, 12, 78],
+  low:     [32, 42, 10, 60, 8, 68],
+  mid:     [29, 43, 14, 65, 8, 73],
+  tall:    [27, 45, 18, 68, 5, 73],
+  rise:    [28, 44, 16, 64, 4, 68],
+};
+const base = { center: 51, blend: 1, anchor: null, style: "open", r: 47, ring: 4.6, ringGap: 4, join: "miter" };
+const shape = (k) => { const [x1, x2, h, x3, d, x4] = SHAPES[k]; return { x1, x2, h, x3, d, x4 }; };
+const PRESETS = [
+  ["v0", { ...base, lines: 5, gap: 13, width: 4.8, blend: 0, center: 52, ...shape("v0") }],
+  ["v0.1", { ...base, lines: 5, gap: 12, width: 4.8, ...shape("low") }],
+  ["v0.2", { ...base, lines: 3, gap: 20, width: 8.6, ...shape("low") }],
+  ["B2", { ...base, lines: 3, gap: 22, width: 11, ...shape("low") }],
+  ["F2", { ...base, lines: 3, gap: 25, width: 12.5, blend: 0.35, ...shape("mid") }],
+  ["F4", { ...base, lines: 3, gap: 25, width: 12.5, blend: 0.25, ...shape("mid") }],
+  ["F7", { ...base, lines: 3, gap: 26, width: 13, blend: 0.25, center: 52, ...shape("rise") }],
+  ["F11", { ...base, lines: 3, gap: 23, width: 11, blend: 0.35, ...shape("mid") }],
+  ["A9", { ...base, lines: 3, gap: 22, width: 11, blend: 0, center: 52, ...shape("v0") }],
+  ["Ring", { ...base, lines: 4, gap: 13, width: 4.6, style: "ring", ...shape("low") }],
+];
+
+const WDEF = { case: "lower", font: "sans", layout: "row", weight: 500, track: -0.045, size: 0.62, gap: 0.24 };
+let W = { ...WDEF };
+let S = { ...PRESETS[3][1] };
+try { const w = JSON.parse(localStorage.getItem("tl-mark-wordmark") || "null"); if (w && typeof w === "object") W = { ...W, ...w }; } catch {}
+try { const saved = JSON.parse(localStorage.getItem("tl-mark-draft") || "null"); if (saved && typeof saved === "object") S = { ...S, ...saved }; } catch {}
+
+// The spec in the shape brand/marks.mjs takes.
+function toSpec(s) {
+  const spec = { lines: s.lines, gap: s.gap, width: s.width, center: s.center,
+    pulse: [[-6, 0], [s.x1, 0], [s.x2, -s.h], [s.x3, s.d], [s.x4, 0], [106, 0]] };
+  if (s.blend === 0) spec.mode = "translate"; else { spec.mode = "parallel"; if (s.blend !== 1) spec.blend = s.blend; }
+  if (s.anchor != null && s.anchor !== (s.lines - 1) / 2) spec.anchor = s.anchor;
+  if (s.style === "ring") { spec.ring = s.ring; spec.ringGap = s.ringGap; }
+  else if (s.style === "disc") { spec.disc = true; if (s.r !== 48) spec.r = s.r; }
+  else if (s.r !== 47) spec.r = s.r;
+  if (s.join !== "miter") spec.join = s.join;
+  return spec;
+}
+function fromSpec(spec) {
+  const p = spec.pulse ?? PULSE;
+  return { ...base, lines: spec.lines, gap: spec.gap, width: spec.width, center: spec.center ?? 51,
+    blend: spec.mode === "translate" ? 0 : (spec.blend ?? 1), anchor: spec.anchor ?? null,
+    x1: p[1][0], x2: p[2][0], h: -p[2][1], x3: p[3][0], d: p[3][1], x4: p[4][0],
+    style: spec.disc ? "disc" : spec.ring ? "ring" : "open",
+    r: spec.r ?? (spec.disc ? 48 : 47), ring: spec.ring ?? base.ring, ringGap: spec.ringGap ?? base.ringGap, join: spec.join ?? "miter" };
+}
+
+let uid = 0;
+const svg = (spec, size) => markSvg(spec, { size, id: `m${uid++}` });
+const $ = (id) => document.getElementById(id);
+
+// Narrowest visible gap between neighbouring lines inside the circle, versus the gap on the flats.
+function spacingStats(spec) {
+  const polys = markLines(spec);
+  const rClip = spec.disc ? (spec.r ?? 48) : spec.ring ? 49 - spec.ring - (spec.ringGap ?? 4) : (spec.r ?? 47);
+  const segDist = (px, py, [ax, ay], [bx, by]) => {
+    const vx = bx - ax, vy = by - ay, L = vx * vx + vy * vy;
+    const t = L ? Math.max(0, Math.min(1, ((px - ax) * vx + (py - ay) * vy) / L)) : 0;
+    return Math.hypot(px - ax - t * vx, py - ay - t * vy);
+  };
+  let tight = Infinity;
+  for (let i = 0; i + 1 < polys.length; i++) {
+    const a = polys[i], b = polys[i + 1];
+    for (let k = 0; k + 1 < a.length; k++) {
+      for (let s = 0; s <= 24; s++) {
+        const px = a[k][0] + (a[k + 1][0] - a[k][0]) * s / 24, py = a[k][1] + (a[k + 1][1] - a[k][1]) * s / 24;
+        if (Math.hypot(px - 50, py - 50) > rClip - 1) continue;
+        let m = Infinity;
+        for (let j = 0; j + 1 < b.length; j++) m = Math.min(m, segDist(px, py, b[j], b[j + 1]));
+        tight = Math.min(tight, m);
+      }
+    }
+  }
+  return { flat: spec.gap - spec.width, tight: tight === Infinity ? null : tight - spec.width };
+}
+
+const SLIDERS = ["lines", "gap", "width", "center", "blend", "x1", "x2", "h", "x3", "d", "x4", "r", "ring", "ringGap"];
+function syncControls() {
+  for (const k of SLIDERS) { $(k).value = S[k]; }
+  $("anchor").max = String(S.lines - 1);
+  $("anchor").value = S.anchor ?? (S.lines - 1) / 2;
+  document.querySelectorAll("[data-style]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.style === S.style)));
+  document.querySelectorAll("[data-join]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.join === S.join)));
+  $("ring-rows").hidden = S.style !== "ring";
+  $("ringgap-rows").hidden = S.style !== "ring";
+  $("r").closest(".row").hidden = S.style === "ring";
+  $("wWeight").value = W.weight; $("wTrack").value = W.track; $("wSize").value = W.size; $("wGap").value = W.gap;
+  for (const [attr, key] of [["case", "case"], ["font", "font"], ["layout", "layout"]])
+    document.querySelectorAll(`[data-${attr}]`).forEach(b => b.setAttribute("aria-pressed", String(b.dataset[attr] === W[key])));
+}
+function readouts() {
+  const fmt = (v, d = 1) => Number(v).toFixed(d).replace(/\.0+$/, "");
+  $("lines-o").value = S.lines; $("gap-o").value = fmt(S.gap); $("width-o").value = fmt(S.width);
+  $("center-o").value = fmt(S.center); $("blend-o").value = fmt(S.blend, 2);
+  const a = S.anchor ?? (S.lines - 1) / 2;
+  $("anchor-o").value = a === 0 ? "top" : a === S.lines - 1 ? "bottom" : a === (S.lines - 1) / 2 ? "middle" : `#${fmt(a + 1)}`;
+  for (const k of ["x1", "x2", "h", "x3", "d", "x4", "r", "ring", "ringGap"]) $(`${k}-o`).value = fmt(S[k]);
+  $("wWeight-o").value = W.weight; $("wTrack-o").value = `${fmt(W.track, 3)}em`;
+  $("wSize-o").value = `${Math.round(W.size * 100)}%`; $("wGap-o").value = `${Math.round(W.gap * 100)}%`;
+}
+
+// Mark + wordmark. Sizes scale from the mark's pixel size so every preview keeps the same proportions.
+function lockup(spec, px) {
+  const text = W.case === "upper" ? "TIMELAKE" : W.case === "title" ? "Timelake" : "timelake";
+  const family = W.font === "mono" ? "var(--mono)" : "var(--sans)";
+  const stack = W.layout === "stack";
+  const fs = +(px * W.size).toFixed(2), gap = +(px * W.gap).toFixed(2);
+  return `<div class="lk" style="gap:${gap}px;flex-direction:${stack ? "column" : "row"}">${svg(spec, px)}` +
+    `<span style="font-family:${family};font-weight:${W.weight};letter-spacing:${W.track}em;font-size:${fs}px">${text}</span></div>`;
+}
+
+let frame = 0;
+function render() {
+  frame = 0;
+  // Keep the pulse points in left-to-right order.
+  S.x2 = Math.max(S.x2, S.x1 + 0.5); S.x3 = Math.max(S.x3, S.x2 + 0.5); S.x4 = Math.max(S.x4, S.x3 + 0.5);
+  if (S.anchor != null) S.anchor = Math.min(S.anchor, S.lines - 1);
+  const spec = toSpec(S);
+  readouts();
+  $("big-paper").innerHTML = svg(spec); $("big-ink").innerHTML = svg(spec);
+  const sizes = [128, 64, 48, 32, 24, 16];
+  const strip = () => sizes.map(n => `<figure>${svg(spec, n)}<figcaption>${n}</figcaption></figure>`).join("");
+  $("sizes-paper").innerHTML = strip(); $("sizes-ink").innerHTML = strip();
+  $("fav").innerHTML = svg(spec, 16);
+  $("appicon").innerHTML = svg(spec); $("avatar").innerHTML = svg(spec);
+  const small = lockup(spec, 20) + lockup(spec, 32);
+  $("lock-paper").innerHTML = small; $("lock-ink").innerHTML = small;
+  $("lockup-paper").innerHTML = lockup(spec, 76); $("lockup-ink").innerHTML = lockup(spec, 76);
+  $("hdr").innerHTML = lockup(spec, 26);
+  $("hdr-ctx").innerHTML = lockup(spec, 24);
+  try { localStorage.setItem("tl-mark-wordmark", JSON.stringify(W)); } catch {}
+  $("spec").textContent = JSON.stringify({ mark: spec, wordmark: W });
+  const st = spacingStats(spec);
+  const touch = st.tight != null && st.tight <= 0.2;
+  $("stats").innerHTML = st.tight == null ? "" :
+    `<span>gap on the flats <b>${st.flat.toFixed(1)}</b></span>` +
+    `<span>tightest gap <b class="${touch ? "warn" : ""}">${Math.max(0, st.tight).toFixed(1)}</b></span>` +
+    `<span>tightest / flats <b class="${touch ? "warn" : ""}">${st.flat > 0 ? Math.round(100 * Math.max(0, st.tight) / st.flat) : 0}%</b></span>` +
+    (touch ? `<span class="warn">lines touch on a slope</span>` : "");
+  if ($("guides").checked) {
+    const r = spec.disc ? (spec.r ?? 48) : spec.ring ? 49 - spec.ring - (spec.ringGap ?? 4) : (spec.r ?? 47);
+    $("guides-layer").innerHTML = `<svg viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="${r}" fill="none" stroke="#0B7FA6" stroke-width=".4" stroke-dasharray="1.5 1.5"/><path d="M50 0V100M0 50H100" stroke="#0B7FA6" stroke-width=".25" stroke-dasharray="1 2"/></svg>`;
+  }
+  $("guides-layer").hidden = !$("guides").checked;
+  try { localStorage.setItem("tl-mark-draft", JSON.stringify(S)); } catch {}
+}
+const schedule = () => { if (!frame) frame = requestAnimationFrame(render); };
+
+for (const k of SLIDERS) $(k).addEventListener("input", (e) => { S[k] = Number(e.target.value); if (k === "lines") syncControls(); schedule(); });
+$("anchor").addEventListener("input", (e) => { const v = Number(e.target.value); S.anchor = v === (S.lines - 1) / 2 ? null : v; schedule(); });
+document.querySelectorAll("[data-style]").forEach(b => b.addEventListener("click", () => {
+  S.style = b.dataset.style; if (S.style === "disc" && S.r === 47) S.r = 48; if (S.style === "open" && S.r === 48) S.r = 47; syncControls(); schedule();
+}));
+document.querySelectorAll("[data-join]").forEach(b => b.addEventListener("click", () => { S.join = b.dataset.join; syncControls(); schedule(); }));
+$("guides").addEventListener("change", schedule);
+for (const [id, key] of [["wWeight", "weight"], ["wTrack", "track"], ["wSize", "size"], ["wGap", "gap"]])
+  $(id).addEventListener("input", (e) => { W[key] = Number(e.target.value); schedule(); });
+for (const attr of ["case", "font", "layout"])
+  document.querySelectorAll(`[data-${attr}]`).forEach(b => b.addEventListener("click", () => { W[attr] = b.dataset[attr]; syncControls(); schedule(); }));
+$("presets").innerHTML = PRESETS.map(([n], i) => `<button type="button" class="chip" data-preset="${i}">${n}</button>`).join("");
+$("presets").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-preset]"); if (!b) return;
+  S = { ...PRESETS[Number(b.dataset.preset)][1] }; syncControls(); schedule();
+});
+
+// Copy and download.
+function flash(msg) { $("status").textContent = msg; clearTimeout(flash.t); flash.t = setTimeout(() => { $("status").textContent = ""; }, 4000); }
+async function copy(text, what) {
+  try { await navigator.clipboard.writeText(text); flash(`${what} copied.`); }
+  catch { const r = document.createRange(); r.selectNodeContents($("spec")); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); flash("Copy blocked here; the spec is selected, press Cmd/Ctrl+C."); }
+}
+$("copy-spec").addEventListener("click", () => copy(JSON.stringify({ mark: toSpec(S), wordmark: W }), "Spec"));
+$("copy-svg").addEventListener("click", () => copy(markSvg(toSpec(S), { color: "#000", id: "timelake-mark" }), "SVG"));
+
+// Saved designs: the artifact's shared store when available (Claude can read it), else this browser only.
+let db = null, local = false, designs = [];
+const slug = (s) => (s || "design").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "design";
+function renderShelf() {
+  const shelf = $("shelf");
+  if (!designs.length) { shelf.innerHTML = `<div class="empty">Nothing saved yet. Shape a mark, give it a name and press Save; it shows up here${local ? "" : ", and Claude can read it"}.</div>`; return; }
+  shelf.innerHTML = designs.map(d => `<div class="saved">
+    <div class="thumbs"><div class="paper">${svg(d.spec)}</div><div class="ink">${svg(d.spec)}</div></div>
+    <div class="meta"><div class="name" title="${esc(d.name)}">${esc(d.name)}</div><div class="when">${new Date(d.createdAt).toLocaleString()}</div>
+      <div class="acts"><button type="button" class="btn" data-load="${d.id}">Load</button><button type="button" class="btn" data-del="${d.id}">Delete</button></div></div>
+  </div>`).join("");
+}
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+$("shelf").addEventListener("click", async (e) => {
+  const load = e.target.closest("[data-load]"), del = e.target.closest("[data-del]");
+  if (load) { const d = designs.find(x => x.id === load.dataset.load); if (d) { S = fromSpec(d.spec); if (d.wordmark) W = { ...WDEF, ...d.wordmark }; $("name").value = d.name; syncControls(); schedule(); flash(`Loaded "${d.name}".`); scrollTo({ top: 0, behavior: "smooth" }); } }
+  if (del) {
+    if (del.dataset.armed !== "1") { del.dataset.armed = "1"; del.textContent = "Confirm"; setTimeout(() => { if (del.isConnected) { del.dataset.armed = ""; del.textContent = "Delete"; } }, 3000); return; }
+    const d = designs.find(x => x.id === del.dataset.del); if (!d) return;
+    if (local) { designs = designs.filter(x => x.id !== d.id); saveLocal(); renderShelf(); }
+    else { try { await db.doc(`designs/${d.id}`).delete(); } catch (err) { flash(`Couldn't delete: ${err?.message || err?.code || "unknown error"}.`); } }
+  }
+});
+function saveLocal() { try { localStorage.setItem("tl-mark-saved", JSON.stringify(designs)); } catch {} }
+$("save").addEventListener("click", async () => {
+  const name = $("name").value.trim() || `Design ${designs.length + 1}`;
+  const spec = toSpec(S);
+  const id = `${slug(name)}-${Date.now().toString(36)}`;
+  const doc = { name, spec, wordmark: { ...W }, createdAt: new Date().toISOString() };
+  if (local || !db) { designs = [{ id, ...doc }, ...designs]; saveLocal(); renderShelf(); flash(`Saved "${name}" in this browser.`); return; }
+  $("save").disabled = true;
+  try { await db.doc(`designs/${id}`).set(doc); flash(`Saved "${name}". Tell Claude its name to use it.`); }
+  catch (err) { flash(err?.code === "quota_exceeded" ? "The shelf is full; delete a few designs first." : `Couldn't save: ${err?.message || err?.code || "unknown error"}.`); }
+  finally { $("save").disabled = false; }
+});
+
+function useLocal() {
+  local = true; $("saved-where").textContent = "· this browser only";
+  try { designs = JSON.parse(localStorage.getItem("tl-mark-saved") || "[]"); } catch { designs = []; }
+  renderShelf();
+}
+
+syncControls(); render();
+
+(async () => {
+  const use = window.claude?.use;
+  const [store, dl] = use ? await Promise.all([use("db").catch(() => null), use("downloads").catch(() => null)]) : [null, null];
+  if (dl) {
+    $("download").hidden = false;
+    $("download").addEventListener("click", async () => {
+      const name = slug($("name").value.trim() || "timelake-mark");
+      try { await dl.save({ filename: `${name}.svg`, data: markSvg(toSpec(S), { color: "#000", id: "timelake-mark" }) }); }
+      catch (err) { if (err?.code !== "declined") flash(`Download unavailable: ${err?.message || err?.code}.`); }
+    });
+  }
+  if (!store) { useLocal(); return; }
+  db = store; $("saved-where").textContent = "· shared with Claude";
+  db.collection("designs").orderBy("createdAt", "desc").limit(300).onSnapshot(
+    (snap) => { designs = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(d => d.spec); renderShelf(); },
+    () => useLocal(),
+  );
+})();
+</script>

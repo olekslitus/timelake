@@ -27,6 +27,8 @@ Parallel lines that turn together at sharp, mitered corners, inside a circle. Ea
 
 Each has a `-white` file for dark backgrounds. The files are generated: edit `marks.mjs`, then run `bun brand/marks.mjs`.
 
+**Editor:** `bun brand/build-editor.mjs` writes `brand/editor.html`, an interactive page for the mark and wordmark (lines, spacing, boldness, pulse shape, circle style, text). It draws with the same geometry code as `marks.mjs`, so a spec copied from it renders identically here.
+
 **Wordmark:** `timelake`, lowercase, Geist Medium, letter-spacing −0.045em, set to the right of the mark.
 
 ## Color
