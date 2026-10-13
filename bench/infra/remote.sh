@@ -12,6 +12,7 @@
 # instance). S3 traffic goes through tools/s3proxy in AWS mode, which counts requests by kind.
 # Logs and results are copied to s3://$BENCH_DATA_BUCKET/_out/ after every stage.
 set -euo pipefail
+SELF=$(realpath "$0")
 source /etc/profile.d/timelake-bench.sh
 export PATH=$HOME/.cargo/bin:$HOME/.local/bin:$PATH GOTOOLCHAIN=auto
 cd ~/timelake/bench
@@ -127,7 +128,7 @@ stage() {
   rm -f "$LOGS/$name".{done,failed}
   # A fresh bash process, so set -e stops the stage at its first failing command (bash ignores -e inside
   # functions called from `if`, `&&` or `||`).
-  if ! bash "$0" _run "$@"; then touch "$LOGS/$name.failed"; sync_out; return 1; fi
+  if ! bash "$SELF" _run "$@"; then touch "$LOGS/$name.failed"; sync_out; return 1; fi
   touch "$LOGS/$name.done"
   echo "== $name done $(date -u +%FT%TZ)"
   sync_out
@@ -143,5 +144,5 @@ case ${1:-} in
     ;;
   build | data | direct) stage "$1" ;;
   queries | v0) stage "$1" "$2" ;;
-  *) sed -n '2,13p' "$0"; exit 2 ;;
+  *) sed -n '2,13p' "$SELF"; exit 2 ;;
 esac
