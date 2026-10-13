@@ -1,7 +1,7 @@
 # Timelake — Specification
 
-> **Status:** Draft v0.7 — v0 implementation in progress (§19.0)
-> **Last updated:** 2026-10-12
+> **Status:** Draft v0.8 — v0 implementation in progress (§19.0)
+> **Last updated:** 2026-10-13
 > **Scope of this document:** product requirements, architecture, and the key design decisions (with open questions). Not an implementation guide yet.
 
 ### Decision log
@@ -65,6 +65,10 @@ The problem we replace: teams today run S3 Tables (or self-managed Iceberg) plus
 | R16 | Backfilling historical data must be easy. |
 | R17 | Deletes are immutable and audited, *and* GDPR-compliant erasure is possible. |
 | R18 | Simple import from CSV files, existing stores (Iceberg/S3 Tables, Parquet, …), and databases such as TimescaleDB. |
+| R19 | Easy read access to the data for LLM agents, with permission sets built in (§21.1). |
+| R20 | Pre-made static read models on the blob store, based on the frontend's Zod schemas, invalidated and regenerated automatically on ingestion, so dashboards for a time range of a device or asset are near instant (§21.2). |
+| R21 | Data → events: produce any type of event into any event stream system, based on incoming data (§21.3). |
+| R22 | Later: a simple compute model. Users define a Python function and the result it should produce (for example a computed metric), and Timelake applies it automatically, the way it does rollups (§21.4). |
 
 ---
 
@@ -642,7 +646,7 @@ All forms share a single config file in the spirit of Telegraf's (`inputs → pr
   - Out-of-order or late beyond tolerance
   - Unit and schema anomalies
   - Statistical anomalies (rolling z-score, EWMA)
-- **Outputs of rules:** Rows in an **`events` Iceberg table** (queryable history of alarms) plus real-time sinks (webhook, Kafka, SNS/SQS, MQTT topic).
+- **Outputs of rules:** Rows in an **`events` Iceberg table** (queryable history of alarms) plus real-time sinks (webhook, Kafka, SNS/SQS, MQTT topic). Generalized to any event type and any event stream in F3 (§21.3).
 
 ### 13.4 Rule state without a server (draft — Q17)
 | Rule type | State needed | How it works serverless |
@@ -863,6 +867,10 @@ TSBS models a truck fleet at ~10 s per device. Industrial plants look different,
 | Q14 | ~~Backfill conflict default~~ | **Resolved:** existing rows win; `prefer = backfill` override per job |
 | Q15 | ~~Auto-routing late bulk data to backfill~~ | **Resolved for v1:** manual opt-in only; automatic routing later (threshold tuned by benchmarks) |
 | Q17 | Rule state on Lambda: object-store checkpoints vs. hot store; sweep cadence for heartbeat rules | Prototype in Phase 6 |
+| Q18 | F1: are agent permission sets open source or premium (§20)? Policy file format: our own JSON, or an existing one (Cedar, OPA/Rego)? | Open source enforcement in the reader; our own small JSON format first |
+| Q19 | F2: tile format (Arrow IPC, Parquet, or JSON) and tile sizes per resolution; how much regeneration a commit may trigger | Arrow IPC (fastest in `timelake-wasm`), sizes chosen by benchmark; debounce per model |
+| Q20 | F3: is the commit-driven trigger an object-store notification (S3 events), a catalog event, or a poll of the newest snapshot? | Support all three; poll as the portable fallback |
+| Q21 | F4: how to run user Python safely in a hosted service | Out of scope until F4; the self-hosted version runs in the user's own process |
 | Q16 | ~~Which import sources ship first?~~ | **Resolved:** Phase 1: CSV, Parquet, Iceberg/S3 Tables. Phase 2: TimescaleDB/Postgres with `--sync` cutover. Then InfluxDB, others via the DuckDB-backed source. Historian connectors are premium (D12) |
 
 ---
@@ -923,8 +931,10 @@ Open from v0:
 | 3 | Caggs (incremental, hierarchical) + `timelake-functions` core (`time_bucket`, gapfill, locf, `time_weight`, `counter_agg`, percentiles) |
 | 4 | DuckDB extension (functions, dedup-on-read, index-aware scans) |
 | 5 | Hot tier (profile WAL vs. Valkey; ship both behind `HotStore`) + Timelake reader with merge, Puffin indexes, fast paths |
-| 6 | `timelake-ingest` with MQTT/HTTP/Kafka and the rule engine + events table |
+| 6 | `timelake-ingest` with MQTT/HTTP/Kafka and the rule engine + events table; data → events with pluggable sinks and commit-driven triggers (F3, §21.3) |
 | 7 | Python package (PyO3 + maturin), docs site with recipes, published benchmarks; Vortex when Iceberg supports it |
+| 8 | Agent access with permission sets (F1) and static read models for dashboards (F2) (§21) |
+| Later | Computed metrics from user-defined Python functions (F4, §21.4) |
 
 ---
 
@@ -938,3 +948,61 @@ Open from v0:
 | Import: CSV, Parquet, Iceberg/S3 Tables, Delta, TimescaleDB/Postgres, InfluxDB | Support / SLAs |
 
 The principle: everything needed to run the lake well is open; integrations with proprietary industrial systems and managed operations are premium. The open-source part is Apache 2.0 (D7); premium components would live outside this repository.
+
+---
+
+## 21. Planned features
+
+New product features beyond the original requirements, recorded on 2026-10-13. None of them is built yet. Each one keeps the rule that no always-on Timelake server is required (R13): state lives in the bucket and work is triggered by commits or schedules.
+
+| ID | Feature | Req | Builds on | Phase |
+|----|---------|-----|-----------|-------|
+| F1 | Read access for LLM agents, with permission sets built in | R19 | Reader, multitenancy (§14) | 8 |
+| F2 | Static read models in the bucket, generated from the frontend's Zod schemas and refreshed on ingest | R20 | `@timelake/client`, snapshot diffs (§11.1) | 8 |
+| F3 | Data → events: produce any event type into any event stream | R21 | Rules (§13.3) | 6 |
+| F4 | Computed metrics: user-defined Python functions applied automatically, like rollups | R22 | Caggs (§11.1), Python package | Later |
+
+### 21.1 F1: Agent access with permission sets (R19)
+
+LLM agents should be able to find, understand and read time-series data without a human writing SQL for them, and only see what they are allowed to.
+
+- **Interface:** an MCP server (`timelake mcp`, local over stdio or hosted over HTTP) plus the same operations in the Python and TypeScript clients. Tools: list tables, describe a table (schema, contract, units, series-key meaning, time range), latest values, range query with a bucket and aggregate, and SQL.
+- **Self-describing data:** column descriptions and units are stored as table properties, so an agent gets context instead of guessing what `v3` means.
+- **Fits in a context window:** results are capped by rows and bytes; long ranges are downsampled automatically (`time_bucket`, `lttb`), and the response says it was downsampled. Every query has a scan budget (bytes, time) so a bad question can't run up an S3 bill.
+- **Permission sets:** a named policy stored in the lake (`_timelake/policies/<name>.json`) lists allowed tables, columns, row filters (for example `site = 'plant-3'`, or a tenant), the maximum time window, and operations. Agents only ever get read access. The reader enforces a policy by rewriting the plan (row filter and column projection injected into the DataFusion plan) before it runs. An agent's credential names exactly one permission set.
+- **The honest limit:** a policy enforced by the reader only binds clients that go through Timelake. Anyone holding raw bucket credentials can read the files. So the agent never receives bucket credentials: the MCP server holds them, or the REST catalog vends prefix-scoped credentials (§14).
+- **Audit:** every agent query is logged with its permission set to an Iceberg table, consistent with D6.
+
+### 21.2 F2: Static read models (R20)
+
+Dashboards almost always ask the same thing: one device or asset, a recent time range, a few fields at a fixed resolution. F2 answers those requests with one object GET from the bucket or a CDN instead of planning a query.
+
+- **Defined from the frontend:** a read model is declared next to the component that renders it, with the Zod schema of the shape it needs (`@timelake/client` already uses Zod) plus its query: source table or cagg, series key (device/asset), fields, aggregates and resolutions. A build step exports the definition (Zod → JSON Schema) to `_timelake/read-models/<name>.json`, so the lake knows what to precompute and the frontend gets typed results.
+- **Time tiles:** results are stored like map tiles: per series, per resolution level, per fixed tile (for example 1-minute buckets in day tiles, 1-hour buckets in month tiles) at deterministic paths such as `read-models/<name>/<series>/<resolution>/<tile>.arrow`. Any time range is a few tiles. Closed tiles never change, so they cache forever; only the open (current) tile and tiles hit by late data are rewritten.
+- **Invalidation and regeneration on ingest:** each commit knows which series and time partitions it touched (the same snapshot diff that drives incremental caggs). Only the affected tiles are regenerated, by the writer inline or by a commit-triggered job. A small per-model manifest records the snapshot each tile reflects, so readers and caches never mix versions.
+- **Cost guardrails:** regeneration is debounced per model (at most once per N seconds) and can be limited to "hot" series, because each refresh is a PUT. Tiles are built from caggs where a matching cagg exists.
+- **Browser path:** `timelake-wasm` / `@timelake/client` fetch tiles by path, stitch them, and fall back to a normal query when a model doesn't cover the request.
+
+### 21.3 F3: Data → events (R21)
+
+Turn incoming data into events and publish them into whatever event system the user already runs. This generalizes the rule outputs in §13.3.
+
+- **Events are defined, not hard-coded:** an event is a typed record produced from data by a built-in rule (threshold, flatline, heartbeat, …), a SQL definition (state change, "batch arrived", a derived condition), or pass-through of rows (change-data-capture style). Its payload schema is declared (JSON Schema or Zod).
+- **Any sink:** pluggable outputs for Kafka/Redpanda, NATS JetStream, MQTT, Kinesis, SQS/SNS, EventBridge, Google Pub/Sub, Azure Event Hubs, Redis Streams, and webhooks. CloudEvents is the default envelope.
+- **Two triggers:** in-stream inside `timelake-ingest` for the lowest latency, or commit-driven: a function triggered per commit reads the snapshot diff, so any writer (CLI, Python, Spark) can produce events without running the ingest service.
+- **Delivery:** at least once. Every event carries a deterministic ID (table, series, time, rule), so consumers can deduplicate. Events are emitted only after the commit succeeds and are also written to the `events` Iceberg table, which is the durable record and the replay source after a crash (a commit-driven outbox).
+
+### 21.4 F4: Computed metrics (R22, later)
+
+Let users define a Python function and the result it produces, for example a computed metric, and have Timelake keep that result up to date automatically, the way caggs keep rollups up to date.
+
+- **Definition:** the function, its inputs (tables, series selection, window) and its output table with a normal contract. Sketch:
+  ```python
+  @tl.metric(inputs={"flow": "iot.flow", "power": "iot.power"},
+             output="iot.pump_efficiency", window="1m", series="pump_id")
+  def efficiency(flow: pl.DataFrame, power: pl.DataFrame) -> pl.DataFrame: ...
+  ```
+- **Incremental like caggs:** on each commit, compute which output windows are affected (snapshot diff), pass the inputs as Arrow (zero-copy into Polars or pandas), and replace those windows in the output table. Late data recomputes the affected windows the same way it does for caggs.
+- **Contract for functions:** deterministic and per-window by default, so any window can be recomputed. State carried across windows is opt-in.
+- **Where it runs:** in the writer's process (Python bindings), in a scheduled `timelake maintain` run, or in a Lambda. There is still no server. A hosted version needs sandboxing.
+- **Composes:** computed metrics are ordinary tables, so they can feed read models (F2) and events (F3). SQL and Rust functions can follow on the same mechanism.
