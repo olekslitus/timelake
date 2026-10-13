@@ -677,6 +677,8 @@ Documented patterns with trade-offs and examples:
 
 Plus examples for credential vending via the REST catalog, per-tenant retention and caggs, and per-tenant ingestion quotas.
 
+**Planned setup guides, one per object store:** AWS S3 (and S3 Express One Zone), Cloudflare R2, Tigris, Wasabi, Backblaze B2, Azure Blob, Google Cloud Storage, and self-hosted RustFS. Each covers the bucket, credentials, endpoint and region settings, conditional-write support, and the cost to expect.
+
 **Other planned doc recipes:** factory sensor monitoring, fleet/GPS tracking, energy metering (counters → `counter_agg`), building management, observability metrics, crypto/stock ticks, migrating from S3 Tables + Glue, and migrating from TimescaleDB/InfluxDB.
 
 ---
@@ -790,7 +792,8 @@ TSBS assumes a database. A lake also has to be judged on these, borrowing ideas 
 - **Same hardware and same object store** for every lake system:
   - Locally: RustFS (or SeaweedFS), with injected latency (e.g. toxiproxy) to approximate S3's per-request latency.
   - Published runs: real S3 in-region, plus S3 Express One Zone and R2. Local object stores don't reproduce S3's request latency, so they are for repeatability only. MinIO's community edition is no longer maintained.
-- **Object-store compatibility matrix (CI):** S3, GCS, Azure Blob, R2, RustFS, SeaweedFS, Garage. Each is tested for the features Timelake relies on, especially **conditional writes** (`If-None-Match` / `If-Match`), which the object-store-only catalog and WAL require (§5.2, §8.2).
+  - **Planned: one published run per popular object store**, each with latency, request counts and $ per month at that store's prices: AWS S3 (Standard, Express One Zone), Cloudflare R2, Tigris, Wasabi, Backblaze B2, Azure Blob, Google Cloud Storage. Stores without request fees (R2, Wasabi) or with different latency (Tigris, Express) change the cost and speed picture most.
+- **Object-store compatibility matrix (CI):** S3, GCS, Azure Blob, R2, Tigris, Wasabi, Backblaze B2, RustFS, SeaweedFS, Garage. Each is tested for the features Timelake relies on, especially **conditional writes** (`If-None-Match` / `If-Match`), which the object-store-only catalog and WAL require (§5.2, §8.2).
 - **Cold and warm runs reported separately:** cold means no local caches.
 - **Results include:** p50/p99 latency, bytes read, **object-store request counts**, and **estimated $** (per query, per GB ingested, per month of storage).
 - **Configurations:** Every system's configuration and version is committed. Each system is tuned per its own docs, and vendors are invited to review.
