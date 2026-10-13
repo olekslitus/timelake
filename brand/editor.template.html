@@ -247,7 +247,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
     </div>
 
     <div class="label">Saved designs <b id="saved-where"></b></div>
-    <div class="shelf" id="shelf"><div class="empty">Nothing saved yet. Shape a mark, give it a name and press Save; it shows up here, and Claude can read it.</div></div>
+    <div class="shelf" id="shelf"><div class="empty">Nothing saved yet. Shape a mark, give it a name and press Save.</div></div>
   </main>
 </div>
 
@@ -434,66 +434,68 @@ async function copy(text, what) {
 $("copy-spec").addEventListener("click", () => copy(JSON.stringify({ mark: toSpec(S), wordmark: W }), "Spec"));
 $("copy-svg").addEventListener("click", () => copy(markSvg(toSpec(S), { color: "#000", id: "timelake-mark" }), "SVG"));
 
-// Saved designs: the artifact's shared store when available (Claude can read it), else this browser only.
-let db = null, local = false, designs = [];
+// Saved designs. Served by `bun run brand:editor`, they are files in brand/designs/ (JSON + SVG,
+// commit them like any other file). Opened as a plain file, they stay in this browser only.
+let repo = false, designs = [];
 const slug = (s) => (s || "design").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "design";
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 function renderShelf() {
   const shelf = $("shelf");
-  if (!designs.length) { shelf.innerHTML = `<div class="empty">Nothing saved yet. Shape a mark, give it a name and press Save; it shows up here${local ? "" : ", and Claude can read it"}.</div>`; return; }
+  if (!designs.length) { shelf.innerHTML = `<div class="empty">Nothing saved yet. Shape a mark, give it a name and press Save; it shows up here${repo ? " and in brand/designs/" : ""}.</div>`; return; }
   shelf.innerHTML = designs.map(d => `<div class="saved">
     <div class="thumbs"><div class="paper">${svg(d.spec)}</div><div class="ink">${svg(d.spec)}</div></div>
-    <div class="meta"><div class="name" title="${esc(d.name)}">${esc(d.name)}</div><div class="when">${new Date(d.createdAt).toLocaleString()}</div>
-      <div class="acts"><button type="button" class="btn" data-load="${d.id}">Load</button><button type="button" class="btn" data-del="${d.id}">Delete</button></div></div>
+    <div class="meta"><div class="name" title="${esc(d.name)}">${esc(d.name)}</div><div class="when">${repo ? `${esc(d.id)}.json` : new Date(d.createdAt).toLocaleString()}</div>
+      <div class="acts"><button type="button" class="btn" data-load="${esc(d.id)}">Load</button><button type="button" class="btn" data-del="${esc(d.id)}">Delete</button></div></div>
   </div>`).join("");
 }
-const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+async function api(method, path, body) {
+  const r = await fetch(path, { method, headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
+  if (!r.ok) throw new Error((await r.text()) || r.statusText);
+  return r.status === 204 ? null : r.json();
+}
+async function refresh() {
+  if (repo) designs = await api("GET", "api/designs");
+  else { try { designs = JSON.parse(localStorage.getItem("tl-mark-saved") || "[]"); } catch { designs = []; } }
+  renderShelf();
+}
+function saveLocal() { try { localStorage.setItem("tl-mark-saved", JSON.stringify(designs)); } catch {} }
 $("shelf").addEventListener("click", async (e) => {
   const load = e.target.closest("[data-load]"), del = e.target.closest("[data-del]");
   if (load) { const d = designs.find(x => x.id === load.dataset.load); if (d) { S = fromSpec(d.spec); if (d.wordmark) W = { ...WDEF, ...d.wordmark }; $("name").value = d.name; syncControls(); schedule(); flash(`Loaded "${d.name}".`); scrollTo({ top: 0, behavior: "smooth" }); } }
   if (del) {
     if (del.dataset.armed !== "1") { del.dataset.armed = "1"; del.textContent = "Confirm"; setTimeout(() => { if (del.isConnected) { del.dataset.armed = ""; del.textContent = "Delete"; } }, 3000); return; }
     const d = designs.find(x => x.id === del.dataset.del); if (!d) return;
-    if (local) { designs = designs.filter(x => x.id !== d.id); saveLocal(); renderShelf(); }
-    else { try { await db.doc(`designs/${d.id}`).delete(); } catch (err) { flash(`Couldn't delete: ${err?.message || err?.code || "unknown error"}.`); } }
+    try {
+      if (repo) await api("DELETE", `api/designs/${encodeURIComponent(d.id)}`);
+      else { designs = designs.filter(x => x.id !== d.id); saveLocal(); }
+      await refresh(); flash(`Deleted "${d.name}".`);
+    } catch (err) { flash(`Couldn't delete: ${err.message}`); }
   }
 });
-function saveLocal() { try { localStorage.setItem("tl-mark-saved", JSON.stringify(designs)); } catch {} }
 $("save").addEventListener("click", async () => {
   const name = $("name").value.trim() || `Design ${designs.length + 1}`;
-  const spec = toSpec(S);
-  const id = `${slug(name)}-${Date.now().toString(36)}`;
-  const doc = { name, spec, wordmark: { ...W }, createdAt: new Date().toISOString() };
-  if (local || !db) { designs = [{ id, ...doc }, ...designs]; saveLocal(); renderShelf(); flash(`Saved "${name}" in this browser.`); return; }
+  const id = slug(name);
+  const doc = { id, name, spec: toSpec(S), wordmark: { ...W }, createdAt: new Date().toISOString() };
   $("save").disabled = true;
-  try { await db.doc(`designs/${id}`).set(doc); flash(`Saved "${name}". Tell Claude its name to use it.`); }
-  catch (err) { flash(err?.code === "quota_exceeded" ? "The shelf is full; delete a few designs first." : `Couldn't save: ${err?.message || err?.code || "unknown error"}.`); }
+  try {
+    if (repo) { await api("PUT", `api/designs/${encodeURIComponent(id)}`, doc); flash(`Saved brand/designs/${id}.json and .svg.`); }
+    else { designs = [doc, ...designs.filter(x => x.id !== id)]; saveLocal(); flash(`Saved "${name}" in this browser. Run bun run brand:editor to save into the repo.`); }
+    await refresh();
+  } catch (err) { flash(`Couldn't save: ${err.message}`); }
   finally { $("save").disabled = false; }
 });
-
-function useLocal() {
-  local = true; $("saved-where").textContent = "· this browser only";
-  try { designs = JSON.parse(localStorage.getItem("tl-mark-saved") || "[]"); } catch { designs = []; }
-  renderShelf();
-}
+$("download").hidden = false;
+$("download").addEventListener("click", () => {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([markSvg(toSpec(S), { color: "#000", id: "timelake-mark" })], { type: "image/svg+xml" }));
+  a.download = `${slug($("name").value.trim() || "timelake-mark")}.svg`;
+  a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+});
 
 syncControls(); render();
-
 (async () => {
-  const use = window.claude?.use;
-  const [store, dl] = use ? await Promise.all([use("db").catch(() => null), use("downloads").catch(() => null)]) : [null, null];
-  if (dl) {
-    $("download").hidden = false;
-    $("download").addEventListener("click", async () => {
-      const name = slug($("name").value.trim() || "timelake-mark");
-      try { await dl.save({ filename: `${name}.svg`, data: markSvg(toSpec(S), { color: "#000", id: "timelake-mark" }) }); }
-      catch (err) { if (err?.code !== "declined") flash(`Download unavailable: ${err?.message || err?.code}.`); }
-    });
-  }
-  if (!store) { useLocal(); return; }
-  db = store; $("saved-where").textContent = "· shared with Claude";
-  db.collection("designs").orderBy("createdAt", "desc").limit(300).onSnapshot(
-    (snap) => { designs = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(d => d.spec); renderShelf(); },
-    () => useLocal(),
-  );
+  try { repo = location.protocol.startsWith("http") && (await fetch("api/designs")).ok; } catch { repo = false; }
+  $("saved-where").textContent = repo ? "· brand/designs/" : "· this browser only";
+  await refresh();
 })();
 </script>

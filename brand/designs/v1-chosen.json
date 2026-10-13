@@ -1,0 +1,47 @@
+{
+  "name": "v1 (chosen)",
+  "spec": {
+    "lines": 3,
+    "gap": 17.5,
+    "width": 7.9,
+    "center": 50,
+    "pulse": [
+      [
+        -6,
+        0
+      ],
+      [
+        30,
+        0
+      ],
+      [
+        43,
+        -14
+      ],
+      [
+        67,
+        12
+      ],
+      [
+        78,
+        0
+      ],
+      [
+        106,
+        0
+      ]
+    ],
+    "mode": "parallel",
+    "blend": 0.55
+  },
+  "wordmark": {
+    "case": "lower",
+    "font": "sans",
+    "layout": "row",
+    "weight": 500,
+    "track": -0.045,
+    "size": 0.62,
+    "gap": 0.24
+  },
+  "createdAt": "2026-10-13T12:02:00.000Z"
+}

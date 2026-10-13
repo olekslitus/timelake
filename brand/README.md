@@ -38,7 +38,7 @@ Parallel lines that turn together at sharp, mitered corners, inside a circle. Ea
 
 Everything is generated: edit `marks.mjs` and run `bun brand/marks.mjs` (marks) and `bun brand/lockup.mjs` (lockups; needs `bun install` for Geist and opentype.js).
 
-**Editor:** `bun brand/build-editor.mjs` writes `brand/editor.html`, an interactive page for the mark and wordmark (lines, spacing, boldness, pulse shape, circle style, text). It draws with the same geometry code as `marks.mjs`, so a spec copied from it renders identically here. The history of how the mark was chosen is in `explorations/`.
+**Editor:** `bun run brand:editor` opens an interactive page for the mark and wordmark (lines, spacing, boldness, pulse shape, circle style, text) at http://127.0.0.1:4321. It draws with the same geometry code as `marks.mjs`, so what you see is what the generator writes. **Save** writes `designs/<name>.json` (mark spec and wordmark settings) and `designs/<name>.svg`; commit them like any other file. `designs/` holds v1 and both alternates. To promote a design, copy its `spec` into `MARKS` in `marks.mjs`. How the mark was chosen is in `explorations/`.
 
 ## Color
 

@@ -6,5 +6,8 @@
     "dashboard",
     "packages/*",
     "brand"
-  ]
+  ],
+  "scripts": {
+    "brand:editor": "bun brand/editor.mjs"
+  }
 }

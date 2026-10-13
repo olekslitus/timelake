@@ -6,7 +6,7 @@
   "scripts": {
     "marks": "bun marks.mjs",
     "lockup": "bun lockup.mjs",
-    "editor": "bun build-editor.mjs"
+    "editor": "bun editor.mjs"
   },
   "devDependencies": {
     "geist": "1.3.1",

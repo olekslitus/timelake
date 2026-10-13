@@ -1,0 +1,48 @@
+{
+  "name": "Ring alternate",
+  "spec": {
+    "lines": 4,
+    "gap": 14,
+    "width": 7.4,
+    "center": 75,
+    "pulse": [
+      [
+        -6,
+        0
+      ],
+      [
+        32,
+        0
+      ],
+      [
+        42,
+        -10
+      ],
+      [
+        60,
+        8
+      ],
+      [
+        68,
+        0
+      ],
+      [
+        106,
+        0
+      ]
+    ],
+    "mode": "parallel",
+    "ring": 4.6,
+    "ringGap": 4
+  },
+  "wordmark": {
+    "case": "lower",
+    "font": "sans",
+    "layout": "row",
+    "weight": 500,
+    "track": -0.045,
+    "size": 0.62,
+    "gap": 0.24
+  },
+  "createdAt": "2026-10-13T12:00:00.000Z"
+}

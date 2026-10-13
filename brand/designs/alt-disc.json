@@ -1,0 +1,49 @@
+{
+  "name": "Disc alternate",
+  "spec": {
+    "lines": 3,
+    "gap": 17.5,
+    "width": 9,
+    "center": 64,
+    "pulse": [
+      [
+        -6,
+        0
+      ],
+      [
+        24.5,
+        0
+      ],
+      [
+        44.5,
+        -5.5
+      ],
+      [
+        57.5,
+        4.5
+      ],
+      [
+        81,
+        0
+      ],
+      [
+        106,
+        0
+      ]
+    ],
+    "mode": "parallel",
+    "blend": 0.45,
+    "disc": true,
+    "r": 45.5
+  },
+  "wordmark": {
+    "case": "lower",
+    "font": "sans",
+    "layout": "row",
+    "weight": 500,
+    "track": -0.045,
+    "size": 0.62,
+    "gap": 0.24
+  },
+  "createdAt": "2026-10-13T12:01:00.000Z"
+}
