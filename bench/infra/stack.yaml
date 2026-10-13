@@ -15,16 +15,19 @@ Parameters:
     Default: use2-az1
   InstanceType:
     Type: String
-    Default: c8gd.2xlarge
+    Default: m7i-flex.large
+    Description: >-
+      The Free plan allows only small types (m7i-flex.large: 2 vCPU, 8 GB). With the Paid plan, c8gd.2xlarge
+      (Graviton, 8 vCPU, local NVMe) together with the arm64 ImageId is closer to the Phase 0 laptop.
   ImageId:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
-    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
   RepoRef:
     Type: String
     Description: Git commit of github.com/polythings/timelake to check out on the instance.
   AutoStopMinutes:
     Type: Number
-    Default: 480
+    Default: 720
 
 Resources:
   DataBucket:

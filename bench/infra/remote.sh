@@ -8,7 +8,7 @@
 #   remote.sh v0 <target>        v0 benchmark: ingest, queries, maintenance, queries
 #   remote.sh all                everything above, in order
 #
-# Targets: local = the instance's NVMe SSD; s3 = S3 Standard; s3x = S3 Express One Zone (same zone as the
+# Targets: local = the instance's disk (/mnt/bench: NVMe SSD if it has one, else EBS); s3 = S3 Standard; s3x = S3 Express One Zone (same zone as the
 # instance). S3 traffic goes through tools/s3proxy in AWS mode, which counts requests by kind.
 # Logs and results are copied to s3://$BENCH_DATA_BUCKET/_out/ after every stage.
 set -euo pipefail
@@ -16,7 +16,7 @@ source /etc/profile.d/timelake-bench.sh
 export PATH=$HOME/.cargo/bin:$HOME/.local/bin:$PATH GOTOOLCHAIN=auto
 cd ~/timelake/bench
 PY=.venv/bin/python
-LOGS=/mnt/nvme/logs
+LOGS=/mnt/bench/logs
 export V0_INGEST_LOG=v0_ingest.aws.jsonl
 
 sync_out() {
@@ -43,6 +43,7 @@ target() {
 }
 
 build() {
+  export CARGO_PROFILE_RELEASE_DEBUG=false  # smaller, faster links on small instances
   UV_PROJECT_ENVIRONMENT=.venv uv sync
   uv pip install --python $PY ../crates/timelake-py
   (cd .. && cargo build --release -p timelake-cli)
@@ -59,12 +60,12 @@ data() {
     --log-interval=10s --format=timescaledb | $PY scripts/tsbs_to_parquet.py data/tsbs/parquet
   $PY - <<'EOF'
 import duckdb
-con = duckdb.connect("/mnt/nvme/tpch.duckdb")
+con = duckdb.connect("/mnt/bench/tpch.duckdb")
 con.execute("INSTALL tpch; LOAD tpch; CALL dbgen(sf=10)")
 for t in ["lineitem", "orders", "customer", "part", "partsupp", "supplier", "nation", "region"]:
     con.execute(f"COPY {t} TO 'data/tpch/{t}.parquet' (FORMAT parquet, COMPRESSION zstd)")
 EOF
-  rm -f /mnt/nvme/tpch.duckdb
+  rm -f /mnt/bench/tpch.duckdb
   for i in $(seq 0 9); do
     curl -fsSL -o data/clickbench/hits_$i.parquet \
       https://datasets.clickhouse.com/hits_compatible/athena_partitioned/hits_$i.parquet
