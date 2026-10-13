@@ -70,6 +70,8 @@ The problem we replace: teams today run S3 Tables (or self-managed Iceberg) plus
 | R21 | Data → events: produce any type of event into any event stream system, based on incoming data (§21.3). |
 | R22 | Later: a simple compute model. Users define a Python function and the result it should produce (for example a computed metric), and Timelake applies it automatically, the way it does rollups (§21.4). |
 | R23 | Connect to Snowflake: Timelake as an optimized time-series store that Snowflake queries in place (§21.5). |
+| R24 | Auto sync: IoT devices write to their own local storage and Timelake syncs it to the lake behind the scenes, so devices don't handle how data travels (§21.6). |
+| R25 | Edge endpoints that devices send metrics, blob uploads, logs and IoT data to, so devices don't need to know how to reach the cloud; the edge also serves data from a local cache (§21.7). |
 
 ---
 
@@ -873,6 +875,8 @@ TSBS models a truck fleet at ~10 s per device. Industrial plants look different,
 | Q20 | F3: is the commit-driven trigger an object-store notification (S3 events), a catalog event, or a poll of the newest snapshot? | Support all three; poll as the portable fallback |
 | Q21 | F4: how to run user Python safely in a hosted service | Out of scope until F4; the self-hosted version runs in the user's own process |
 | Q22 | F5: which Iceberg version and features Snowflake reads from external catalogs, how fast it picks up new snapshots, and whether connection setup is open source or premium (§20) | Verify against Snowflake before Phase 2; leaning open source for the connector, premium for managed setup |
+| Q23 | F6: what the device-side local store is: a local Timelake table, or a lighter append log (Arrow IPC) that the agent converts on upload | Local Timelake table first, since it reuses everything; measure write cost on small devices |
+| Q24 | F6/F7: open source vs premium. Fleet management (config push, updates, health of thousands of devices and gateways) is a natural premium layer (§20) | Sync and gateway open source; fleet management premium |
 | Q16 | ~~Which import sources ship first?~~ | **Resolved:** Phase 1: CSV, Parquet, Iceberg/S3 Tables. Phase 2: TimescaleDB/Postgres with `--sync` cutover. Then InfluxDB, others via the DuckDB-backed source. Historian connectors are premium (D12) |
 
 ---
@@ -933,7 +937,7 @@ Open from v0:
 | 3 | Caggs (incremental, hierarchical) + `timelake-functions` core (`time_bucket`, gapfill, locf, `time_weight`, `counter_agg`, percentiles) |
 | 4 | DuckDB extension (functions, dedup-on-read, index-aware scans) |
 | 5 | Hot tier (profile WAL vs. Valkey; ship both behind `HotStore`) + Timelake reader with merge, Puffin indexes, fast paths |
-| 6 | `timelake-ingest` with MQTT/HTTP/Kafka and the rule engine + events table; data → events with pluggable sinks and commit-driven triggers (F3, §21.3) |
+| 6 | `timelake-ingest` with MQTT/HTTP/Kafka and the rule engine + events table; data → events with pluggable sinks and commit-driven triggers (F3, §21.3); edge gateway (F7) and device sync (F6) |
 | 7 | Python package (PyO3 + maturin), docs site with recipes, published benchmarks; Vortex when Iceberg supports it |
 | 8 | Agent access with permission sets (F1) and static read models for dashboards (F2) (§21) |
 | Later | Computed metrics from user-defined Python functions (F4, §21.4) |
@@ -955,7 +959,7 @@ The principle: everything needed to run the lake well is open; integrations with
 
 ## 21. Planned features
 
-New product features beyond the original requirements, recorded on 2026-10-13 (F5 the same day). None of them is built yet. Each one keeps the rule that no always-on Timelake server is required (R13): state lives in the bucket and work is triggered by commits or schedules.
+New product features beyond the original requirements, recorded on 2026-10-13. None of them is built yet. Each one keeps the rule that no always-on Timelake server is required (R13): state lives in the bucket and work is triggered by commits or schedules.
 
 | ID | Feature | Req | Builds on | Phase |
 |----|---------|-----|-----------|-------|
@@ -964,6 +968,8 @@ New product features beyond the original requirements, recorded on 2026-10-13 (F
 | F3 | Data → events: produce any event type into any event stream | R21 | Rules (§13.3) | 6 |
 | F4 | Computed metrics: user-defined Python functions applied automatically, like rollups | R22 | Caggs (§11.1), Python package | Later |
 | F5 | Snowflake connection: query Timelake tables from Snowflake in place | R23 | REST catalog (§5.2), caggs (§11.1) | 2 |
+| F6 | Device sync: devices write locally, Timelake moves the data to the lake | R24 | Local tables, idempotent batches, F7 | 6 |
+| F7 | Edge gateway: local endpoints for data, metrics, logs and blobs, plus a local cache | R25 | Ingest (§13), reader | 6 |
 
 ### 21.1 F1: Agent access with permission sets (R19)
 
@@ -1022,3 +1028,35 @@ Pitch: **an optimized time-series store for your Snowflake.** Many data teams, i
 - **Setup in one command:** `timelake snowflake connect` creates the external volume, catalog integration and tables (or prints the SQL for a DBA to run), with least-privilege IAM for the bucket.
 - **Time-series helpers in Snowflake:** a published set of SQL views and UDFs that map the function library (§11.2) onto Snowflake built-ins (`TIME_SLICE`, `ASOF JOIN`, window functions), like the DuckDB macro pack.
 - **Proof:** a benchmark of the same IIoT workload (§17.6) as a native Snowflake table, as naive Iceberg in Snowflake, and as Timelake tables in Snowflake, reporting latency and credits per query plus monthly storage cost.
+
+### 21.6 F6: Device sync (R24)
+
+Devices write to local storage and Timelake moves the data to the lake behind the scenes. The device code never decides how, when or over what the data travels.
+
+- **On the device:** the app writes through the Timelake library to a local table on the device's disk (the same table format; v0 already runs on local disk). Writes are fast and work with no network.
+- **Sync agent:** a small background process (or a thread in the library) ships committed local data to the lake and handles everything about the trip:
+  - store and forward: offline for hours or weeks, then catch up;
+  - resume after a crash or reboot from what the lake has acknowledged;
+  - retries with backoff, compression, and a bandwidth cap so sync doesn't starve the device's own traffic;
+  - priority: alarms and the latest values first, history after;
+  - a local disk quota: data is deleted locally only after the lake acknowledges it, and the oldest acknowledged data goes first when space runs low.
+- **Exactly once in the lake:** every uploaded batch carries an idempotent batch ID (already in v0), so resends after a lost acknowledgement never duplicate rows. Device clock skew is recorded and can be corrected on arrival.
+- **Many devices, one table:** thousands of devices committing directly to one table would fight over commits. Devices upload files to a staging prefix, and a committer (the edge gateway, F7, or a scheduled job) folds them into the table in batches.
+- **Where it syncs to:** an edge gateway (F7) when one is on site, otherwise straight to the object store or an HTTPS endpoint. Devices never hold long-lived cloud keys: each device authenticates with its own identity (a certificate) and receives short-lived credentials scoped to its staging prefix.
+- **Targets:** Linux-class devices (gateways, industrial PCs, Raspberry Pi, robots, vehicles). Microcontrollers too small for the library publish over MQTT to a gateway instead.
+
+### 21.7 F7: Edge gateway (R25)
+
+A single binary on site (factory, vessel, rig, substation) that devices send data to on the local network. Devices only need to reach the gateway; the gateway knows how to reach the cloud.
+
+- **Local endpoints for every kind of data:**
+  - device and IoT data: MQTT (built-in broker or bridge), HTTP JSON, InfluxDB line protocol; Sparkplug B and OPC-UA later;
+  - metrics: OTLP and Prometheus remote write;
+  - logs: OTLP logs and syslog, stored as time-partitioned log tables (queryable by time, device and level; full-text search stays a non-goal, §3);
+  - blobs (images, vibration captures, files): an S3-compatible upload endpoint. The file goes to the bucket as an object, and a row in a blob index table records time, device, key, size and type, so blobs can be found by device and time range like any other series.
+- **Discovery:** devices find the gateway by a fixed local name (mDNS), so device config doesn't change between sites.
+- **Buffering:** everything is written to the gateway's disk first and forwarded when the uplink allows (the same store-and-forward as F6). It is also the committer for devices that sync through it.
+- **Serving from the local cache:** recent data stays on the gateway, and the gateway answers queries locally (the same reader and SQL), so local HMIs, dashboards and machines keep working when the uplink is down. Queries for older data are read through to the lake and cached.
+- **Rules at the edge:** the gateway runs the ingest pipeline (§13), so alarms fire locally even when offline, and are also forwarded as events (F3).
+- **Security:** devices authenticate to the gateway; only the gateway holds cloud credentials, scoped to its site.
+- This turns the "edge binary" deployment form in §13.1 into a product.
