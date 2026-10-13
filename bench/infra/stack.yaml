@@ -1,0 +1,112 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  timelake-bench (SPEC 17.4): one benchmark instance next to an S3 Standard bucket and an S3 Express One Zone
+  bucket in the same zone. Access via SSM only (no SSH, no inbound ports). The instance stops itself after
+  AutoStopMinutes. Delete with bench/infra/down.sh.
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: A subnet in AzId with a route to the internet (the default VPC's subnet).
+  AzId:
+    Type: String
+    Default: use2-az1
+  InstanceType:
+    Type: String
+    Default: c8gd.2xlarge
+  ImageId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64
+  RepoRef:
+    Type: String
+    Description: Git commit of github.com/polythings/timelake to check out on the instance.
+  AutoStopMinutes:
+    Type: Number
+    Default: 480
+
+Resources:
+  DataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  ExpressBucket:
+    Type: AWS::S3Express::DirectoryBucket
+    Properties:
+      DataRedundancy: SingleAvailabilityZone
+      LocationName: !Ref AzId
+
+  Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: bench-buckets
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: s3:*
+                Resource:
+                  - !GetAtt DataBucket.Arn
+                  - !Sub "${DataBucket.Arn}/*"
+              - Effect: Allow
+                Action: s3express:*
+                Resource: !GetAtt ExpressBucket.Arn
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref Role]
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: timelake-bench, outbound only
+      VpcId: !Ref VpcId
+
+  Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref ImageId
+      InstanceType: !Ref InstanceType
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds: [!Ref SecurityGroup]
+      IamInstanceProfile: !Ref InstanceProfile
+      InstanceInitiatedShutdownBehavior: stop
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs: { VolumeType: gp3, VolumeSize: 100, DeleteOnTermination: true }
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          shutdown -h +${AutoStopMinutes}
+          cat > /etc/profile.d/timelake-bench.sh <<EOF
+          export AWS_REGION=${AWS::Region}
+          export BENCH_DATA_BUCKET=${DataBucket}
+          export BENCH_EXPRESS_BUCKET=${ExpressBucket}
+          export BENCH_MACHINE=${InstanceType}
+          EOF
+          curl -fsSL https://raw.githubusercontent.com/polythings/timelake/${RepoRef}/bench/infra/bootstrap.sh \
+            | bash -s ${RepoRef} > /var/log/timelake-bootstrap.log 2>&1
+
+Outputs:
+  InstanceId:
+    Value: !Ref Instance
+  DataBucket:
+    Value: !Ref DataBucket
+  ExpressBucket:
+    Value: !Ref ExpressBucket

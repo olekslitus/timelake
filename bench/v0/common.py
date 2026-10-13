@@ -1,6 +1,7 @@
 """Shared settings for the v0 benchmark (SPEC §19.0): where each system's tables live."""
 
 import json
+import os
 from pathlib import Path
 
 BENCH = Path(__file__).resolve().parent.parent
@@ -32,8 +33,13 @@ LANCE_S3 = {
 }
 
 
+def target(storage: str) -> str:
+    """Name of the storage target. On AWS (bench/infra), BENCH_S3_NAME tells S3 Standard and S3 Express apart."""
+    return os.environ.get("BENCH_S3_NAME", "s3") if storage == "s3" else storage
+
+
 def local_dir(storage: str, system: str) -> Path:
-    return DATA / "v0" / storage / system
+    return DATA / "v0" / target(storage) / system
 
 
 def root(storage: str, system: str) -> str:
@@ -55,8 +61,12 @@ def save_state(storage: str, system: str, state: dict):
 
 
 def record(rec: dict):
+    if rec.get("storage") and target(rec["storage"]) != rec["storage"]:
+        rec["target"] = target(rec["storage"])
+    if os.environ.get("BENCH_MACHINE"):
+        rec["machine"] = os.environ["BENCH_MACHINE"]
     RESULTS.mkdir(exist_ok=True)
-    with (RESULTS / "v0_ingest.jsonl").open("a") as f:
+    with (RESULTS / os.environ.get("V0_INGEST_LOG", "v0_ingest.jsonl")).open("a") as f:
         f.write(json.dumps(rec) + "\n")
 
 

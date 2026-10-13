@@ -1,0 +1,277 @@
+package main
+
+// AWS mode: an HTTP proxy in front of a real S3 or S3 Express One Zone bucket.
+//
+// Clients keep talking path-style plain HTTP to the proxy with dummy keys, so every engine reads the same
+// s3://bench/... paths as with the local RustFS. The proxy maps the client-facing bucket to the real one,
+// re-signs each request with the instance's credentials (SigV4; S3 Express via CreateSession), and counts
+// requests by kind and response bytes. Each client connection gets its own upstream connection, so a fresh
+// client process pays its own DNS, TCP and TLS setup as it would talking to S3 directly.
+//
+//	s3proxy -aws-bucket my-bucket -aws-region us-east-2
+//	s3proxy -aws-bucket my-bucket--use2-az1--x-s3 -aws-region us-east-2
+
+import (
+	"bufio"
+	"context"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"regexp"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+)
+
+// Request kinds, as S3 bills them: LIST, PUT, COPY and POST are tier 1; GET and HEAD are tier 2.
+var kinds sync.Map // kind -> *atomic.Int64
+
+func countKind(kind string) {
+	v, _ := kinds.LoadOrStore(kind, new(atomic.Int64))
+	v.(*atomic.Int64).Add(1)
+}
+
+func kindCounts() map[string]int64 {
+	out := map[string]int64{}
+	kinds.Range(func(k, v any) bool {
+		out[k.(string)] = v.(*atomic.Int64).Load()
+		return true
+	})
+	return out
+}
+
+var sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+type awsProxy struct {
+	clientBucket string
+	bucket       string
+	region       string
+	host         string
+	service      string // "s3" or "s3express"
+	cfg          aws.Config
+	signer       *v4.Signer
+
+	mu      sync.Mutex
+	session aws.Credentials // S3 Express session credentials
+	conns   sync.Map        // net.Conn -> *http.Transport
+}
+
+type connKey struct{}
+
+func serveAWS(listen, clientBucket, bucket, region string) {
+	cfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(region))
+	if err != nil {
+		log.Fatal(err)
+	}
+	p := &awsProxy{
+		clientBucket: clientBucket, bucket: bucket, region: region, cfg: cfg, service: "s3",
+		host:   fmt.Sprintf("%s.s3.%s.amazonaws.com", bucket, region),
+		signer: v4.NewSigner(func(o *v4.SignerOptions) { o.DisableURIPathEscaping = true }),
+	}
+	if m := regexp.MustCompile(`--([a-z0-9-]+)--x-s3$`).FindStringSubmatch(bucket); m != nil {
+		p.service = "s3express"
+		p.host = fmt.Sprintf("%s.s3express-%s.%s.amazonaws.com", bucket, m[1], region)
+	}
+	rp := &httputil.ReverseProxy{
+		Rewrite:      p.rewrite,
+		Transport:    p,
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) { log.Print(err); w.WriteHeader(502) },
+	}
+	srv := &http.Server{
+		Addr:    listen,
+		Handler: rp,
+		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
+			t := &http.Transport{
+				Proxy: http.ProxyFromEnvironment, DisableCompression: true, MaxIdleConnsPerHost: 4,
+				IdleConnTimeout: 90 * time.Second, ForceAttemptHTTP2: false,
+			}
+			p.conns.Store(c, t)
+			return context.WithValue(ctx, connKey{}, t)
+		},
+		ConnState: func(c net.Conn, s http.ConnState) {
+			if s == http.StateClosed || s == http.StateHijacked {
+				if t, ok := p.conns.LoadAndDelete(c); ok {
+					t.(*http.Transport).CloseIdleConnections()
+				}
+			}
+		},
+	}
+	log.Printf("proxy %s (bucket %q) -> https://%s (%s)", listen, clientBucket, p.host, p.service)
+	log.Fatal(srv.ListenAndServe())
+}
+
+// rewrite maps a path-style request for the client bucket to a virtual-hosted request for the real bucket.
+func (p *awsProxy) rewrite(pr *httputil.ProxyRequest) {
+	in := pr.In
+	raw, query, _ := strings.Cut(in.RequestURI, "?")
+	rest := strings.TrimPrefix(raw, "/"+p.clientBucket)
+	if rest == "" {
+		rest = "/"
+	}
+	u, err := url.Parse("https://" + p.host + rest)
+	if err != nil {
+		u = &url.URL{Scheme: "https", Host: p.host, Path: "/"}
+	}
+	u.RawQuery = query
+	pr.Out.URL = u
+	pr.Out.Host = p.host
+}
+
+func classify(r *http.Request) string {
+	switch r.Method {
+	case http.MethodGet:
+		if r.URL.Path == "/" || r.URL.Query().Has("list-type") {
+			return "LIST"
+		}
+		return "GET"
+	case http.MethodPut:
+		if r.Header.Get("X-Amz-Copy-Source") != "" {
+			return "COPY"
+		}
+		return "PUT"
+	}
+	return r.Method
+}
+
+func (p *awsProxy) RoundTrip(r *http.Request) (*http.Response, error) {
+	requests.Add(1)
+	countKind(classify(r))
+
+	payload := r.Header.Get("X-Amz-Content-Sha256")
+	if strings.Contains(r.Header.Get("Content-Encoding"), "aws-chunked") {
+		// Chunk signatures chain from the client's seed signature, so decode the body and send it plain.
+		n, err := strconv.ParseInt(r.Header.Get("X-Amz-Decoded-Content-Length"), 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("aws-chunked body without x-amz-decoded-content-length")
+		}
+		r.Body = io.NopCloser(io.LimitReader(newChunkDecoder(r.Body), n))
+		r.ContentLength = n
+		enc := strings.TrimPrefix(strings.TrimPrefix(r.Header.Get("Content-Encoding"), "aws-chunked"), ",")
+		if enc == "" {
+			r.Header.Del("Content-Encoding")
+		} else {
+			r.Header.Set("Content-Encoding", enc)
+		}
+		for _, h := range []string{"X-Amz-Decoded-Content-Length", "X-Amz-Trailer"} {
+			r.Header.Del(h)
+		}
+		payload = "UNSIGNED-PAYLOAD"
+	} else if !sha256Hex.MatchString(payload) {
+		payload = "UNSIGNED-PAYLOAD"
+	}
+	for _, h := range []string{"Authorization", "X-Amz-Date", "X-Amz-Security-Token", "X-Amz-S3session-Token"} {
+		r.Header.Del(h)
+	}
+	r.Header.Set("X-Amz-Content-Sha256", payload)
+
+	creds, err := p.credentials(r.Context())
+	if err != nil {
+		return nil, err
+	}
+	if p.service == "s3express" {
+		r.Header.Set("X-Amz-S3session-Token", creds.SessionToken)
+		creds.SessionToken = ""
+	}
+	if err := p.signer.SignHTTP(r.Context(), creds, r, payload, p.service, p.region, time.Now().UTC()); err != nil {
+		return nil, err
+	}
+
+	t, _ := r.Context().Value(connKey{}).(*http.Transport)
+	if t == nil {
+		t = http.DefaultTransport.(*http.Transport)
+	}
+	resp, err := t.RoundTrip(r)
+	if err != nil {
+		return nil, err
+	}
+	if d := ttfbMs.Load(); d > 0 {
+		time.Sleep(time.Duration(d) * time.Millisecond)
+	}
+	if resp.StatusCode >= 500 {
+		countKind(fmt.Sprintf("HTTP%d", resp.StatusCode))
+	}
+	resp.Body = &countingBody{resp.Body}
+	return resp, nil
+}
+
+func (p *awsProxy) credentials(ctx context.Context) (aws.Credentials, error) {
+	if p.service == "s3" {
+		return p.cfg.Credentials.Retrieve(ctx)
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.session.AccessKeyID != "" && time.Until(p.session.Expires) > time.Minute {
+		return p.session, nil
+	}
+	out, err := s3.NewFromConfig(p.cfg).CreateSession(ctx, &s3.CreateSessionInput{Bucket: aws.String(p.bucket)})
+	if err != nil {
+		return aws.Credentials{}, err
+	}
+	c := out.Credentials
+	p.session = aws.Credentials{
+		AccessKeyID: aws.ToString(c.AccessKeyId), SecretAccessKey: aws.ToString(c.SecretAccessKey),
+		SessionToken: aws.ToString(c.SessionToken), CanExpire: true, Expires: aws.ToTime(c.Expiration),
+	}
+	return p.session, nil
+}
+
+type countingBody struct{ io.ReadCloser }
+
+func (b *countingBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	bytesOut.Add(int64(n))
+	return n, err
+}
+
+// chunkDecoder strips aws-chunked framing ("<hex size>;chunk-signature=...\r\n<data>\r\n", ending with a
+// zero-size chunk and optional trailers).
+type chunkDecoder struct {
+	r    *bufio.Reader
+	left int64
+	done bool
+}
+
+func newChunkDecoder(r io.Reader) *chunkDecoder { return &chunkDecoder{r: bufio.NewReader(r)} }
+
+func (d *chunkDecoder) Read(p []byte) (int, error) {
+	for d.left == 0 {
+		if d.done {
+			return 0, io.EOF
+		}
+		line, err := d.r.ReadString('\n')
+		if err != nil {
+			return 0, err
+		}
+		line = strings.TrimSpace(line)
+		if line == "" { // CRLF after a chunk's data
+			continue
+		}
+		size, _, _ := strings.Cut(line, ";")
+		n, err := strconv.ParseInt(size, 16, 64)
+		if err != nil {
+			return 0, fmt.Errorf("aws-chunked: bad chunk header %q", line)
+		}
+		if n == 0 {
+			d.done = true
+			return 0, io.EOF
+		}
+		d.left = n
+	}
+	if int64(len(p)) > d.left {
+		p = p[:d.left]
+	}
+	n, err := d.r.Read(p)
+	d.left -= int64(n)
+	return n, err
+}

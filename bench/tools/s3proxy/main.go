@@ -1,11 +1,14 @@
-// s3proxy: a TCP proxy for benchmarking against a local S3-compatible store.
+// s3proxy: a counting proxy for benchmarking against S3.
 //
-// It delays the first response byte of every HTTP request by a configurable time-to-first-byte
+// Default mode is a TCP proxy in front of a local S3-compatible store (RustFS). It delays the first response byte of every HTTP request by a configurable time-to-first-byte
 // (modelling S3 request latency without throttling bandwidth) and counts requests and response bytes.
 //
 //	s3proxy -listen :59100 -upstream localhost:59000 -admin :59101 -ttfb 20ms
 //	curl localhost:59101/stats            -> {"requests":N,"bytes":B,"ttfb_ms":20}
 //	curl -X POST 'localhost:59101/ttfb?ms=0'
+//
+// With -aws-bucket it proxies to real S3 or S3 Express One Zone instead (aws.go), and /stats also reports
+// requests by kind.
 package main
 
 import (
@@ -30,10 +33,17 @@ func main() {
 	upstream := flag.String("upstream", "localhost:59000", "S3 endpoint")
 	admin := flag.String("admin", ":59101", "stats/admin listen address")
 	ttfb := flag.Duration("ttfb", 20*time.Millisecond, "time to first byte added per request")
+	awsBucket := flag.String("aws-bucket", "", "real S3 or S3 Express bucket (AWS mode)")
+	awsRegion := flag.String("aws-region", "us-east-2", "region of -aws-bucket")
+	bucket := flag.String("bucket", "bench", "bucket name clients use (AWS mode)")
 	flag.Parse()
 	ttfbMs.Store(ttfb.Milliseconds())
 
 	go serveAdmin(*admin)
+	if *awsBucket != "" {
+		serveAWS(*listen, *bucket, *awsBucket, *awsRegion)
+		return
+	}
 	ln, err := net.Listen("tcp", *listen)
 	if err != nil {
 		log.Fatal(err)
@@ -105,8 +115,8 @@ func handle(client net.Conn, upstream string) {
 
 func serveAdmin(addr string) {
 	http.HandleFunc("/stats", func(w http.ResponseWriter, _ *http.Request) {
-		json.NewEncoder(w).Encode(map[string]int64{
-			"requests": requests.Load(), "bytes": bytesOut.Load(), "ttfb_ms": ttfbMs.Load(),
+		json.NewEncoder(w).Encode(map[string]any{
+			"requests": requests.Load(), "bytes": bytesOut.Load(), "ttfb_ms": ttfbMs.Load(), "kinds": kindCounts(),
 		})
 	})
 	http.HandleFunc("/ttfb", func(w http.ResponseWriter, r *http.Request) {

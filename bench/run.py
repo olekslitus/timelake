@@ -23,7 +23,8 @@ DATA = ROOT / "data"
 QUERIES = ROOT / "queries"
 RESULTS = ROOT / "results"
 
-# --storage s3 reads everything from the local RustFS through the latency/counting proxy (tools/s3proxy).
+# --storage s3 reads everything through the latency/counting proxy (tools/s3proxy): the local RustFS, or on AWS
+# (bench/infra) a real S3 or S3 Express bucket that the proxy re-signs for. Clients see the same s3://bench paths.
 S3 = {
     "endpoint": "localhost:59100",
     "admin": "http://localhost:59101",
@@ -32,10 +33,15 @@ S3 = {
     "region": "us-east-1",
 }
 STORAGE = "local"
+# On AWS, BENCH_S3_DIRECT=<bucket> makes plain DuckDB read that bucket directly (instance credentials, no proxy),
+# to check the proxy's overhead. No request counts in that mode.
+DIRECT = os.environ.get("BENCH_S3_DIRECT")
 
 
 def base() -> str:
-    return "s3://bench" if STORAGE == "s3" else str(DATA)
+    if STORAGE == "s3":
+        return f"s3://{DIRECT}" if DIRECT else "s3://bench"
+    return str(DATA)
 
 
 def proxy_stats() -> dict:
@@ -144,7 +150,10 @@ def setup_duckdb(suite: str, iceberg: bool = False, vortex: bool = False):
 
     con = duckdb.connect()
     con.execute("SET TimeZone = 'UTC'")  # bucket by UTC days like the other engines (and avoid ICU calendar math)
-    if STORAGE == "s3":
+    if STORAGE == "s3" and DIRECT:
+        con.execute("INSTALL httpfs; LOAD httpfs; INSTALL aws; LOAD aws")
+        con.execute(f"CREATE SECRET (TYPE s3, PROVIDER credential_chain, REGION '{os.environ['AWS_REGION']}')")
+    elif STORAGE == "s3":
         con.execute("INSTALL httpfs; LOAD httpfs")
         con.execute(
             f"CREATE SECRET (TYPE s3, KEY_ID '{S3['key']}', SECRET '{S3['secret']}', REGION '{S3['region']}', "
@@ -324,8 +333,10 @@ def worker(suite: str, engine: str, name: str, runs: int):
         raise ValueError(engine)
     setup_s = time.perf_counter() - setup_start
     times, requests, nbytes, rows = [], [], [], None
+    counted = STORAGE == "s3" and not DIRECT
+    kinds = []
     for _ in range(runs + 1):
-        before = proxy_stats() if STORAGE == "s3" else None
+        before = proxy_stats() if counted else None
         t = time.perf_counter()
         result = run(sql)
         times.append(time.perf_counter() - t)
@@ -334,9 +345,13 @@ def worker(suite: str, engine: str, name: str, runs: int):
             after = proxy_stats()
             requests.append(after["requests"] - before["requests"])
             nbytes.append(after["bytes"] - before["bytes"])
+            if "kinds" in after:  # AWS mode: requests by kind (GET, HEAD, LIST, PUT, ...)
+                kinds.append({k: n - before["kinds"].get(k, 0) for k, n in after["kinds"].items() if n != before["kinds"].get(k, 0)})
     out = {"times": times, "rows": rows, "setup_s": setup_s}
-    if STORAGE == "s3":
+    if counted:
         out.update(requests=requests, bytes=nbytes, ttfb_ms=proxy_stats()["ttfb_ms"])
+        if kinds:
+            out["kinds"] = kinds
     print(json.dumps(out))
 
 
@@ -387,7 +402,7 @@ def main():
         "suite": a.suite,
         "engine": a.engine,
         "version": engine_version(a.engine),
-        "machine": f"{platform.machine()} {os.cpu_count()} cores",
+        "machine": os.environ.get("BENCH_MACHINE") or f"{platform.machine()} {os.cpu_count()} cores",
         "storage": a.storage,
         "layout": a.layout,
         "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -413,6 +428,9 @@ def main():
             cmd = [sys.executable, __file__, "--suite", a.suite, "--engine", a.engine, "--runs", str(a.runs),
                    "--storage", a.storage, "--layout", a.layout, "--worker", name]
         rec = {**meta, "query": name}
+        if DIRECT:
+            rec["direct"] = True
+        before = proxy_stats() if a.storage == "s3" and not DIRECT else None
         try:
             proc = subprocess.run(cmd, input=stdin, capture_output=True, text=True, timeout=a.timeout)
             if proc.returncode == 0:
@@ -423,6 +441,12 @@ def main():
                 rec.update(status="error", error=err[:300])
         except subprocess.TimeoutExpired:
             rec.update(status="timeout")
+        if before and "kinds" in before:
+            # Requests by kind over all runs of this query, for engines that don't report them per run (Rust, Timelake CLI).
+            after = proxy_stats()
+            total = {k: n - before["kinds"].get(k, 0) for k, n in after["kinds"].items() if n != before["kinds"].get(k, 0)}
+            if total:
+                rec["kinds_total"] = total
         with out.open("a") as f:
             f.write(json.dumps(rec) + "\n")
         if rec["status"] == "ok":
