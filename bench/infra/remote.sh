@@ -45,7 +45,7 @@ target() {
 
 build() {
   export CARGO_PROFILE_RELEASE_DEBUG=false  # smaller, faster links on small instances
-  UV_PROJECT_ENVIRONMENT=.venv uv sync
+  UV_PROJECT_ENVIRONMENT=.venv uv sync --python 3.13  # same Python as Phase 0, with wheels for every dependency
   uv pip install --python $PY ../crates/timelake-py
   (cd .. && cargo build --release -p timelake-cli)
   (cd rust-reader && cargo build --release)
