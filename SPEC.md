@@ -782,7 +782,7 @@ TSBS assumes a database. A lake also has to be judged on these, borrowing ideas 
 |---|---|---|
 | Timelake | Lake-only, object-store WAL, Valkey hot store (Q5) | Timelake writer; Timelake reader **and** plain DuckDB |
 | Plain Iceberg | Iceberg + REST catalog | PyIceberg / Spark write; DuckDB, Trino read |
-| Managed Iceberg | S3 Tables; R2 Data Catalog | Spark/PyIceberg write; Athena / DuckDB read |
+| Managed Iceberg | S3 Tables; R2 Data Catalog | Spark/PyIceberg write; **Firehose → S3 Tables** (AWS's recommended streaming path; planned, needs an AWS Paid plan); Athena / DuckDB read |
 | Other formats | Delta Lake, Hudi, Paimon, DuckLake, Lance | delta-rs, Spark, Flink, DuckDB, lance |
 | TSDB baselines | TimescaleDB, InfluxDB 3, QuestDB | Their native TSBS loaders |
 

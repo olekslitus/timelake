@@ -1,9 +1,22 @@
 # Benchmarks on AWS
 
-Runs the Phase 0 suites and the v0 benchmark on real S3 (SPEC §17.4). One CloudFormation stack in one zone holds:
-- one benchmark instance;
+Runs the TSBS suites and the v0 benchmark on real S3 (SPEC §17.4). One CloudFormation stack in one zone holds:
 - an S3 Standard bucket;
-- an S3 Express One Zone bucket.
+- an S3 Express One Zone bucket;
+- an S3 Tables table bucket;
+- optionally (`INSTANCE=true`), one benchmark instance.
+
+## From a laptop (quick numbers)
+```bash
+aws login --profile timelake        # the scripts use profile timelake, region us-east-2
+bench/infra/up.sh                   # buckets only
+bench/run_aws.sh                    # several hours; log in bench/data/run_aws.log
+.venv/bin/python compare_aws.py laptop
+bench/infra/down.sh                 # empties all buckets and deletes the stack
+```
+Latency then includes the trip from the laptop to us-east-2. Request counts, bytes and request cost don't depend on where the client runs, and every system takes the same path, so the comparisons hold. Only TSBS IoT and v0 run this way: TPC-H and ClickBench scan hundreds of MB per query, and pulling that over the internet is slow and costs egress.
+
+## From an instance in the region (publishable numbers)
 
 The default instance is `m7i-flex.large` (x86, 2 vCPU, 8 GB, EBS), the largest type the AWS Free plan allows. With the Paid plan, `INSTANCE_TYPE=c8gd.2xlarge` gives 8 Graviton vCPUs and a local NVMe SSD, closer to the Phase 0 laptop. That type also needs the stack's arm64 `ImageId`.
 
@@ -20,11 +33,9 @@ All S3 traffic goes through `tools/s3proxy` in AWS mode:
 - Each client connection gets its own upstream TLS connection, so a fresh process pays the same connection setup it would pay talking to S3 directly.
 - `remote.sh direct` measures what the proxy itself adds, by running plain DuckDB straight against S3.
 
-## Run
 ```bash
-aws login --profile timelake                    # the scripts use profile timelake, region us-east-2
 git push                                        # the instance clones the current commit from GitHub
-bench/infra/up.sh                               # a few minutes; first boot installs toolchains
+INSTANCE=true bench/infra/up.sh                 # a few minutes; first boot installs toolchains
 bench/infra/ssm.sh --bg 'bench/infra/remote.sh all'
 bench/infra/ssm.sh 'grep "^==" /mnt/bench/logs/all.log; tail -3 /mnt/bench/logs/all.log'   # progress
 bench/infra/fetch.sh                            # results → bench/results/*aws*.jsonl

@@ -110,7 +110,7 @@ class S3Tables(Iceberg):
             files = t.inspect.files()
             data_files += files.num_rows
             data_bytes += sum(files["file_size_in_bytes"].to_pylist())
-            manifests += t.inspect.all_manifests().num_rows
+            manifests += len(set(t.inspect.all_manifests()["path"].to_pylist()))  # listed once per snapshot
         return {"objects": data_files + manifests, "data_files": data_files, "data_bytes": data_bytes,
                 "bytes": data_bytes}
 
