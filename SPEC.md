@@ -935,7 +935,7 @@ Reader lessons, now defaults:
 - Declare the sort order only when there are enough files to keep scans parallel.
 
 Open from v0:
-- A reader data cache: DuckDB still wins some repeat runs on its cached data.
+- A reader data cache: DuckDB still wins some repeat runs on its cached data. Planned as P5 (§19.1).
 - Plain DuckDB on Timelake files is slower than on PyArrow-written files on S3 (0.52 vs 0.42 s), which needs investigation.
 - The REST catalog.
 
@@ -951,6 +951,38 @@ Open from v0:
 | 7 | Python package (PyO3 + maturin), docs site with recipes, published benchmarks; Vortex when Iceberg supports it |
 | 8 | Agent access with permission sets (F1) and static read models for dashboards (F2) (§21) |
 | Later | Computed metrics from user-defined Python functions (F4, §21.4) |
+
+### 19.1 Performance plan (planned, not started)
+**Status:** planned. It starts after the codebase and CI/CD cleanup. Gains below are estimates until measured.
+
+**Where time goes today** (Timelake reader, laptop → AWS S3 us-east-2, after maintenance, [`bench/results/S3.md`](bench/results/S3.md)):
+
+| Query | First run | Best run | Requests | MB |
+|---|---:|---:|---:|---:|
+| `one-truck-latest` | 618 ms | 2 ms | 7 | 0.2 |
+| `last-loc` | 737 ms | 68 ms | 14 | 0.3 |
+| `long-daily-sessions` | 1.54 s | 0.30 s | 32 | 11 |
+| `avg-vs-projected-fuel-consumption` | 2.42 s | 2.39 s | 53 | 37 |
+
+- **Small queries:** first runs are dominated by round trips that each wait for the previous one: version hint → `vN.metadata.json` (and a HEAD on `vN+1`) → manifest list → manifests → last-value index or Parquet footers → data. That is 6–7 dependent steps at about 90 ms each from a laptop.
+- **Heavy queries:** bound by bytes read; warm runs are barely faster.
+- **Commits:** p50 is 483 ms, from about 5 serial stages: data, then manifests and index, then manifest list, then the conditional metadata write, then the hint.
+- **Warm queries:** every query re-reads the version hint to stay current. That re-read is most of `last-loc`'s 68 ms.
+
+**Steps, in order:**
+
+| # | Change | Expected effect |
+|---|---|---|
+| P1 | **One-request table state.** Each commit also writes a small head object: version, live files with column bounds, and the last-value index (inline when small, else a pointer). Readers fetch it with one GET instead of 4 dependent ones. Iceberg metadata is still written as today for other engines. | Cold small queries 0.6–0.8 s → about 0.15–0.25 s from a laptop; tens of ms in-region |
+| P2 | **Footers in the head object.** Store the Parquet footers and page indexes of live files next to the file list, so scans skip the footer round trip. | One fewer round trip and fewer requests per scan |
+| P3 | **Connection pre-warm.** Open the scan's connections while the head object is in flight. | Hides TLS setup on cold queries |
+| P4 | **Two-step commit.** Upload data, manifest, index and manifest list in parallel (all are known locally), then make the one conditional write. Update the hint asynchronously. | Commit p50 483 ms → about 200 ms |
+| P5 | **Local disk cache across processes** for metadata, footers and recent data (§12.2 item 6). | Repeat queries at best-run speed |
+| P6 | **Optional staleness bound** (e.g. "at most 1 s old") to skip the per-query version check, and the head pointer on S3 Express where available. | Warm `last-loc` 68 ms → a few ms |
+| P7 | **Caggs (§11.1).** TSBS daily queries read hourly or daily rollups instead of raw data. | Likely 10–100× on bandwidth-bound dashboard queries |
+| P8 | **Scan tuning:** late materialization (`pushdown_filters`, now off), Q4's hidden `_series_id`, fewer and larger parallel range reads. | Less data decoded and fetched on selective scans |
+
+**How we measure:** the same v0 suites through `tools/s3proxy` (request counts by kind) on local disk, S3 from a laptop, and S3 in-region. Each step lands only if it improves first-run latency or requests without slowing other queries, and plain DuckDB still reads every table.
 
 ---
 
