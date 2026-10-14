@@ -31,7 +31,7 @@ Properties: `name`, `location`, `version`, `schema` (pyarrow). Methods that comm
 
 | Method | Returns |
 | --- | --- |
-| `append(data, batch_id=None, maintain=None)` | dict: `rows`, `files`, `bytes`, `version`, `commit_ms`, `attempts`, `duplicate`, and `maintenance` when inline maintenance did work. `maintain` overrides the table’s auto-maintain setting. |
+| `append(data, batch_id=None, maintain=None)` | dict: `rows`, `files`, `bytes`, `version`, `commit_ms`, `attempts`, `duplicate`; `maintenance` when inline maintenance did work, or `maintenance_error` if it failed after the append committed (the data is in the table: run `maintain()` later rather than retrying the append). A skipped duplicate batch reports 0 rows, files and bytes. `maintain` overrides the table’s auto-maintain setting. |
 | `maintain(compact=True, retention=True, expire=True)` | dict: `partitions_compacted`, `files_rewritten`, `files_written`, `rows_rewritten`, `duplicates_removed`, `partitions_dropped`, `snapshots_expired`, `objects_deleted`, `seconds`. |
 | `info()` | dict: `name`, `version`, `location`, contract (`time_column`, `series_key`, `chunk`, `dedup`), size (`rows`, `files`, `bytes`), `snapshots`, `manifests`, `last_value_index`. |
 | `refresh()` | Reloads the latest committed version. |

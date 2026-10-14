@@ -229,6 +229,7 @@ impl<'a> Loader<'a> {
         let secs = self.started.elapsed().as_secs_f64();
         let skipped = match self.duplicates {
             0 => String::new(),
+            1 => ", skipped 1 duplicate batch".to_owned(),
             n => format!(", skipped {n} duplicate batches"),
         };
         println!(

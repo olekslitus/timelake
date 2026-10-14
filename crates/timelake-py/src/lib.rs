@@ -143,7 +143,7 @@ impl Lake {
         time_column: Option<String>,
         series_key: Option<Vec<String>>,
         chunk: Option<&str>,
-        retention: Option<String>,
+        retention: Option<&str>,
         dedup: Option<bool>,
         properties: Option<HashMap<String, String>>,
     ) -> PyResult<Table> {
@@ -153,7 +153,7 @@ impl Lake {
             series_key: series_key.unwrap_or_default(),
             chunk: chunk.map(str::parse::<Chunk>).transpose().map_err(|err| to_py_err(err.into()))?,
             dedup,
-            retention: retention.as_deref().map(timelake::parse_duration).transpose().map_err(|err| to_py_err(err.into()))?,
+            retention: retention.map(timelake::parse_duration).transpose().map_err(|err| to_py_err(err.into()))?,
             properties: properties.unwrap_or_default(),
         };
         let lake = self.inner.clone();

@@ -65,9 +65,11 @@ A writer can also attach a **batch id** to an append. If the same id was already
 
 ```console
 $ timelake append iot.readings fix.csv --batch-id gateway-7-000001
-  commit 0: 2 rows, 1 files, 0.0 MB, commit 2 ms [0.0s]
+  commit 0: 2 rows, 1 files, 0.0 MB, commit 5 ms [0.0s]
+iot.readings: appended 2 rows in 1 commits, 0.02s (87 rows/s) → v3
 $ timelake append iot.readings fix.csv --batch-id gateway-7-000001
-  commit 0: 2 rows, 1 files, 0.0 MB, commit 0 ms (duplicate batch, skipped) [0.0s]
+  commit 0: 0 rows, 0 files, 0.0 MB, commit 0 ms (duplicate batch, skipped) [0.0s]
+iot.readings: appended 0 rows in 0 commits, skipped 1 duplicate batch, 0.02s (0 rows/s) → v3
 ```
 
 ## 4. Reading
