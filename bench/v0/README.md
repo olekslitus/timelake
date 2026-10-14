@@ -20,13 +20,13 @@ On RustFS, S3 Tables can't run, so its managed compaction is simulated: it runs 
 
 ## Run
 ```bash
-# RustFS + proxy as in bench/README.md, then:
-for s in iceberg lance timelake; do .venv/bin/python v0/ingest.py --system $s --storage local; done
+# from bench/; for --storage s3, RustFS + proxy as in bench/README.md
+for s in iceberg lance timelake; do uv run python v0/ingest.py --system $s --storage local; done
 v0/run_queries.sh local ingested
-for s in iceberg lance timelake; do .venv/bin/python v0/ingest.py --system $s --storage local --maintain-only; done
+for s in iceberg lance timelake; do uv run python v0/ingest.py --system $s --storage local --maintain-only; done
 v0/run_queries.sh local maintained
 # same with --storage s3 / "s3"
-.venv/bin/python v0/summarize.py > results/V0.md
+uv run python v0/summarize.py > results/V0.md
 ```
 
 ## TimescaleDB (Tiger Cloud)

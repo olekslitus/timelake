@@ -18,3 +18,16 @@ Repository = "https://github.com/polythings/timelake"
 [tool.maturin]
 python-source = "python"
 module-name = "timelake._timelake"
+
+[dependency-groups]
+test = ["pytest>=8", "duckdb>=1.5", "polars>=1.30"]
+
+[tool.uv]
+# Rebuild the native module when Rust sources change.
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "Cargo.toml" },
+    { file = "src/**/*.rs" },
+    { file = "../timelake/src/**/*.rs" },
+    { file = "../timelake-format/src/**/*.rs" },
+]

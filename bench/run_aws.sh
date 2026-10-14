@@ -8,7 +8,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 source infra/env.sh
-PY=.venv/bin/python
+PY="uv run python"
 bucket=$(output DataBucket)
 export BENCH_TABLE_BUCKET_ARN=$(output TableBucketArn)
 export BENCH_MACHINE="laptop (M1 Pro) to S3 us-east-2 over the internet"

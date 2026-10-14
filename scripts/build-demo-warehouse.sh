@@ -16,7 +16,7 @@ TL=target/release/timelake
 TRUCKS=${TRUCKS:-50}
 [ -x "$TL" ] || cargo build --release -p timelake-cli
 rm -rf "$OUT" bench/data/demo-src && mkdir -p bench/data/demo-src
-bench/.venv/bin/python - "$SRC" bench/data/demo-src "$TRUCKS" <<'PY'
+uv run python - "$SRC" bench/data/demo-src "$TRUCKS" <<'PY'
 import sys, duckdb
 src, dst, n = sys.argv[1], sys.argv[2], int(sys.argv[3])
 duckdb.sql("SET TimeZone='UTC'")

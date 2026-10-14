@@ -2,11 +2,11 @@
 
 **Question:** Can `iceberg-rust` 0.10.1 carry Timelake's write path, or do we need to contribute upstream, fork, or build our own layer?
 
-**Run it:**
+**Code:** removed once the question was answered (SPEC D13). To run it again, check out the last commit that had it:
 ```bash
+git checkout 2d66939 -- spikes/iceberg-write Cargo.toml Cargo.lock
 cargo run --release -p spike-iceberg-write -- v2 100   # or v3; second arg = number of small commits
 ```
-The program creates a table under `spike-data/<version>/` and prints the metadata path for DuckDB.
 
 **Environment:** iceberg 0.10.1 (Arrow/Parquet 58), Rust 1.94 (iceberg 0.10.1 requires it; pinned via `rust-toolchain.toml`), DuckDB 1.5.6, local filesystem, memory catalog. Measured 2026-10-11.
 

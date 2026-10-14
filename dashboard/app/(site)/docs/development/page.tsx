@@ -66,13 +66,13 @@ export default function Page() {
 
       <h2>Rust: engine and CLI</h2>
       <pre>{`cargo build --release -p timelake-cli        # → target/release/timelake
-cargo test -p timelake -p timelake-format       # tests
+cargo test --workspace                          # tests
 cargo clippy --workspace --all-targets          # lints
 cargo fmt --all                                 # formatting`}</pre>
       <p>
-        The workspace (root <code>Cargo.toml</code>) holds <code>timelake</code>, <code>timelake-format</code>,{" "}
-        <code>timelake-cli</code> and the spike. <code>timelake-py</code> and <code>timelake-wasm</code> are built on their
-        own (they have different build tools), each with its own <code>Cargo.lock</code>.
+        The Cargo workspace (root <code>Cargo.toml</code>) holds <code>timelake</code>, <code>timelake-format</code>,{" "}
+        <code>timelake-cli</code> and <code>timelake-py</code>, with one <code>Cargo.lock</code> and one{" "}
+        <code>target/</code>. <code>timelake-wasm</code> is built separately for WebAssembly (see below).
       </p>
       <p>Try the CLI on a throwaway warehouse:</p>
       <pre>{`export TIMELAKE_WAREHOUSE=/tmp/tl-dev
@@ -80,14 +80,13 @@ target/release/timelake import iot.readings readings.csv --time-column time --se
 target/release/timelake sql "SELECT count(*) FROM iot.readings"`}</pre>
 
       <h2>Python package</h2>
-      <pre>{`cd crates/timelake-py
-uv venv && source .venv/bin/activate
-uv pip install maturin pytest duckdb polars
-maturin develop --release          # builds the Rust extension into the venv
-pytest tests`}</pre>
+      <pre>{`uv sync                                    # at the repo root: builds the package into ./.venv
+uv run pytest crates/timelake-py/tests`}</pre>
       <p>
-        <code>maturin develop</code> rebuilds the native module; run it again after changing Rust code. The Python files
-        live in <code>python/timelake</code>; the native part is imported as <code>timelake._timelake</code>.
+        The root <code>pyproject.toml</code> is a uv workspace with two members: the package (
+        <code>crates/timelake-py</code>) and the benchmarks (<code>bench</code>). <code>uv sync</code> and{" "}
+        <code>uv run</code> rebuild the native module with maturin whenever Rust sources change. The Python files live in{" "}
+        <code>python/timelake</code>; the native part is imported as <code>timelake._timelake</code>.
       </p>
 
       <h2>WASM reader and TypeScript client</h2>
@@ -119,12 +118,11 @@ bun run build                     # production build, as Vercel runs it`}</pre>
       </p>
 
       <h2>Benchmarks</h2>
-      <pre>{`cd bench
-UV_PROJECT_ENVIRONMENT=.venv uv sync          # Python 3.13 environment with the pinned engines
-uv pip install --python .venv/bin/python ../crates/timelake-py
-(cd tools/s3proxy && go build -o ../../.bin/s3proxy .)`}</pre>
+      <pre>{`uv sync                                       # at the repo root; the same environment as above
+cd bench && (cd tools/s3proxy && go build -o ../../.bin/s3proxy .)
+uv run python run.py --suite tsbs_iot --engine duckdb --layout sorted`}</pre>
       <p>
-        Then follow <code>bench/README.md</code> (Phase 0 suites), <code>bench/v0/README.md</code> (the v0 comparison) or{" "}
+        Then follow <code>bench/README.md</code> (query suites and data), <code>bench/v0/README.md</code> (the v0 comparison) or{" "}
         <code>bench/infra/README.md</code> (AWS). Benchmark data lives in <code>bench/data</code> (git-ignored, several GB).
       </p>
 

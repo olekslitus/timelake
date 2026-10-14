@@ -16,7 +16,7 @@ SELF=$(realpath "$0")
 source /etc/profile.d/timelake-bench.sh
 export PATH=$HOME/.cargo/bin:$HOME/.local/bin:$PATH GOTOOLCHAIN=auto
 cd ~/timelake/bench
-PY=.venv/bin/python
+PY="uv run python"
 LOGS=/mnt/bench/logs
 export V0_INGEST_LOG=v0_ingest.aws.jsonl
 
@@ -45,8 +45,7 @@ target() {
 
 build() {
   export CARGO_PROFILE_RELEASE_DEBUG=false  # smaller, faster links on small instances
-  UV_PROJECT_ENVIRONMENT=.venv uv sync --python 3.13  # same Python as Phase 0, with wheels for every dependency
-  uv pip install --python $PY ../crates/timelake-py
+  uv sync  # Python 3.13 (.python-version), the engines, and timelake built from crates/timelake-py
   (cd .. && cargo build --release -p timelake-cli)
   (cd rust-reader && cargo build --release)
   (cd tools/s3proxy && go build -o ../../.bin/s3proxy .)

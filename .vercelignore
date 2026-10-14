@@ -1,8 +1,7 @@
-# Deploy only the web app, the packages it depends on, and brand/ (a workspace with the logo files).
+# Deploy only the web app and the packages it depends on.
 /*
 !/dashboard
 !/packages
-!/brand
 !/package.json
 !/bun.lock
 /dashboard/node_modules
@@ -10,4 +9,3 @@
 /dashboard/.env*
 /packages/*/node_modules
 /packages/*/dist
-/brand/node_modules

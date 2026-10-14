@@ -57,5 +57,5 @@
 Full per-query tables, including request counts:
 
 ```bash
-.venv/bin/python summarize.py --metric=first tsbs_iot.rustfs-20ms tpch.rustfs-20ms clickbench.rustfs-20ms
+python summarize.py --metric=first tsbs_iot.rustfs-20ms tpch.rustfs-20ms clickbench.rustfs-20ms
 ```

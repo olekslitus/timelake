@@ -39,7 +39,8 @@ const LAYOUT = [
   ["bench", "Python, Go, shell", "Benchmarks: data generators, the query runner, the v0 comparison, AWS scripts and a request-counting S3 proxy."],
   ["brand", "JavaScript", "Logo and wordmark sources and the mark editor."],
   ["scripts", "shell, JavaScript", "Builds the demo warehouse for the website; a static file server with Range support for testing."],
-  ["spikes/iceberg-write", "Rust", "An early experiment that tested iceberg-rust's write support. Kept for reference."],
+  ["spikes/iceberg-write", "Markdown", "Findings of an early experiment with iceberg-rust's write support (the code is in git history)."],
+  ["pyproject.toml", "TOML", "The uv workspace: the Python package and the benchmarks share one environment (.venv)."],
   ["SPEC.md", "Markdown", "The design: requirements, decisions, roadmap and benchmark plans."],
 ]
 
@@ -58,7 +59,7 @@ const TECH = [
   ["Next.js 16, React 19", "Website", "Server-rendered pages, route handlers for the Explorer"],
   ["Tailwind CSS 4, shadcn/ui (Base UI), Recharts", "Website styling, components and charts", ""],
   ["Vercel, Vercel Blob", "Website hosting; demo data", "Deploys on every push to main; Blob serves the demo warehouse"],
-  ["Python 3.13 + uv", "Benchmarks", "uv installs the exact versions in bench/uv.lock"],
+  ["Python 3.13 + uv", "Python package and benchmarks", "One uv workspace; uv.lock pins every version"],
   ["DuckDB, PyIceberg, Lance, Polars", "Benchmark competitors and helpers", ""],
   ["Go", "s3proxy", "A small proxy that counts S3 requests and signs them for AWS"],
   ["AWS CloudFormation, SSM", "Benchmark infrastructure", "Creates and deletes the buckets (and an optional instance) with one command"],

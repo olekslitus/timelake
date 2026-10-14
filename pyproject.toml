@@ -1,0 +1,7 @@
+# uv workspace: the Python package (crates/timelake-py) and the benchmarks (bench).
+# `uv sync` builds the package with maturin and installs everything into ./.venv.
+[tool.uv.workspace]
+members = ["bench", "crates/timelake-py"]
+
+[dependency-groups]
+dev = ["ruff>=0.17", "ty>=0.0.87", "pytest>=8", "duckdb>=1.5", "polars>=1.30"]

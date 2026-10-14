@@ -158,11 +158,12 @@ data       7 rows in 1 files, 0.0 MB
 
       <h2>8. The same from Python</h2>
       <p>
-        Build the Python package into a virtual environment (from the repository root), then write and read with pyarrow:
+        Build the Python package into a virtual environment in the demo folder (it compiles the Rust engine, so it takes a few
+        minutes), then write and read with pyarrow:
       </p>
-      <pre>{`uv venv && source .venv/bin/activate
-uv pip install maturin pyarrow
-(cd crates/timelake-py && maturin develop --release)`}</pre>
+      <pre>{`cd ~/timelake-demo
+uv venv && uv pip install pyarrow ~/timelake/crates/timelake-py    # path to your clone
+source .venv/bin/activate && python`}</pre>
       <pre>{`import datetime as dt
 
 import pyarrow as pa

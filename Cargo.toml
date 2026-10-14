@@ -1,7 +1,8 @@
 [workspace]
 resolver = "2"
-members = ["crates/timelake-format", "crates/timelake", "crates/timelake-cli", "spikes/iceberg-write"]
-exclude = ["crates/timelake-py", "crates/timelake-wasm"]
+members = ["crates/timelake-format", "crates/timelake", "crates/timelake-cli", "crates/timelake-py"]
+# Built for wasm32 with its own release profile and target settings (see its .cargo/config.toml).
+exclude = ["crates/timelake-wasm"]
 
 [workspace.package]
 version = "0.0.1"
@@ -28,10 +29,17 @@ serde_json = "1"
 uuid = { version = "1", features = ["v4", "v7"] }
 url = "2"
 anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
+pyo3 = { version = "0.28", features = ["abi3-py310"] }
+arrow-pyarrow = "58.4"
+arrow-array = { version = "58.4", features = ["ffi"] }
 thiserror = "2"
 chrono = "0.4"
 rand = "0.9"
-tracing = "0.1"
 
 [profile.release]
 debug = "line-tables-only"
+
+# Dependencies (DataFusion, Arrow, …) are huge with full debug info; keep it for our own crates only.
+[profile.dev.package."*"]
+debug = false

@@ -4,10 +4,9 @@
   "license": "Apache-2.0",
   "workspaces": [
     "dashboard",
-    "packages/*",
-    "brand"
+    "packages/*"
   ],
   "scripts": {
-    "brand:editor": "bun brand/editor.mjs"
+    "brand:editor": "cd brand && bun install && bun editor.mjs"
   }
 }

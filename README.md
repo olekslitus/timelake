@@ -45,7 +45,7 @@ timelake -w s3://lake/wh -o aws_endpoint=http://localhost:9000 -o aws_allow_http
 
 ### Python
 ```bash
-cd crates/timelake-py && maturin develop --release     # or: pip install .
+uv pip install ./crates/timelake-py       # builds the Rust extension; or `uv sync` for the dev environment
 ```
 ```python
 import datetime as dt
@@ -120,7 +120,7 @@ SELECT * FROM iceberg_scan('s3://lake/wh/iot/readings');   -- reads metadata/ver
 | `brand/` | Logo, wordmark, colors and words ([brand/README.md](brand/README.md)); `bun run brand:editor` opens the mark editor |
 | `bench/` | Benchmarks: TSBS IoT, TPC-H, ClickBench, the v0 comparison (`bench/v0`), TimescaleDB on Tiger Cloud |
 | `scripts/` | Demo warehouse build (`build-demo-warehouse.sh`) and a static server with Range support for testing (`serve-range.mjs`) |
-| `spikes/` | Phase 0 experiments |
+| `spikes/` | Findings of Phase 0 experiments (code in git history) |
 | `SPEC.md` | Design and decisions |
 
 ## Documentation
@@ -128,8 +128,8 @@ The [docs](https://timelake.dev/docs) cover a [quick start](https://timelake.dev
 
 ## Development
 ```bash
-cargo test -p timelake -p timelake-format                # Rust tests
-python -m pytest crates/timelake-py/tests                # Python tests (after maturin develop)
+cargo test --workspace                                   # Rust tests
+uv sync && uv run pytest crates/timelake-py/tests        # Python package (built by uv) and its tests
 (cd packages/timelake-client && bun test)                # TS client + WASM vs the engine (needs scripts/build-demo-warehouse.sh)
 (cd packages/timelake-client && bun run build:wasm)      # rebuild the WASM after changing crates/timelake-wasm
 ```

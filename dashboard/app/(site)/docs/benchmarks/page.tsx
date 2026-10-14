@@ -38,7 +38,7 @@ export default function Page() {
       <pre>{`aws login --profile timelake        # any AWS account; the scripts use us-east-2
 bench/infra/up.sh                   # buckets: S3, S3 Express, S3 Tables
 bench/run_aws.sh                    # a few hours
-bench/.venv/bin/python bench/compare_aws.py laptop
+uv run python bench/compare_aws.py laptop
 bench/infra/down.sh`}</pre>
     </DocPage>
   )

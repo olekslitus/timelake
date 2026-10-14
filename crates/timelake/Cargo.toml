@@ -27,4 +27,3 @@ url.workspace = true
 thiserror.workspace = true
 chrono.workspace = true
 rand.workspace = true
-tracing.workspace = true

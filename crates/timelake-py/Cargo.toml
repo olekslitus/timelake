@@ -1,11 +1,12 @@
 [package]
 name = "timelake-py"
-version = "0.0.1"
-edition = "2024"
-license = "Apache-2.0"
-repository = "https://github.com/polythings/timelake"
-homepage = "https://timelake.dev"
-publish = false
+description = "Python bindings for Timelake (built with maturin)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
 
 [lib]
 name = "_timelake"
@@ -13,10 +14,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 timelake = { path = "../timelake" }
-pyo3 = { version = "0.28", features = ["extension-module", "abi3-py310"] }
-arrow-pyarrow = "58.4"
-arrow-array = { version = "58.4", features = ["ffi"] }
-tokio = { version = "1", features = ["full"] }
-
-[profile.release]
-debug = "line-tables-only"
+pyo3.workspace = true
+arrow-pyarrow.workspace = true
+arrow-array.workspace = true
+tokio.workspace = true
