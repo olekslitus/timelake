@@ -20,10 +20,11 @@ use object_store::azure::{AzureConfigKey, MicrosoftAzureBuilder};
 use object_store::buffered::BufWriter;
 use object_store::gcp::{GoogleCloudStorageBuilder, GoogleConfigKey};
 use object_store::http::HttpBuilder;
+use object_store::list::{PaginatedListOptions, PaginatedListStore};
 use object_store::local::LocalFileSystem;
 use object_store::memory::InMemory;
 use object_store::path::Path;
-use object_store::{ObjectStore, ObjectStoreExt, PutMode, PutOptions, PutPayload};
+use object_store::{GetOptions, GetRange, ObjectStore, ObjectStoreExt, PutMode, PutOptions, PutPayload, UpdateVersion};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 use url::Url;
@@ -40,10 +41,41 @@ pub struct Storage {
     /// `base` with a trailing slash, as DataFusion registers object stores.
     url: Url,
     listable: bool,
+    check: FreshnessCheck,
 }
 
 /// Storage option mapping a warehouse URL onto a local directory (see [`Storage::open`]).
 pub const LOCAL_ROOT_OPTION: &str = "timelake_local_root";
+
+/// Storage option choosing how a reader checks whether a newer table version exists:
+/// `head` or `list` (see [`Storage::open`]).
+pub const FRESHNESS_CHECK_OPTION: &str = "timelake_freshness_check";
+
+/// How [`Storage::check_exists`] asks whether an object exists. A HEAD request is the cheapest
+/// on most stores; on some (Tigris) a HEAD of a missing key is slow while a LIST of its exact
+/// name is fast (SPEC §17.4).
+#[derive(Clone)]
+enum FreshnessCheck {
+    Head,
+    List(Arc<dyn PaginatedListStore>),
+}
+
+impl std::fmt::Debug for FreshnessCheck {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Head => "head",
+            Self::List(_) => "list",
+        })
+    }
+}
+
+/// What [`Storage::write_versioned`] did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum VersionedWrite {
+    Written,
+    /// The object changed (or appeared) since it was read: read it again.
+    Changed,
+}
 
 impl Storage {
     /// Opens the store for `url`. `options` are backend config keys (e.g. `aws_endpoint`,
@@ -54,8 +86,20 @@ impl Storage {
     /// `<dir>` while every path recorded in metadata keeps the URL. That builds a warehouse on disk
     /// that is ready to upload to its final location, e.g. a public Vercel Blob or CDN URL that is
     /// then read over HTTPS.
+    ///
+    /// `timelake_freshness_check=head|list` sets how readers check for a newer table version: a
+    /// HEAD request (the default) or a LIST of the exact name (the default on Tigris, where a HEAD
+    /// of a missing key is slow). `list` needs S3, GCS or Azure.
     pub fn open(url: &Url, mut options: HashMap<String, String>) -> Result<Self> {
         let local_root = options.remove(LOCAL_ROOT_OPTION);
+        let check = match options.remove(FRESHNESS_CHECK_OPTION).as_deref().map(str::to_ascii_lowercase).as_deref() {
+            None => None,
+            Some("head") => Some(false),
+            Some("list") => Some(true),
+            Some(other) => {
+                return Err(Error::config(format!("{FRESHNESS_CHECK_OPTION} must be head or list, got {other:?}")));
+            }
+        };
         let scheme = url.scheme();
         let authority = url.host_str().unwrap_or_default();
         let base = match scheme {
@@ -68,6 +112,8 @@ impl Storage {
             let store = LocalFileSystem::new_with_prefix(&dir)?;
             return Self::new(Arc::new(store), base, true);
         }
+        // Stores that can list an exact name, and whether that is their faster check.
+        let mut lister: Option<(Arc<dyn PaginatedListStore>, bool)> = None;
         let store: Arc<dyn ObjectStore> = match scheme {
             "file" => Arc::new(LocalFileSystem::new()),
             // Plain HTTPS (public buckets, Vercel Blob, CDNs): read-only, and it cannot list,
@@ -91,7 +137,11 @@ impl Storage {
                         .map_err(|_| Error::config(format!("unknown S3 option {k:?}")))?;
                     b = b.with_config(key, v);
                 }
-                Arc::new(b.build()?)
+                let endpoint = b.get_config_value(&AmazonS3ConfigKey::Endpoint).unwrap_or_default();
+                let tigris = ["tigris", "storage.dev"].iter().any(|t| endpoint.contains(t));
+                let s3 = Arc::new(b.build()?);
+                lister = Some((s3.clone(), tigris));
+                s3
             }
             "gs" => {
                 let mut b = GoogleCloudStorageBuilder::from_env().with_bucket_name(authority);
@@ -100,7 +150,9 @@ impl Storage {
                         GoogleConfigKey::from_str(k).map_err(|_| Error::config(format!("unknown GCS option {k:?}")))?;
                     b = b.with_config(key, v);
                 }
-                Arc::new(b.build()?)
+                let gcs = Arc::new(b.build()?);
+                lister = Some((gcs.clone(), false));
+                gcs
             }
             "az" | "abfs" | "abfss" => {
                 let mut b = MicrosoftAzureBuilder::from_env().with_url(url.as_str());
@@ -109,17 +161,27 @@ impl Storage {
                         .map_err(|_| Error::config(format!("unknown Azure option {k:?}")))?;
                     b = b.with_config(key, v);
                 }
-                Arc::new(b.build()?)
+                let azure = Arc::new(b.build()?);
+                lister = Some((azure.clone(), false));
+                azure
             }
             other => return Err(Error::config(format!("unsupported storage scheme {other:?}"))),
         };
         let listable = !matches!(scheme, "http" | "https");
-        Self::new(store, base, listable)
+        let mut storage = Self::new(store, base, listable)?;
+        storage.check = match (lister, check) {
+            (Some((lister, _)), Some(true)) | (Some((lister, true)), None) => FreshnessCheck::List(lister),
+            (None, Some(true)) => {
+                return Err(Error::config(format!("{FRESHNESS_CHECK_OPTION}=list needs S3, GCS or Azure")));
+            }
+            _ => FreshnessCheck::Head,
+        };
+        Ok(storage)
     }
 
     fn new(store: Arc<dyn ObjectStore>, base: String, listable: bool) -> Result<Self> {
         let url = Url::parse(&format!("{base}/")).map_err(|e| Error::config(format!("bad store URL {base}: {e}")))?;
-        Ok(Self { store, base, url, listable })
+        Ok(Self { store, base, url, listable, check: FreshnessCheck::Head })
     }
 
     /// A listable store addressed as `base` (`scheme://authority`).
@@ -174,6 +236,55 @@ impl Storage {
         match self.store.head(&self.path(uri)?).await {
             Ok(_) => Ok(true),
             Err(object_store::Error::NotFound { .. }) => Ok(false),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Whether an object exists, asked the way this store answers fastest (see
+    /// [`FRESHNESS_CHECK_OPTION`]). Readers use it to check for a newer table version.
+    pub async fn check_exists(&self, uri: &str) -> Result<bool> {
+        let FreshnessCheck::List(lister) = &self.check else { return self.exists(uri).await };
+        let path = self.path(uri)?;
+        // The exact name sorts before any longer name it prefixes, so one key answers.
+        let opts = PaginatedListOptions { max_keys: Some(1), ..Default::default() };
+        let listed = lister.list_paginated(Some(path.as_ref()), opts).await?;
+        Ok(listed.result.objects.iter().any(|o| o.location == path))
+    }
+
+    /// The first `len` bytes of an object (all of it if shorter) and its version, for a later
+    /// [`Self::write_versioned`]; `None` if it doesn't exist.
+    pub(crate) async fn read_prefix_versioned(&self, uri: &str, len: u64) -> Result<Option<(Bytes, UpdateVersion)>> {
+        let opts = GetOptions { range: Some(GetRange::Bounded(0..len)), ..Default::default() };
+        match self.store.get_opts(&self.path(uri)?, opts).await {
+            Ok(r) => {
+                let version = UpdateVersion { e_tag: r.meta.e_tag.clone(), version: r.meta.version.clone() };
+                Ok(Some((r.bytes().await?, version)))
+            }
+            Err(object_store::Error::NotFound { .. }) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Writes an object only if it is still at `version` (`None`: still absent). Stores without
+    /// conditional updates (local disk) overwrite.
+    pub(crate) async fn write_versioned(
+        &self,
+        uri: &str,
+        bytes: Bytes,
+        version: Option<UpdateVersion>,
+    ) -> Result<VersionedWrite> {
+        let path = self.path(uri)?;
+        let mode = version.map_or(PutMode::Create, PutMode::Update);
+        let opts = PutOptions { mode, ..Default::default() };
+        match self.store.put_opts(&path, PutPayload::from_bytes(bytes.clone()), opts).await {
+            Ok(_) => Ok(VersionedWrite::Written),
+            Err(object_store::Error::AlreadyExists { .. } | object_store::Error::Precondition { .. }) => {
+                Ok(VersionedWrite::Changed)
+            }
+            Err(object_store::Error::NotImplemented { .. }) => {
+                self.store.put(&path, PutPayload::from_bytes(bytes)).await?;
+                Ok(VersionedWrite::Written)
+            }
             Err(e) => Err(e.into()),
         }
     }
@@ -543,6 +654,27 @@ mod tests {
         assert_eq!(storage.read("memory://test/small").await.unwrap().len(), 10);
         assert_eq!(storage.read("memory://test/large").await.unwrap().len(), LARGE);
         assert_eq!(storage.read("memory://test/put").await.unwrap().as_ref(), b"x");
+    }
+
+    #[test]
+    fn freshness_check_option() {
+        let open = |url: &str, check: &str| {
+            let options = HashMap::from([(FRESHNESS_CHECK_OPTION.to_string(), check.to_string())]);
+            Storage::open(&Url::parse(url).unwrap(), options).map(|s| format!("{:?}", s.check))
+        };
+        let s3 = |endpoint: &str| {
+            let options = HashMap::from([
+                ("aws_endpoint".to_string(), endpoint.to_string()),
+                ("aws_region".to_string(), "auto".to_string()),
+            ]);
+            format!("{:?}", Storage::open(&Url::parse("s3://b").unwrap(), options).unwrap().check)
+        };
+        assert_eq!(s3("https://s3.us-east-2.amazonaws.com"), "head");
+        assert_eq!(s3("https://t3.storage.dev"), "list");
+        assert_eq!(open("s3://b", "LIST").unwrap(), "list");
+        assert_eq!(open("memory://", "head").unwrap(), "head");
+        assert!(open("memory://", "list").is_err(), "memory can't list a name");
+        assert!(open("s3://b", "maybe").is_err());
     }
 
     #[tokio::test]

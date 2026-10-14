@@ -42,14 +42,23 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Small Timelake benchmark for an S3-compatible store.")
     parser.add_argument("--label", required=True, help="name of the store in the output")
     parser.add_argument("--windows", type=int, default=50, help="five-minute windows to append (two commits each)")
+    parser.add_argument("--head-format", help="timelake.head-format of the tables (none: no head object)")
     args = parser.parse_args()
     url, options = os.environ["BENCH_URL"], json.loads(os.environ.get("BENCH_OPTIONS", "{}"))
+    properties = {"timelake.head-format": args.head_format} if args.head_format else {}
 
     lake = timelake.Lake(url, storage_options=options)
     source = {n: pq.read_table(DATA / "tsbs" / "parquet" / f"{n}.parquet") for n in ("tags", *TSBS_TIME_SERIES)}
-    lake.create_table("tsbs.tags", source["tags"].schema).append(source["tags"])
+    lake.create_table("tsbs.tags", source["tags"].schema, properties=properties).append(source["tags"])
     tables = {
-        n: lake.create_table(f"tsbs.{n}", source[n].schema, time_column="time", series_key=["tags_id"], dedup=False)
+        n: lake.create_table(
+            f"tsbs.{n}",
+            source[n].schema,
+            time_column="time",
+            series_key=["tags_id"],
+            dedup=False,
+            properties=properties,
+        )
         for n in TSBS_TIME_SERIES
     }
     latencies: list[float] = []
@@ -59,6 +68,9 @@ def main() -> None:
             tables[name].append(batch)
             latencies.append(time.perf_counter() - started)
 
+    # The last commits' version hints and heads are written in the background; let them land, as
+    # they would before a reader in another process came along.
+    time.sleep(2)
     queries: dict[str, dict[str, int]] = {}
     for name, sql in QUERIES.items():
         reader = timelake.Lake(url, storage_options=options)
@@ -72,6 +84,7 @@ def main() -> None:
         json.dumps(
             {
                 "label": args.label,
+                "head_format": args.head_format or "default",
                 "commits": len(latencies),
                 "commit_ms_p50": round(statistics.median(latencies) * 1000),
                 "commit_ms_p95": round(float(np.percentile(latencies, 95)) * 1000),

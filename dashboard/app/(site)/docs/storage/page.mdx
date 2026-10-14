@@ -24,6 +24,13 @@ Options are `object_store` configuration keys: `-o key=value` on the CLI, `stora
 | `aws_endpoint` | Custom endpoint for S3-compatible stores, e.g. `http://localhost:9000`. |
 | `aws_allow_http` | `true` to allow a plain-HTTP endpoint. |
 
+Timelake’s own options work with every backend:
+
+| Key | Meaning |
+| --- | --- |
+| `timelake_freshness_check` | How readers check for a newer table version: `head` (a HEAD request; the default) or `list` (a LIST of the exact name; the default on Tigris, where a HEAD of a missing key takes about 285 ms). `list` needs S3, GCS or Azure. |
+| `timelake_local_root` | Write objects under a local directory (see below). |
+
 ```bash
 timelake -w s3://lake/wh -o aws_endpoint=http://localhost:9000 -o aws_allow_http=true ls
 ```

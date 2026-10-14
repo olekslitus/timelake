@@ -62,83 +62,99 @@ impl TimelakeProvider {
         self.kind
     }
 
-    async fn scan_latest(&self, projection: Option<&Vec<usize>>) -> DfResult<Arc<dyn ExecutionPlan>> {
-        let uri = self.table.last_value_index().ok_or_else(|| DataFusionError::Plan("no last-value index".into()))?;
-        let batch = crate::lvi::read(&self.table, &uri).await?;
-        Ok(MemorySourceConfig::try_new_exec(&[vec![batch]], self.table.schema(), projection.cloned())?)
-    }
-
-    async fn scan_data(
+    /// Plans the scan of `table`, the version this provider was planned with or a newer one with
+    /// the same schema.
+    async fn scan_version(
         &self,
+        table: &Table,
         state: &dyn DfSession,
         projection: Option<&Vec<usize>>,
         filters: &[Expr],
         limit: Option<usize>,
     ) -> DfResult<Arc<dyn ExecutionPlan>> {
-        let schema = self.table.schema();
-        let mut files = self.prune(state, filters).await?;
-        if files.is_empty() {
-            let projected = match projection {
-                Some(p) => Arc::new(schema.project(p)?),
-                None => schema.clone(),
-            };
-            return Ok(Arc::new(EmptyExec::new(projected)));
+        match self.kind {
+            Kind::Latest => scan_latest(table, projection).await,
+            Kind::Data => scan_data(table, state, projection, filters, limit).await,
         }
+    }
+}
 
-        let storage = self.table.lake().storage();
-        let target = state.config().target_partitions().max(1);
-        let n_groups = files.len().min(target);
-        let mut groups: Vec<Vec<PartitionedFile>> = vec![vec![]; n_groups];
-        // Biggest files first, round-robin: roughly balanced groups.
-        files.sort_by_key(|f| std::cmp::Reverse(f.data_file.file_size_in_bytes()));
-        let mut total_rows = 0u64;
-        for (i, f) in files.iter().enumerate() {
-            total_rows += f.data_file.record_count();
-            let path = storage.path(f.data_file.file_path())?;
-            let pf = PartitionedFile::new(path.to_string(), f.data_file.file_size_in_bytes())
-                .with_statistics(Arc::new(file_statistics(&schema, f)));
-            groups[i % n_groups].push(pf);
-        }
-        let one_file_per_group = groups.iter().all(|g| g.len() == 1);
+async fn scan_latest(table: &Table, projection: Option<&Vec<usize>>) -> DfResult<Arc<dyn ExecutionPlan>> {
+    let uri = table.last_value_index().ok_or_else(|| DataFusionError::Plan("no last-value index".into()))?;
+    let batch = crate::lvi::read(table, &uri).await?;
+    Ok(MemorySourceConfig::try_new_exec(&[vec![batch]], table.schema(), projection.cloned())?)
+}
 
-        let url = ObjectStoreUrl::parse(storage.url())?;
-        prefetch_footers(state, &url, &groups).await?;
-
-        let source = Arc::new(ParquetSource::new(schema.clone()));
-        let mut stats = Statistics::new_unknown(&schema);
-        stats.num_rows = Precision::Exact(usize::try_from(total_rows).unwrap_or(usize::MAX));
-        let mut builder = FileScanConfigBuilder::new(url, source)
-            .with_file_groups(groups.into_iter().map(FileGroup::new).collect())
-            .with_statistics(stats)
-            .with_projection_indices(projection.cloned())?
-            .with_limit(if filters.is_empty() { limit } else { None });
-        // Every file is sorted by (series…, time). Declaring it lets DataFusion skip sorts, but it also
-        // keeps one partition per file (no byte-range splits), which costs more than it saves when a
-        // few large compacted files hold the data. Only declare it when there are enough files.
-        let sort_columns = self.table.contract().sort_columns();
-        if n_groups >= target && one_file_per_group && !sort_columns.is_empty() {
-            let exprs = sort_columns
-                .iter()
-                .map(|c| Ok(PhysicalSortExpr::new(datafusion::physical_expr::expressions::col(c, &schema)?, ASCENDING)))
-                .collect::<DfResult<Vec<_>>>()?;
-            if let Some(ordering) = LexOrdering::new(exprs) {
-                builder = builder.with_output_ordering(vec![ordering]);
-            }
-        }
-        let format = ParquetFormat::default().with_options(state.table_options().parquet.clone());
-        format.create_physical_plan(state, builder.build()).await
+async fn scan_data(
+    table: &Table,
+    state: &dyn DfSession,
+    projection: Option<&Vec<usize>>,
+    filters: &[Expr],
+    limit: Option<usize>,
+) -> DfResult<Arc<dyn ExecutionPlan>> {
+    let schema = table.schema();
+    let mut files = prune(table, state, filters).await?;
+    if files.is_empty() {
+        let projected = match projection {
+            Some(p) => Arc::new(schema.project(p)?),
+            None => schema.clone(),
+        };
+        return Ok(Arc::new(EmptyExec::new(projected)));
     }
 
-    /// Live files whose Iceberg column bounds can match `filters`.
-    async fn prune(&self, state: &dyn DfSession, filters: &[Expr]) -> DfResult<Vec<LiveEntry>> {
-        let files = self.table.files().await?;
-        let Some(predicate) = conjunction(filters.iter().cloned()) else { return Ok(files) };
-        let schema = self.table.schema();
-        let df_schema = DFSchema::try_from(schema.as_ref().clone())?;
-        let predicate = PruningPredicate::try_new(state.create_physical_expr(predicate, &df_schema)?, schema.clone())?;
-        let keep = predicate.prune(&FileStats::new(&schema, &files))?;
-        Ok(files.into_iter().zip(keep).filter_map(|(f, k)| k.then_some(f)).collect())
+    let storage = table.lake().storage();
+    let target = state.config().target_partitions().max(1);
+    let n_groups = files.len().min(target);
+    let mut groups: Vec<Vec<PartitionedFile>> = vec![vec![]; n_groups];
+    // Biggest files first, round-robin: roughly balanced groups.
+    files.sort_by_key(|f| std::cmp::Reverse(f.data_file.file_size_in_bytes()));
+    let mut total_rows = 0u64;
+    for (i, f) in files.iter().enumerate() {
+        total_rows += f.data_file.record_count();
+        let path = storage.path(f.data_file.file_path())?;
+        let pf = PartitionedFile::new(path.to_string(), f.data_file.file_size_in_bytes())
+            .with_statistics(Arc::new(file_statistics(&schema, f)));
+        groups[i % n_groups].push(pf);
     }
+    let one_file_per_group = groups.iter().all(|g| g.len() == 1);
+
+    let url = ObjectStoreUrl::parse(storage.url())?;
+    prefetch_footers(state, &url, &groups).await?;
+
+    let source = Arc::new(ParquetSource::new(schema.clone()));
+    let mut stats = Statistics::new_unknown(&schema);
+    stats.num_rows = Precision::Exact(usize::try_from(total_rows).unwrap_or(usize::MAX));
+    let mut builder = FileScanConfigBuilder::new(url, source)
+        .with_file_groups(groups.into_iter().map(FileGroup::new).collect())
+        .with_statistics(stats)
+        .with_projection_indices(projection.cloned())?
+        .with_limit(if filters.is_empty() { limit } else { None });
+    // Every file is sorted by (series…, time). Declaring it lets DataFusion skip sorts, but it also
+    // keeps one partition per file (no byte-range splits), which costs more than it saves when a
+    // few large compacted files hold the data. Only declare it when there are enough files.
+    let sort_columns = table.contract().sort_columns();
+    if n_groups >= target && one_file_per_group && !sort_columns.is_empty() {
+        let exprs = sort_columns
+            .iter()
+            .map(|c| Ok(PhysicalSortExpr::new(datafusion::physical_expr::expressions::col(c, &schema)?, ASCENDING)))
+            .collect::<DfResult<Vec<_>>>()?;
+        if let Some(ordering) = LexOrdering::new(exprs) {
+            builder = builder.with_output_ordering(vec![ordering]);
+        }
+    }
+    let format = ParquetFormat::default().with_options(state.table_options().parquet.clone());
+    format.create_physical_plan(state, builder.build()).await
+}
+
+/// Live files whose Iceberg column bounds can match `filters`.
+async fn prune(table: &Table, state: &dyn DfSession, filters: &[Expr]) -> DfResult<Vec<LiveEntry>> {
+    let files = table.files().await?;
+    let Some(predicate) = conjunction(filters.iter().cloned()) else { return Ok(files) };
+    let schema = table.schema();
+    let df_schema = DFSchema::try_from(schema.as_ref().clone())?;
+    let predicate = PruningPredicate::try_new(state.create_physical_expr(predicate, &df_schema)?, schema.clone())?;
+    let keep = predicate.prune(&FileStats::new(&schema, &files))?;
+    Ok(files.into_iter().zip(keep).filter_map(|(f, k)| k.then_some(f)).collect())
 }
 
 /// Reads each file's footer (and page index) once, concurrently, into DataFusion's metadata
@@ -189,10 +205,19 @@ impl TableProvider for TimelakeProvider {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> DfResult<Arc<dyn ExecutionPlan>> {
-        match self.kind {
-            Kind::Latest => self.scan_latest(projection).await,
-            Kind::Data => self.scan_data(state, projection, filters, limit).await,
+        // A version loaded from the head is checked for a newer one while it is planned; an
+        // outdated plan is replaced by one of the current version.
+        let (stale, plan) =
+            tokio::join!(self.table.is_stale(), self.scan_version(&self.table, state, projection, filters, limit));
+        if !stale.map_err(|e| DataFusionError::External(Box::new(e)))? {
+            return plan;
         }
+        let current = self.table.lake().load(self.table.name()).await?;
+        if current.schema() != self.table.schema() {
+            let name = self.table.name();
+            return Err(DataFusionError::Plan(format!("{name} changed while the query was planned; run it again")));
+        }
+        self.scan_version(&current, state, projection, filters, limit).await
     }
 
     fn supports_filters_pushdown(&self, filters: &[&Expr]) -> DfResult<Vec<TableProviderFilterPushDown>> {

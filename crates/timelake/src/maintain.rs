@@ -294,7 +294,8 @@ async fn expire(table: &Table, report: &mut MaintainReport) -> Result<Table> {
             .remove_snapshots(&ids)
             .build()?
             .metadata;
-        let Some(expired_table) = publish(&table, metadata).await? else {
+        // Expiry keeps the current snapshot, so its files stay the same.
+        let Some(expired_table) = publish(&table, metadata, table.known_files().cloned()).await? else {
             // Lost the race to another writer: recompute against its version.
             table = table.refresh().await?;
             continue;

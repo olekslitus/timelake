@@ -53,6 +53,11 @@ pub mod property {
     pub const MAX_SNAPSHOTS: &str = "timelake.max-snapshots";
     /// Files per size tier that trigger inline compaction.
     pub const COMPACT_MIN_FILES: &str = "timelake.compact-min-files";
+    /// Format of the head object (`metadata/timelake-head`): `arrow` (default), `json`, another
+    /// registered codec, or `none` to not write one.
+    pub const HEAD_FORMAT: &str = "timelake.head-format";
+    /// Bytes the head may spend on optional sections such as the last-value index.
+    pub const HEAD_INLINE_BYTES: &str = "timelake.head-inline-bytes";
 }
 
 /// Snapshot summary keys: Timelake's own, and the standard Iceberg counters Timelake maintains.

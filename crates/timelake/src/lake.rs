@@ -6,11 +6,13 @@
 //! ```text
 //! <warehouse>/<namespace>/<table>/metadata/v<N>.metadata.json   committed with put-if-absent
 //! <warehouse>/<namespace>/<table>/metadata/version-hint.text    "<N>", best-effort pointer
+//! <warehouse>/<namespace>/<table>/metadata/timelake-head        state of version N for readers
 //! <warehouse>/<namespace>/<table>/data/<partition>/<file>.parquet
 //! ```
 //!
 //! A commit is "create `v<N+1>.metadata.json` if it doesn't exist". Exactly one writer wins; the
-//! others get [`Error::Conflict`] and rebase. No database or catalog server is involved.
+//! others get [`Error::Conflict`] and rebase. No database or catalog server is involved. The
+//! version hint and the head (see [`crate::head`]) are written after the commit, as shortcuts.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -19,7 +21,7 @@ use std::time::{Duration, Instant};
 
 use arrow::datatypes::{DataType, Schema as ArrowSchema};
 use bytes::Bytes;
-use futures::{StreamExt, TryStreamExt};
+use futures::{FutureExt, StreamExt, TryStreamExt};
 use iceberg::TableCreation;
 use iceberg::arrow::arrow_schema_to_schema_auto_assign_ids;
 use iceberg::spec::{
@@ -30,11 +32,20 @@ use iceberg::spec::{
 use crate::cache::Caches;
 use crate::contract::{Chunk, Contract, TableOptions, format_duration};
 use crate::error::{Error, Result};
+use crate::head::{self, Codecs, HeadCodec};
 use crate::name::TableName;
 use crate::property;
 use crate::schema::normalize_schema;
 use crate::storage::{Storage, warehouse_url};
-use crate::table::{LiveEntry, Table};
+use crate::table::{FreshnessCheck, LiveEntry, Table};
+
+/// Where loading a table starts.
+enum Start {
+    /// From the head (not yet checked for newer versions).
+    Head(Box<Table>),
+    /// From this metadata version.
+    Version(u64),
+}
 
 /// How many object-store requests listing runs at once.
 const LIST_CONCURRENCY: usize = 16;
@@ -50,6 +61,7 @@ struct LakeInner {
     storage: Storage,
     root: String,
     caches: Caches,
+    head_codecs: Codecs,
 }
 
 impl Lake {
@@ -63,7 +75,14 @@ impl Lake {
 
     /// A lake rooted at `root` on an already opened store.
     pub(crate) fn with_storage(storage: Storage, root: &str) -> Self {
-        Self { inner: Arc::new(LakeInner { storage, root: root.to_string(), caches: Caches::default() }) }
+        Self {
+            inner: Arc::new(LakeInner {
+                storage,
+                root: root.to_string(),
+                caches: Caches::default(),
+                head_codecs: Codecs::default(),
+            }),
+        }
     }
 
     /// The object store holding the warehouse.
@@ -78,6 +97,16 @@ impl Lake {
 
     pub(crate) fn caches(&self) -> &Caches {
         &self.inner.caches
+    }
+
+    /// Adds a codec for head objects (see [`crate::head`]), or replaces the one with the same name.
+    /// Tables select it with the `timelake.head-format` property; heads it wrote can then be read.
+    pub fn register_head_codec(&self, codec: Arc<dyn HeadCodec>) {
+        self.inner.head_codecs.register(codec);
+    }
+
+    pub(crate) fn head_codecs(&self) -> &Codecs {
+        &self.inner.head_codecs
     }
 
     /// Where a table lives: `<warehouse>/<namespace>/<table>`.
@@ -159,11 +188,16 @@ impl Lake {
             return Err(Error::AlreadyExists(name.to_string()));
         }
         let metadata = new_table_metadata(&name, &location, schema, &opts)?;
+        let head_format = Contract::from_properties(metadata.properties())?.head_format;
+        if head_format != head::NO_HEAD && self.head_codecs().get(&head_format).is_none() {
+            return Err(Error::invalid(format!("unknown head format {head_format:?} (built in: arrow, json, none)")));
+        }
         if !storage.write_if_absent(&metadata_uri(&location, 1), Bytes::from(serde_json::to_vec(&metadata)?)).await? {
             return Err(Error::AlreadyExists(name.to_string()));
         }
         storage.write(&hint_uri(&location), Bytes::from("1")).await?;
-        let table = Table::new(self.clone(), name, location, 1, metadata)?;
+        let table = Table::new(self.clone(), name, location, 1, metadata)?.with_files(Arc::default());
+        head::update(&table);
         if storage.can_list() {
             // The index only serves readers that can't list; a stale one is repaired by the next
             // create, drop or `write_tables_index`, so it must not fail the create.
@@ -181,18 +215,74 @@ impl Lake {
         self.load(&name.try_into()?).await
     }
 
+    /// Loads the current version: from the head when the table has one (after checking that no
+    /// newer version exists), otherwise through the version hint and the metadata chain.
     pub(crate) async fn load(&self, name: &TableName) -> Result<Table> {
+        let table = match self.start_load(name).await? {
+            Start::Version(version) => return self.load_from(name, version).await,
+            Start::Head(table) => *table,
+        };
+        let next = metadata_uri(table.location(), table.version() + 1);
+        if self.storage().check_exists(&next).await? {
+            return self.load_from(name, table.version() + 1).await;
+        }
+        self.remember(&table);
+        Ok(table)
+    }
+
+    /// Like [`Lake::load`], but returns a version loaded from the head without waiting for the
+    /// check for a newer one: the check runs while the query is planned, and the scan waits for it
+    /// (and reloads if the head was behind).
+    async fn load_for_query(&self, name: &TableName) -> Result<Table> {
+        let table = match self.start_load(name).await? {
+            Start::Version(version) => return self.load_from(name, version).await,
+            Start::Head(table) => *table,
+        };
+        let (storage, next) = (self.storage().clone(), metadata_uri(table.location(), table.version() + 1));
+        let check: FreshnessCheck = tokio::spawn(async move { storage.check_exists(&next).await })
+            .map(|r| match r {
+                Ok(r) => r.map_err(Arc::new),
+                Err(e) => Err(Arc::new(Error::Io(std::io::Error::other(e)))),
+            })
+            .boxed()
+            .shared();
+        let table = table.with_check(check);
+        self.remember(&table);
+        Ok(table)
+    }
+
+    /// Reads the head and the version hint at once, so a table without a head (written by
+    /// another engine or an older Timelake) loads as fast as before heads existed.
+    async fn start_load(&self, name: &TableName) -> Result<Start> {
+        let location = self.table_location(name);
+        let hint_uri = hint_uri(&location);
+        let (head, hint) = tokio::join!(head::read(self, name, &location), self.storage().read_opt(&hint_uri));
+        let hint = match hint? {
+            Some(hint) => Some(
+                std::str::from_utf8(&hint)
+                    .ok()
+                    .and_then(|s| s.trim().parse::<u64>().ok())
+                    .ok_or_else(|| Error::invalid(format!("bad version hint for {name}")))?,
+            ),
+            None => None,
+        };
+        match (head?, hint) {
+            // The hint is ahead: the head is outdated.
+            (Some(table), Some(hint)) if hint > table.version() => Ok(Start::Version(hint)),
+            (Some(table), _) => Ok(Start::Head(Box::new(table))),
+            (None, Some(hint)) => Ok(Start::Version(hint)),
+            (None, None) => Err(Error::NotFound(name.to_string())),
+        }
+    }
+
+    /// Loads `version`, or a newer one if it exists.
+    async fn load_from(&self, name: &TableName, mut version: u64) -> Result<Table> {
         let location = self.table_location(name);
         let storage = self.storage();
-        let hint = storage.read_opt(&hint_uri(&location)).await?.ok_or_else(|| Error::NotFound(name.to_string()))?;
-        let mut version: u64 = std::str::from_utf8(&hint)
-            .ok()
-            .and_then(|s| s.trim().parse().ok())
-            .ok_or_else(|| Error::invalid(format!("bad version hint for {name}")))?;
-        // The hint is updated after the commit, so it may lag: probe forward while fetching.
+        // The hint and the head are updated after the commit, so they may lag: probe forward while fetching.
         loop {
             let (current, next) = (metadata_uri(&location, version), metadata_uri(&location, version + 1));
-            let (current, next) = tokio::join!(storage.read_opt(&current), storage.exists(&next));
+            let (current, next) = tokio::join!(storage.read_opt(&current), storage.check_exists(&next));
             if next? {
                 version += 1;
                 continue;
@@ -207,12 +297,18 @@ impl Lake {
 
     /// Like [`Lake::table`], but reuses a version loaded or committed by this process within
     /// `max_age`. Query planning uses it so one query loads each table once, and so prefetching
-    /// all of a query's tables concurrently pays off.
+    /// all of a query's tables concurrently pays off. A version read from the head may still be
+    /// checked for freshness (see `Lake::load_for_query`).
     pub(crate) async fn table_recent(&self, name: &TableName, max_age: Duration) -> Result<Table> {
         match self.caches().tables.get(name) {
             Some((at, table)) if at.elapsed() <= max_age => Ok(table),
-            _ => self.load(name).await,
+            _ => self.load_for_query(name).await,
         }
+    }
+
+    /// Whether this process has seen a version of `name` newer than `version`.
+    pub(crate) fn has_newer(&self, name: &TableName, version: u64) -> bool {
+        self.caches().tables.get(name).is_some_and(|(_, t)| t.version() > version)
     }
 
     /// Records a table version as recently seen, unless a newer one is already recorded.

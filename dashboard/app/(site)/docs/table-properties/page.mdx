@@ -18,6 +18,8 @@ A table’s contract and maintenance policy live in Iceberg table properties und
 | `timelake.snapshot-retention` | 1h | Expire snapshots older than this… |
 | `timelake.min-snapshots` | 5 | …but always keep at least this many, |
 | `timelake.max-snapshots` | 100 | and never keep more than this many (older ones expire even if younger than the retention). |
+| `timelake.head-format` | arrow | Format of the head object (`metadata/timelake-head`): `arrow`, `json`, a registered codec, or `none` for no head. See [Architecture](/docs/architecture#head-object). |
+| `timelake.head-inline-bytes` | 1048576 (1 MiB) | Room in the head for the last-value index. A larger index is read separately. |
 
 Durations are a number and a unit: `s`, `m` (minutes), `h`, `d`, `w` or `y`, or the long forms (`90 days`, `2 weeks`). Examples: `30m`, `36h`, `90d`, `1y`.
 

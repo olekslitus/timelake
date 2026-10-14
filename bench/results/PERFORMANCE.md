@@ -3,6 +3,31 @@
 Measurements for the steps of the performance plan ([SPEC.md §19.1](../../SPEC.md)), newest first. Each step is
 measured from a laptop (M1 Pro) over the internet, against the numbers before it.
 
+## P1: one-request table state (2026-10-14)
+
+After each commit the writer also writes `metadata/timelake-head` in the background: the table metadata, the live files
+with their statistics, and the last-value index while it fits in 1 MB. A cold reader loads it instead of the version
+hint, metadata, manifest list and manifests, and checks that no newer version exists while the query is planned (HEAD of
+`vN+1.metadata.json`; a LIST of that name on Tigris). Unit test (`cold_queries_read_the_head_first` in
+`crates/timelake/src/head/mod.rs`): a cold `latest` waits for 2 round trips instead of 3, a filtered scan for 3
+instead of 6.
+
+**Small run** (`v0/small.py --windows 50`, with `--head-format none` for "before"; raw lines in
+[small.laptop.jsonl](small.laptop.jsonl)). First query in a fresh `Lake`, in ms; S3 is the mean of two runs each, Tigris
+one run each:
+
+| First query | S3 before | S3 P1 | Tigris before | Tigris P1 |
+|---|---:|---:|---:|---:|
+| `one-truck-latest` | 502 | 314 | 868 | 318 |
+| `last-loc` | 676 | 421 | 1,097 | 446 |
+| `one-truck-history` | 986 | 823 | 1,484 | 1,052 |
+| `fleet-avg-velocity` | 1,013 | 780 | 1,143 | 714 |
+
+Warm queries and commits don't change (the head is written after the commit returns). Tigris "before" already uses the
+LIST check, which is why it is lower than the 1,005 ms of the P4 run. The rest of a cold query is mostly opening
+connections (P3) and reading Parquet footers (P2). The two Tigris runs used about 2,600 writes, 2,000 reads and 70 MB,
+inside the free tier.
+
 ## P4: two-step commit (2026-10-13)
 
 An append now encodes its data files, manifests, manifest list and last-value index, uploads them all at once, then

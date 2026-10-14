@@ -154,6 +154,10 @@ pub struct Contract {
     pub max_snapshots: usize,
     /// Inline auto-maintenance merges a size tier of a partition once it has this many files.
     pub compact_min_files: usize,
+    /// Format of the head object, or `none` to not write one.
+    pub head_format: String,
+    /// Bytes the head may spend on optional sections (the last-value index).
+    pub head_inline_bytes: u64,
 }
 
 impl Contract {
@@ -164,6 +168,8 @@ impl Contract {
     const DEFAULT_MIN_SNAPSHOTS: usize = 5;
     const DEFAULT_MAX_SNAPSHOTS: usize = 100;
     const DEFAULT_COMPACT_MIN_FILES: usize = 8;
+    const DEFAULT_HEAD_FORMAT: &str = "arrow";
+    const DEFAULT_HEAD_INLINE_BYTES: u64 = 1 << 20;
 
     /// Reads the contract from Iceberg table properties, with defaults for what isn't set.
     pub fn from_properties(properties: &HashMap<String, String>) -> Result<Self> {
@@ -184,6 +190,8 @@ impl Contract {
             min_snapshots: p.number(property::MIN_SNAPSHOTS, Self::DEFAULT_MIN_SNAPSHOTS)?,
             max_snapshots: p.number(property::MAX_SNAPSHOTS, Self::DEFAULT_MAX_SNAPSHOTS)?,
             compact_min_files: p.number(property::COMPACT_MIN_FILES, Self::DEFAULT_COMPACT_MIN_FILES)?,
+            head_format: p.get(property::HEAD_FORMAT).unwrap_or(Self::DEFAULT_HEAD_FORMAT).to_ascii_lowercase(),
+            head_inline_bytes: p.number(property::HEAD_INLINE_BYTES, Self::DEFAULT_HEAD_INLINE_BYTES)?,
         })
     }
 
@@ -351,6 +359,7 @@ mod tests {
         assert_eq!(c.retention, None);
         assert_eq!(c.snapshot_retention, Duration::from_secs(3600));
         assert_eq!((c.min_snapshots, c.max_snapshots, c.compact_min_files), (5, 100, 8));
+        assert_eq!((c.head_format.as_str(), c.head_inline_bytes), ("arrow", 1 << 20));
         assert!(c.sort_columns().is_empty());
     }
 
@@ -365,8 +374,11 @@ mod tests {
             (RETENTION, "1 day"),
             (MIN_SNAPSHOTS, "3"),
             (TARGET_FILE_SIZE, " 1024 "),
+            (HEAD_FORMAT, "JSON"),
+            (HEAD_INLINE_BYTES, "0"),
         ]))
         .unwrap();
+        assert_eq!((c.head_format.as_str(), c.head_inline_bytes), ("json", 0));
         assert_eq!(c.sort_columns(), ["site", "device", "time"]);
         assert_eq!(c.chunk, Some(Chunk::Hour));
         assert!(c.dedup && !c.auto_maintain);

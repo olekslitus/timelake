@@ -28,6 +28,7 @@ mod background;
 mod cache;
 mod commit;
 mod error;
+pub mod head;
 mod lake;
 mod lvi;
 mod maintain;

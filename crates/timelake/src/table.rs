@@ -2,11 +2,12 @@ use std::fmt;
 use std::sync::Arc;
 
 use arrow::datatypes::SchemaRef;
+use futures::future::{BoxFuture, Shared};
 use iceberg::arrow::schema_to_arrow_schema;
 use iceberg::spec::{DataFile, ManifestFile, ManifestStatus, SnapshotRef, TableMetadata};
 
 use crate::contract::Contract;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::lake::Lake;
 use crate::name::TableName;
 use crate::summary;
@@ -24,7 +25,15 @@ pub struct Table {
     metadata: Arc<TableMetadata>,
     contract: Contract,
     schema: SchemaRef,
+    /// The live files, when known without reading manifests (from the head, or derived by a commit).
+    files: Option<Arc<Vec<LiveEntry>>>,
+    /// For a version loaded from the head for a query: whether a newer version exists.
+    check: Option<FreshnessCheck>,
 }
+
+/// Resolves to whether a newer version than the table's exists. Started when the table is loaded
+/// and awaited before its data is read, so the request overlaps planning (SPEC §19.2).
+pub(crate) type FreshnessCheck = Shared<BoxFuture<'static, Result<bool, Arc<Error>>>>;
 
 /// A manifest entry of a data file, with inherited snapshot id and sequence numbers resolved.
 #[derive(Clone, Debug)]
@@ -51,7 +60,40 @@ impl Table {
     ) -> Result<Self> {
         let contract = Contract::from_properties(metadata.properties())?;
         let schema = Arc::new(schema_to_arrow_schema(metadata.current_schema())?);
-        Ok(Self { lake, name, location, version, metadata: Arc::new(metadata), contract, schema })
+        Ok(Self {
+            lake,
+            name,
+            location,
+            version,
+            metadata: Arc::new(metadata),
+            contract,
+            schema,
+            files: None,
+            check: None,
+        })
+    }
+
+    pub(crate) fn with_files(mut self, files: Arc<Vec<LiveEntry>>) -> Self {
+        self.files = Some(files);
+        self
+    }
+
+    /// The live files if they are known without reading manifests.
+    pub(crate) fn known_files(&self) -> Option<&Arc<Vec<LiveEntry>>> {
+        self.files.as_ref()
+    }
+
+    pub(crate) fn with_check(mut self, check: FreshnessCheck) -> Self {
+        self.check = Some(check);
+        self
+    }
+
+    /// Whether a newer version existed when this one was loaded from the head without checking.
+    pub(crate) async fn is_stale(&self) -> Result<bool, Arc<Error>> {
+        match &self.check {
+            Some(check) => check.clone().await,
+            None => Ok(false),
+        }
     }
 
     /// The lake this table belongs to.
@@ -119,6 +161,9 @@ impl Table {
 
     /// All live data files of the current snapshot.
     pub async fn files(&self) -> Result<Vec<LiveEntry>> {
+        if let Some(files) = &self.files {
+            return Ok(files.as_ref().clone());
+        }
         let manifests = self.manifests().await?;
         let loaded = futures::future::try_join_all(manifests.iter().map(|m| self.lake.manifest(m))).await?;
         Ok(loaded.iter().flat_map(|es| es.iter().filter(|e| e.status != ManifestStatus::Deleted).cloned()).collect())

@@ -153,7 +153,7 @@ impl Session {
         N: TryInto<TableName>,
         Error: From<N::Error>,
     {
-        let table = self.lake.table(table).await?;
+        let table = self.lake.table_recent(&table.try_into()?, PLAN_CACHE_TTL).await?;
         let Some(time_column) = table.contract().time_column.clone() else {
             return Err(Error::invalid(format!("{} has no time column", table.name())));
         };

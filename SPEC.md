@@ -798,7 +798,7 @@ PyIceberg appends are the naive baseline (what v0 compares against today). Publi
   - **Planned: one published run per popular object store**, each with latency, request counts and $ per month at that store's prices: AWS S3 (Standard, Express One Zone), Cloudflare R2, Tigris, Wasabi, Backblaze B2, Azure Blob, Google Cloud Storage. Stores without request fees (R2, Wasabi) or with different latency (Tigris, Express) change the cost and speed picture most.
 - **Object-store compatibility matrix (CI):** S3, GCS, Azure Blob, R2, Tigris, Wasabi, Backblaze B2, RustFS, SeaweedFS, Garage. Each is tested for the features Timelake relies on, especially **conditional writes** (`If-None-Match` / `If-Match`), which the object-store-only catalog and WAL require (§5.2, §8.2).
 - **Store notes (measured 2026-10-13 from a laptop, warm connections, [bench/results/PERFORMANCE.md](bench/results/PERFORMANCE.md)):**
-  - **Tigris** answers GET, HEAD, PUT and LIST faster than S3 us-east-2 (small GET 37 vs 67 ms, PUT 80 vs 110 ms), but a request for a key that doesn't exist (HEAD or GET 404) takes about 285 ms, against 55 ms on S3. Timelake's reader asks for `vN+1.metadata.json` on every table load, so on Tigris each cold load pays it. A LIST of the `vN+1` prefix answers the same question in about 40 ms.
+  - **Tigris** answers GET, HEAD, PUT and LIST faster than S3 us-east-2 (small GET 37 vs 67 ms, PUT 80 vs 110 ms), but a request for a key that doesn't exist (HEAD or GET 404) takes about 285 ms, against 55 ms on S3. Timelake's reader asks for `vN+1.metadata.json` on every table load, so on Tigris each cold load paid it. A LIST of that exact name answers the same question in about 40 ms; it is the default check on Tigris since P1 (§19.2).
   - **Tigris global buckets** are strongly consistent within a region and eventually consistent across regions; a conditional write is decided by the bucket's leader only with `X-Tigris-Consistent: true`. Writers to one table from different regions need that header or a single-region bucket. To verify in the compatibility matrix.
 - **Cold and warm runs reported separately:** cold means no local caches.
 - **Results include:** p50/p99 latency, bytes read, **object-store request counts**, and **estimated $** (per query, per GB ingested, per month of storage).
@@ -958,7 +958,7 @@ Open from v0:
 | Later | Computed metrics from user-defined Python functions (F4, §21.4) |
 
 ### 19.1 Performance plan (in progress)
-**Status:** P4 done (2026-10-13); P1–P3 designed (§19.2), to discuss. The codebase and CI/CD cleanup it waited for is done (2026-10-13; the audit and plan are in git history at `2d66939`). Gains below are estimates until measured; measurements are in [`bench/results/PERFORMANCE.md`](bench/results/PERFORMANCE.md).
+**Status:** P4 done (2026-10-13); P1 done (2026-10-14, §19.2); P2 and P3 next. The codebase and CI/CD cleanup it waited for is done (2026-10-13; the audit and plan are in git history at `2d66939`). Gains below are estimates until measured; measurements are in [`bench/results/PERFORMANCE.md`](bench/results/PERFORMANCE.md).
 
 **Where time goes today** (Timelake reader, laptop → AWS S3 us-east-2, after maintenance, [`bench/results/S3.md`](bench/results/S3.md)):
 
@@ -978,7 +978,7 @@ Open from v0:
 
 | # | Change | Expected effect |
 |---|---|---|
-| P1 | **One-request table state.** Each commit also writes a small head object: version, live files with column bounds, and the last-value index (inline when small, else a pointer). Readers fetch it with one GET instead of 4 dependent ones. Iceberg metadata is still written as today for other engines. | Cold small queries 0.6–0.8 s → about 0.15–0.25 s from a laptop; tens of ms in-region |
+| P1 | **Done.** **One-request table state.** Each commit also writes a small head object: version, live files with column bounds, and the last-value index (inline when small, else a pointer). Readers fetch it with one GET instead of 4 dependent ones. Iceberg metadata is still written as today for other engines. | Cold `one-truck-latest` 502 → 314 ms on S3, 868 → 318 ms on Tigris, measured from a laptop |
 | P2 | **Footers in the head object.** Store the Parquet footers and page indexes of live files next to the file list, so scans skip the footer round trip. | One fewer round trip and fewer requests per scan |
 | P3 | **Connection pre-warm.** Open the scan's connections while the head object is in flight. | Hides TLS setup on cold queries |
 | P4 | **Done.** **Two-step commit.** Upload data, manifest, index and manifest list in parallel (all are known locally), then make the one conditional write. Update the hint asynchronously. | Commit p50 483 ms → 243 ms measured (whole v0 ingest 1,307 s → 795 s) |
@@ -989,34 +989,35 @@ Open from v0:
 
 **How we measure:** the same v0 suites through `tools/s3proxy` (request counts by kind) on local disk, S3 from a laptop, and S3 in-region. Each step lands only if it improves first-run latency or requests without slowing other queries, and plain DuckDB still reads every table.
 
-### 19.2 Design draft: one-request table state (P1–P3)
+### 19.2 One-request table state (P1–P3)
 
-**Status:** draft for discussion, not built. Open questions are marked **Decide**.
+**Status:** P1 built and measured (2026-10-14): cold `one-truck-latest` 502 → 314 ms on S3 and 868 → 318 ms on Tigris from a laptop ([`bench/results/PERFORMANCE.md`](bench/results/PERFORMANCE.md)). Next: P2, P3, and reading the head in the WASM reader and TypeScript client. Decisions taken on 2026-10-14 are recorded below.
 
 **Goal:** a cold query learns everything it needs to plan in one GET, so a small query takes two dependent round trips (table state, then data or the last-value index) instead of six or seven.
 
-**The head object.** After each commit, the writer also writes `<table>/metadata/timelake-head` with the state of the current snapshot:
-- version `N`, snapshot id, and the parts of `vN.metadata.json` planning needs: current schema, partition spec, sort order, properties (the contract) and the snapshot summary. The snapshot history stays in `vN.metadata.json`.
-- the live data files: path, partition, row count, size, and min/max per column (what the manifests hold today).
-- the last-value index: inline when it is small (**Decide:** up to about 1 MB), otherwise its path.
-- P2: the Parquet footers and page indexes of the live files, inline while their total fits a budget (**Decide:** about 1 MB; maintenance keeps file counts low, so most tables fit). Larger tables omit them and scans read footers as today.
+**The head object.** After each commit, the writer also writes `<table>/metadata/timelake-head` with the state of the current version:
+- the whole `vN.metadata.json` (schema, partition spec, sort order, properties, snapshots), so writers can commit from a head-loaded table too. With the default limits it is tens of KB and compresses well.
+- the live data files: path, partition, row count, size, sequence numbers, and per column the bounds and counts (what the manifests hold).
+- the last-value index while it fits the inline budget, otherwise only its path (in the metadata).
+- P2: the Parquet footers and page indexes of the live files, in the same budget.
 
-**Format (Decide):** Arrow IPC, one batch per section (files, index, footers) with the scalar fields as schema metadata. The Rust reader and the WASM reader already decode Arrow, and it is much smaller and faster to parse than JSON for thousands of files.
+**Decided:**
+1. **Validate the head on every load.** The reader checks whether `vN+1.metadata.json` exists. Queries start the check when the table is loaded and await it in the scan (overlapping planning and the footer reads); a stale head makes the scan reload the table and plan the newest version. Results are always as current as before. `Lake::table()` and writers wait for the check. Trusting the head stays P6's opt-in staleness bound.
+2. **How to check, per store:** a HEAD request by default; a LIST of the exact name (one key, `max-keys=1`) on Tigris, where a HEAD of a missing key takes 285 ms and the LIST 40 ms. Storage option `timelake_freshness_check=head|list` overrides it; `list` needs S3, GCS or Azure. Today's slow path uses the same check.
+3. **One inline budget** for optional sections, `timelake.head-inline-bytes`, default 1 MiB: the last-value index first, then (P2) footers. The files and metadata are always in the head.
+4. **Format: pluggable, Arrow IPC by default.** The head's content is format-neutral: string properties plus named Arrow tables (`metadata`, `files`, `columns`, `last_values`). A `HeadCodec` encodes it, and the head's header (`TLHD`, header version, table version, codec name) names the codec, so readers decode any head whose codec they have. Built in: `arrow` (Arrow IPC streams, zstd) and `json` (Arrow's JSON rows plus serde schemas). Avro, Vortex, BSON or Parquet are one more codec each (all have Arrow bridges), registered with `Lake::register_head_codec`. Tables choose with `timelake.head-format` (`none`: no head; a writer without the chosen codec deletes the head rather than leave a stale one).
 
-**Writing it.** Iceberg metadata is written exactly as today and `vN+1.metadata.json` stays the commit point, so DuckDB, Spark and PyIceberg see no change. The head is a cache of that commit, written in the background like the version hint (P4), so commits don't get slower. Where the store supports it (S3, GCS, Azure), it is written with a conditional update so it never moves back to an older version when two writers race.
+**Writing it.** Iceberg metadata is written exactly as before and `vN+1.metadata.json` stays the commit point, so DuckDB, Spark and PyIceberg see no change. The head is a cache of that commit, written in the background like the version hint (P4), so commits don't get slower. The writer reads the first bytes of the stored head (version and ETag) and replaces it only with a conditional write on that ETag, so racing writers never move it back to an older version. Stores without conditional updates (local disk) overwrite. A commit knows its new file list from its base when the base was loaded from a head, so writing the head reads no manifests.
 
-**Reading it.** `GET timelake-head`, plan, and read data. A head can be behind: right after a commit, while its background write is in flight, or until the next commit if a writer crashed in between. **Decide:**
-- **Validate (recommended):** check whether `vN+1.metadata.json` exists at the same time as the data reads. If it exists, the head was stale: redo the load the slow way. Results are always current, as today. The cost is one request per query and no extra latency in the common case. **Decide** how to check: a HEAD is cheapest on S3 (55 ms, GET pricing), but a missing key takes 285 ms on Tigris, where a LIST of the `vN+1` prefix takes 40 ms (at write pricing, about 12× a HEAD on S3). A per-store default is likely; plain HTTPS can only HEAD. The same choice applies to today's table load (§17.4, store notes).
-- **Trust it:** skip the check. One request fewer, but a query can return the previous version for a short time. This is P6's opt-in staleness bound, not the default.
+**Reading it.** The head and `version-hint.text` are read at the same time. A table without a head (another engine, an older Timelake, a head removed by orphan-file cleanup) loads exactly as before, with no extra round trip; a hint newer than the head skips the head.
+
+**Measured round trips** (unit test `cold_queries_read_the_head_first`): cold `latest` 3 → 2, cold filtered scan 6 → 3.
+
+**Known limit:** if an older Timelake (which writes no heads) commits more than `write.metadata.previous-versions-max` (20) times after a newer one wrote a head, and expiry deletes `vN+1.metadata.json`, a reader can trust the old head. Fix: delete `metadata/timelake-head` after writing a table with an old version, or upgrade every writer.
 
 **P3, warm connections.** While the head GET is in flight, the reader opens a few connections to the store (small `HEAD` requests on the head object), so the data reads that follow don't pay TCP and TLS setup. Cost: a few cheap requests per cold query.
 
-**Compatibility and failure cases:**
-- No head (a table written by another engine or an older Timelake, or a head deleted by Spark's orphan-file cleanup): the reader uses today's chain, and the next Timelake commit writes a head.
-- The TypeScript client and the WASM reader use the head too, which speeds up a browser's first query the most.
-- Cost per commit: one more PUT, of tens of KB to about 2 MB depending on the footer budget.
-
-**Expected effect:** cold `one-truck-latest` and `last-loc` from a laptop go from 0.6–0.7 s to about 0.2 s; in-region, to tens of ms. Measured with the v0 suites before it lands (see "How we measure").
+**Still to do:** the TypeScript client and the WASM reader read the head too (the browser's first query gains the most); P2 and P3.
 
 ---
 

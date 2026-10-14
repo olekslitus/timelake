@@ -16,6 +16,7 @@ The engine is one Rust crate (`timelake`) used by the CLI and the Python package
   metadata/
     v1.metadata.json … vN.metadata.json     table metadata, one per commit
     version-hint.text                       "N": the latest version (best-effort pointer)
+    timelake-head                           version N in one object, for Timelake's readers (see Head object)
     snap-<snapshot-id>-<uuid>.avro          manifest lists
     <uuid>-{added|merged|deleted}-m.avro    manifests
     lvi-<snapshot-id>-<uuid>.parquet        last-value index of a snapshot
@@ -28,16 +29,25 @@ This is Iceberg’s Hadoop-catalog convention, which is why DuckDB’s `iceberg_
 
 ## Commit protocol
 
-1. Load the current version: read `version-hint.text`, then read `vN.metadata.json` while checking whether `vN+1` already exists (the hint is written after a commit and may lag).
+1. Load the current version: read the head and `version-hint.text` together, then check whether `vN+1.metadata.json` already exists (both are written after a commit and may lag). Without a head, read `vN.metadata.json` during that check.
 2. Encode data files, a manifest for them, the last-value index, and a new manifest list, then upload them all at once. A large data file’s earlier parts are uploaded while it is written.
 3. Create `vN+1.metadata.json` with put-if-absent. If it already exists, another writer won: delete this attempt’s manifests, reload, and retry on top of the new version (up to 10 attempts, with jittered backoff). Data files are reused across retries.
-4. Overwrite `version-hint.text` with `N+1` in the background. The commit doesn’t wait for it; the CLI and the Python package wait for it before the process exits (`timelake::flush` in Rust).
+4. Overwrite `version-hint.text` with `N+1` and write the new head, in the background. The commit doesn’t wait for them; the CLI and the Python package wait for them before the process exits (`timelake::flush` in Rust).
 
 So a commit waits for two round trips to the store: the uploads, then the conditional write.
 
 Appends carrying a batch id first check whether any retained snapshot already has that id; if so, the append is a no-op and its data files are never uploaded.
 
 Timelake writes its own commits rather than using iceberg-rust’s transaction API, which only supports fast appends. Three operations exist: **append**, **replace** (compaction: remove files, add files with the same rows) and **delete** (retention: remove files). Once a table has more than eight manifests, an append merges the existing ones into one, so planning a scan stays a few reads however many commits the table has seen.
+
+## Head object
+
+Following the Iceberg chain (hint, metadata, manifest list, manifests) takes four requests one after another. After each commit, Timelake also writes `metadata/timelake-head`: the table metadata, the live data files with their column statistics, and the last-value index while it fits in `timelake.head-inline-bytes` (1 MiB). A cold reader gets all of it in one request.
+
+- **A cache, not the commit.** `vN.metadata.json` stays the commit point, so DuckDB, Spark and PyIceberg see no change. The head is written in the background, and only with a conditional write that never replaces a newer head.
+- **Always checked.** A head can be behind for a moment (its write is in flight, or a writer crashed before writing it). The reader checks whether `vN+1.metadata.json` exists while it plans the query, and loads the newest version the slow way if it does. The check is a HEAD request, or a LIST of that exact name on Tigris, where a HEAD of a missing key is slow (storage option `timelake_freshness_check`).
+- **Any format.** The head’s content is a few properties and named Arrow tables (`metadata`, `files`, `columns`, `last_values`). A codec encodes them; the head’s header names the codec, so readers decode any head written by a codec they know. Built in: `arrow` (Arrow IPC with zstd, the default) and `json`. Pick one per table with `timelake.head-format`, or `none` to write no head. Other formats (Avro, Vortex, BSON, …) are a `HeadCodec` registered with `Lake::register_head_codec`.
+- **Fallback.** A table without a head (written by another engine or an older Timelake), or with one in a format the reader doesn’t know, is loaded through the hint and the metadata chain, as fast as before. The next Timelake commit writes a head.
 
 ## Writer
 
@@ -62,6 +72,6 @@ Snapshots older than `timelake.snapshot-retention` are expired, keeping at least
 ## Reader
 
 - A DataFusion catalog maps namespaces to schemas and tables to a Timelake table provider.
-- Before planning, all referenced tables are loaded concurrently. Planning prunes files with DataFusion’s `PruningPredicate` over the Iceberg lower and upper bounds of each file.
+- Before planning, all referenced tables are loaded concurrently, from their heads when they have one. The check for a newer version runs while the query is planned, and the scan waits for it. Planning prunes files with DataFusion’s `PruningPredicate` over the Iceberg lower and upper bounds of each file.
 - Remaining files are spread over scan partitions, footers are prefetched once per file into DataFusion’s metadata cache, and DataFusion’s Parquet scan does row-group and page pruning.
 - An optimizer rule replaces the scan in latest-row query shapes with a scan of the last-value index (see Querying).

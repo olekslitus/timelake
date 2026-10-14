@@ -11,14 +11,19 @@ export const ROADMAP_UPDATED = "October 2026"
 
 export const NOW: RoadmapItem[] = [
   {
-    title: "Faster first queries",
-    description: "Read a table's state in one request instead of six.",
+    title: "Faster first scans",
+    description: "File footers come with the table's state, and connections open while it loads.",
     status: "next",
   },
   {
     title: "Industrial IoT benchmark",
     description: "Timelake against InfluxDB, TimescaleDB, ClickHouse and QuestDB, with the monthly cost of each.",
     status: "next",
+  },
+  {
+    title: "Faster first queries",
+    description: "A table's state is read in one request, so the first query takes about half the time.",
+    status: "done",
   },
   {
     title: "Faster commits",

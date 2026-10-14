@@ -8,7 +8,7 @@
 //!
 //! A commit takes two round trips: every new file (data, manifests, manifest list, last-value
 //! index) is encoded locally and uploaded at once, then the new metadata is written with
-//! put-if-absent. The version hint is updated in the background.
+//! put-if-absent. The version hint and the head are updated in the background.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -28,7 +28,7 @@ use crate::error::{Error, Result};
 use crate::lake::{hint_uri, metadata_uri};
 use crate::storage::Uploads;
 use crate::table::{LiveEntry, Table};
-use crate::{background, lvi, summary};
+use crate::{background, head, lvi, summary};
 
 /// Above this many manifests, an append merges the existing ones into one, keeping scan planning
 /// to a handful of reads no matter how many commits a table has seen.
@@ -160,16 +160,26 @@ fn is_duplicate(base: &Table, change: &Change, props: &HashMap<String, String>) 
 }
 
 /// Commits new table metadata as version N+1. `Ok(None)` if another writer got there first.
-pub(crate) async fn publish(base: &Table, metadata: TableMetadata) -> Result<Option<Table>> {
+/// `files` are the new version's live files, if known without reading its manifests.
+pub(crate) async fn publish(
+    base: &Table,
+    metadata: TableMetadata,
+    files: Option<Arc<Vec<LiveEntry>>>,
+) -> Result<Option<Table>> {
     let storage = base.lake().storage();
     let version = base.version() + 1;
     let bytes = Bytes::from(serde_json::to_vec(&metadata)?);
     if !storage.write_if_absent(&metadata_uri(base.location(), version), bytes).await? {
         return Ok(None);
     }
-    let table = Table::new(base.lake().clone(), base.name().clone(), base.location().to_string(), version, metadata)?;
+    let mut table =
+        Table::new(base.lake().clone(), base.name().clone(), base.location().to_string(), version, metadata)?;
+    if let Some(files) = files {
+        table = table.with_files(files);
+    }
     base.lake().remember(&table);
     update_hint(&table);
+    head::update(&table);
     Ok(Some(table))
 }
 
@@ -181,7 +191,7 @@ fn update_hint(table: &Table) {
     let uri = hint_uri(table.location());
     background::spawn(async move {
         // A newer commit from this process writes its own hint.
-        if lake.caches().tables.get(&name).is_some_and(|(_, t)| t.version() > version) {
+        if lake.has_newer(&name, version) {
             return;
         }
         let _ = lake.storage().write(&uri, Bytes::from(version.to_string())).await;
@@ -279,7 +289,8 @@ impl<'a> SnapshotWriter<'a> {
             .set_branch_snapshot(snapshot, "main")?
             .build()?
             .metadata;
-        let Some(table) = publish(self.base, new_metadata).await? else { return Ok(Attempt::Lost) };
+        let files = self.next_files();
+        let Some(table) = publish(self.base, new_metadata, files).await? else { return Ok(Attempt::Lost) };
 
         // Prime the caches with what this commit wrote, so the next commit and inline maintenance
         // don't read it back from object storage.
@@ -307,6 +318,26 @@ impl<'a> SnapshotWriter<'a> {
         self.written.lock().unwrap_or_else(PoisonError::into_inner).push(uri.to_string());
     }
 
+    /// A file this commit adds, as its manifest entry.
+    fn added_entry(&self, file: &DataFile) -> LiveEntry {
+        LiveEntry {
+            status: ManifestStatus::Added,
+            data_file: Arc::new(file.clone()),
+            snapshot_id: self.snapshot_id,
+            sequence_number: self.sequence_number,
+            file_sequence_number: self.sequence_number,
+        }
+    }
+
+    /// The new snapshot's live files, when the base's are known without reading manifests.
+    fn next_files(&self) -> Option<Arc<Vec<LiveEntry>>> {
+        let base = self.base.known_files()?;
+        let removed: HashSet<&str> = self.change.removed().iter().map(|e| e.data_file.file_path()).collect();
+        let mut files: Vec<LiveEntry> = self.change.added().iter().map(|f| self.added_entry(f)).collect();
+        files.extend(base.iter().filter(|e| !removed.contains(e.data_file.file_path())).cloned());
+        Some(Arc::new(files))
+    }
+
     fn manifest_writer(&self, kind: &str) -> (String, ManifestWriter) {
         let uri = format!("{}/metadata/{}-{kind}-m.avro", self.base.location(), uuid::Uuid::new_v4());
         self.track(&uri);
@@ -331,13 +362,7 @@ impl<'a> SnapshotWriter<'a> {
             let mut entries = Vec::with_capacity(added.len());
             for f in added {
                 w.add_file(f.clone(), UNASSIGNED_SEQUENCE_NUMBER)?;
-                entries.push(LiveEntry {
-                    status: ManifestStatus::Added,
-                    data_file: Arc::new(f.clone()),
-                    snapshot_id: self.snapshot_id,
-                    sequence_number: self.sequence_number,
-                    file_sequence_number: self.sequence_number,
-                });
+                entries.push(self.added_entry(f));
             }
             out.new.push(w.write_manifest_file().await?);
             out.entries.push((uri, entries));
@@ -556,6 +581,7 @@ mod tests {
     async fn gives_up_after_max_attempts() {
         let (lake, store) = faulty_lake();
         let t = lake.create_table("iot.r", &schema(), opts()).await.unwrap();
+        crate::flush().await;
         let before = store.paths().await;
 
         store.fail(Op::LoseCreate, ".metadata.json");

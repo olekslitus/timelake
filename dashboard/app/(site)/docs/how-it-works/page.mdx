@@ -50,12 +50,13 @@ warehouse/
       v1.metadata.json                    version 1: the empty table (schema, settings)
       v2.metadata.json                    version 2: the table after the append
       version-hint.text                   "2": which version is current
+      timelake-head                       version 2 in one file, for Timelake's own readers
       snap-2566…-….avro                   manifest list: the manifests of version 2
       7e01002d-…-added-m.avro             manifest: the data files, with row counts and min/max values
       lvi-2566…-….parquet                 last-value index: newest row per device
 ```
 
-The `metadata/` folder is standard Iceberg. Reading a table means following a chain: `version-hint.text` → `v2.metadata.json` → manifest list → manifests → data files.
+The `metadata/` folder is standard Iceberg. Reading a table means following a chain: `version-hint.text` → `v2.metadata.json` → manifest list → manifests → data files. That is four requests before any data. Timelake also writes `timelake-head`, which holds what the chain leads to, so its readers need one request (and a quick check that no newer version exists).
 
 ## 3. Two writers at the same time
 

@@ -185,7 +185,7 @@ pub(crate) async fn write_partition(
         .collect()
 }
 
-fn partition_struct(v: Option<i32>) -> Struct {
+pub(crate) fn partition_struct(v: Option<i32>) -> Struct {
     match v {
         Some(v) => Struct::from_iter([Some(Literal::int(v))]),
         None => Struct::empty(),
