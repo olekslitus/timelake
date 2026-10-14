@@ -300,7 +300,7 @@ impl Lake {
     }
 
     /// The newest committed version, listed, or else (on stores that can't list, or with
-    /// `timelake_requests=cheap`) the version hint.
+    /// `timelake_version_lookup=hint`) the version hint.
     async fn newest_version(&self, location: &str, hint_uri: &str) -> Result<Newest> {
         if self.storage().list_on_load()
             && let Some(listed) = self.storage().list_prefix(&format!("{location}/metadata/v")).await?

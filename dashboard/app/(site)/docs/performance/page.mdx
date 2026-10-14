@@ -32,7 +32,7 @@ Altogether, the first `latest` query on S3 went from about 510 ms to 240 ms, and
 “Before” here is the same table without a head, read by the same code.
 
 - **Tried and turned off:** opening a few connections ahead of the data reads. It saved at most about 20 ms on scans and nothing on point queries, and it costs requests, so it is off by default (`timelake_warm_connections`).
-- **Cost option:** `timelake_requests=cheap` reads the version hint instead of listing. A first query takes one more round trip (about 60 ms on S3: `latest` 305 ms) and avoids the LIST. See [Requests and cost](/docs/storage#requests-and-cost).
+- **Cost option:** `timelake_version_lookup=hint` reads the version hint instead of listing. A first query takes one more round trip (about 60 ms on S3: `latest` 305 ms) and avoids the LIST. See [Requests and cost](/docs/storage#request-options-trade-offs).
 
 ## Table state in one object (2026-10-14)
 

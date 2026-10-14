@@ -1022,7 +1022,7 @@ Open from v0:
 
 **P3, warm connections.** While the head GET and the listing are in flight, a cold load sends a few small HEAD requests (on the version hint), so the data reads that follow find open connections. Storage option `timelake_warm_connections`. Measured on S3 and Tigris: at most about 20 ms off cold scans, nothing on point queries, so it is off by default.
 
-**Cost option.** `timelake_requests=cheap` makes a cold load read the version hint instead of listing (one more round trip, no LIST) and keeps the check on HEAD everywhere. Requests per operation and their prices are documented in the storage docs ("Requests and cost").
+**Cost option.** `timelake_version_lookup=hint` makes a cold load read the version hint instead of listing (one more round trip, no LIST). Options are named for the request they change, not for an outcome ("cheap"), so the trade-off is visible; the docs explain each one and why its default was chosen. Requests per operation and their prices are documented in the storage docs ("Requests and cost").
 
 **TypeScript client and WASM reader.** The client GETs the head and the hint together; the WASM reader decodes heads written with the built-in codecs (the codecs and header live in `timelake-format` under its `head` feature, shared with the engine). A HEAD for `vN+1` runs alongside the query's data reads; if a newer version exists, the result is dropped and the query reruns on the metadata chain from `vN+1`. `latest` answers from the inline index without a request, and scans open files from inline footers.
 

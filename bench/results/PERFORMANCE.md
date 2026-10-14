@@ -29,7 +29,7 @@ three batches alternating between setups; median of 15 first runs in a fresh `La
 **S3 us-east-2, cold queries only** (same method, on a warehouse written by a full run of this code; "no head" is the
 P1 run written with `--head-format none`):
 
-| First query | No head | Head + footers | + 4 warm-up connections | `timelake_requests=cheap` |
+| First query | No head | Head + footers | + 4 warm-up connections | `timelake_version_lookup=hint` |
 |---|---:|---:|---:|---:|
 | `one-truck-latest` | 509 | 240 | 245 | 305 |
 | `last-loc` | 601 | 313 | 329 | 366 |
@@ -38,7 +38,7 @@ P1 run written with `--head-format none`):
 
 P1 alone measured 318 / 446 / 1,052 / 714 ms on Tigris (one run each, below). Opening connections early saves at most
 about 20 ms on the scans and nothing on point queries, within noise on S3; it costs 4 HEAD requests per cold load, so
-it is off by default (`timelake_warm_connections=4` turns it on). `cheap` costs about one round trip (60 ms on S3) per
+it is off by default (`timelake_warm_connections=4` turns it on). `hint` costs about one round trip (60 ms on S3) per
 cold load and avoids the LIST. Queries-only runs read but don't write, so they are cheap to repeat on a free tier.
 
 ## P1: one-request table state (2026-10-14)

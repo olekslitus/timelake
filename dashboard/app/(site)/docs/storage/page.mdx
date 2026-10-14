@@ -28,9 +28,9 @@ Timelake’s own options work with every backend:
 
 | Key | Meaning |
 | --- | --- |
-| `timelake_freshness_check` | How a reader that already has a table version checks for a newer one: `head` (a HEAD request; the default) or `list` (a LIST of the exact name; the default on Tigris, where a HEAD of a missing key takes about 285 ms). `list` needs S3, GCS or Azure. |
-| `timelake_requests` | `fast` (the default) or `cheap`: fewer, cheaper requests for slower first queries. See [Requests and cost](#requests-and-cost). |
-| `timelake_warm_connections` | Connections a first table load opens ahead of the data reads, with small HEAD requests. Off (`0`) by default: it measured at most about 20 ms faster. |
+| `timelake_version_lookup` | How a table’s first load in a process finds the newest version: `list` (one LIST of `metadata/v…`, sent with the head GET) or `hint` (GET `version-hint.text` with the head, then a HEAD of the next version). Default `list` where the store can list by prefix. See [trade-offs](#request-options-trade-offs). |
+| `timelake_freshness_check` | How a reader that already has a table version checks for a newer one: `head` (a HEAD of the next metadata file) or `list` (a LIST of that exact name). Default `head`; `list` on Tigris. `list` needs S3, GCS or Azure. |
+| `timelake_warm_connections` | How many connections a table’s first load opens ahead of the data reads, with small HEAD requests. Default `0`. |
 | `timelake_local_root` | Write objects under a local directory (see below). |
 
 ```bash
@@ -74,16 +74,34 @@ So about 7 PUTs and 2 GETs: at one append per second, about $3 a day on S3. Each
 
 **Reading.** What a query sends before it reads data:
 
-| Situation | `fast` (default) | `cheap` |
+| Situation | Requests | Round trips |
 | --- | --- | --- |
-| First query on a table in this process | 1 GET (head) + 1 LIST | 2 GETs (head, version hint) + 1 HEAD; one more round trip |
-| Later queries (after 1 s) | 1 HEAD (a LIST on Tigris) | 1 HEAD |
-| Plain HTTPS (can’t list) | 2 GETs + 1 HEAD | same |
-| Table without a head | + GETs of the metadata, manifest list and manifests | same |
+| First query on a table in this process, `timelake_version_lookup=list` (default) | 1 GET (head) + 1 LIST | 1 |
+| First query, `timelake_version_lookup=hint`, or plain HTTPS (can’t list) | 2 GETs (head, version hint) + 1 HEAD | 2 |
+| Later queries (after 1 s) | 1 HEAD (a LIST with `timelake_freshness_check=list`) | 1, while the query is planned |
+| Table without a head | + GETs of the metadata, manifest list and manifests | + 2 |
 
 Then each query reads its data: one GET per byte range, a few per file, and none for footers the head carried. A dashboard that refreshes one table every 5 seconds sends about 17,000 checks a day plus its data reads: a few cents a day on S3.
 
-`timelake_requests=cheap` saves the LIST of a first load (a LIST costs about 12 GETs) at the price of one round trip, about 60 ms from a laptop to S3. It pays off for many short-lived processes that each read a table once, such as serverless functions. `timelake_freshness_check=head` keeps Tigris on HEAD checks, which are cheaper there but slow when the next version doesn’t exist (about 285 ms).
+### Request options: trade-offs
+
+**`timelake_version_lookup`: `list` or `hint`.** A first load has to learn the newest version, because the head and the version hint are written after a commit and can be behind.
+
+- `list` sends one LIST of `metadata/v…` together with the head GET. The listing names every committed version, so the head is confirmed or skipped in the same round trip. Cost: a LIST is priced like a PUT on S3, about 12 GETs.
+- `hint` GETs the version hint with the head, then sends a HEAD for the next version. No LIST, but one more round trip: about 60 ms from a laptop to S3 (first `latest` 305 ms instead of 240).
+- **Why `list` is the default:** a first load happens once per table per process, so the LIST adds a fraction of a cent per thousand processes, while the round trip it saves is on every first query. Choose `hint` when very many short-lived processes each read a table once (serverless functions polling many tables) and request cost matters more than 60 ms.
+
+**`timelake_freshness_check`: `head` or `list`.** A process that already has a table checks for a newer version on later queries.
+
+- `head` sends a HEAD for the next metadata file. It is the cheapest request on most stores and fast when the answer is “not found” (about 55 ms on S3).
+- `list` lists that exact name. It costs about 12× a HEAD on S3, but on Tigris a HEAD of a missing key takes about 285 ms and the LIST about 40 ms.
+- **Why the default is per store:** `head` everywhere, except Tigris, where `list` is about 245 ms faster on every check. Set `head` on Tigris to pay less per check and wait longer.
+
+**`timelake_warm_connections`.** Opens connections early so data reads don’t wait for TCP and TLS setup.
+
+- **Why it is off:** measured on S3 and Tigris, it saved at most about 20 ms on first scans and nothing on point queries, and each connection costs a HEAD request. Try it if your client is far from the store.
+
+**`timelake.head-format=none`** (a table property, for writers). No head: 1 PUT and 2 GETs fewer per commit, and first queries fall back to the metadata chain (3 round trips instead of 1 for `latest`).
 
 ## Conditional writes are required
 

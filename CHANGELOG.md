@@ -41,7 +41,7 @@ Nothing has been released yet. This section describes what is on `main`.
   head too and checks for a newer version while its query runs (`TableInfo.manifests` is `null` for a table read from
   its head). Other engines see no change. New table properties `timelake.head-format` (`arrow`, `json`, a codec
   registered with `Lake::register_head_codec`, or `none`) and `timelake.head-inline-bytes`; new storage options
-  `timelake_requests` (`fast` or `cheap`: no LIST, one more round trip), `timelake_freshness_check` (`head` or `list`,
+  `timelake_version_lookup` (`list` or `hint`: no LIST, one more round trip), `timelake_freshness_check` (`head` or `list`,
   `list` by default on Tigris) and `timelake_warm_connections` (off by default). The requests each operation makes,
   and what they cost, are in the storage docs. If you write a table with an older Timelake after this one, delete its
   `metadata/timelake-head`.

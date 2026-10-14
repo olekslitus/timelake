@@ -403,7 +403,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::testing::{FaultyStore, Op, T0, batch, faulty_lake, opts, reopen, reopen_cheap, schema};
+    use crate::testing::{FaultyStore, Op, T0, batch, faulty_lake, opts, reopen, reopen_hint_lookup, schema};
     use crate::{AppendOptions, Session, TableOptions, property};
 
     fn no_maintenance() -> AppendOptions {
@@ -492,9 +492,9 @@ mod tests {
         let scan = Some("SELECT value FROM iot.r WHERE device = 2");
         assert_eq!(cold_round_trips("arrow", None).await, 1);
         assert_eq!(cold_round_trips("arrow", scan).await, 2);
-        // `timelake_requests=cheap`: the version hint instead of a listing, then the check.
-        assert_eq!(cold_round_trips_with("arrow", None, reopen_cheap).await, 2);
-        assert_eq!(cold_round_trips_with("arrow", scan, reopen_cheap).await, 3);
+        // `timelake_version_lookup=hint`: the version hint instead of a listing, then the check.
+        assert_eq!(cold_round_trips_with("arrow", None, reopen_hint_lookup).await, 2);
+        assert_eq!(cold_round_trips_with("arrow", scan, reopen_hint_lookup).await, 3);
         assert_eq!(cold_round_trips("none", None).await, 3);
         assert_eq!(cold_round_trips("none", scan).await, 6);
     }

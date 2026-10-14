@@ -67,11 +67,11 @@ pub const LOCAL_ROOT_OPTION: &str = "timelake_local_root";
 /// `head` or `list` (see [`Storage::open`]).
 pub const FRESHNESS_CHECK_OPTION: &str = "timelake_freshness_check";
 
-/// Storage option trading speed for fewer, cheaper requests: `fast` (the default) or `cheap`.
-/// `cheap` makes a cold table load read the version hint instead of listing the metadata files
-/// (one more round trip, no LIST) and checks for newer versions with HEAD requests even on Tigris.
-/// [`FRESHNESS_CHECK_OPTION`] overrides the second.
-pub const REQUESTS_OPTION: &str = "timelake_requests";
+/// Storage option choosing how a table's first load in a process finds the newest version:
+/// `list` (the default on stores that list by prefix: one LIST of `metadata/v`, sent together with
+/// the head GET, so a current head is confirmed in the same round trip) or `hint` (GET the version
+/// hint with the head, then check for the next version: no LIST, one more round trip).
+pub const VERSION_LOOKUP_OPTION: &str = "timelake_version_lookup";
 
 /// Storage option setting how many connections a cold table load opens ahead of the data reads,
 /// with small HEAD requests (P3). Off by default: measured on S3 and Tigris it saved at most
@@ -118,14 +118,14 @@ impl Storage {
                 return Err(Error::config(format!("{FRESHNESS_CHECK_OPTION} must be head or list, got {other:?}")));
             }
         };
-        let cheap = match options.remove(REQUESTS_OPTION).as_deref().map(str::to_ascii_lowercase).as_deref() {
-            None | Some("fast") => false,
-            Some("cheap") => true,
-            Some(other) => {
-                return Err(Error::config(format!("{REQUESTS_OPTION} must be fast or cheap, got {other:?}")));
-            }
-        };
-        let check = check.or(cheap.then_some(false));
+        let list_on_load =
+            match options.remove(VERSION_LOOKUP_OPTION).as_deref().map(str::to_ascii_lowercase).as_deref() {
+                None | Some("list") => true,
+                Some("hint") => false,
+                Some(other) => {
+                    return Err(Error::config(format!("{VERSION_LOOKUP_OPTION} must be list or hint, got {other:?}")));
+                }
+            };
         let warm_connections = match options.remove(WARM_CONNECTIONS_OPTION) {
             Some(n) => n.trim().parse().map_err(|_| {
                 Error::config(format!("{WARM_CONNECTIONS_OPTION} must be a non-negative integer, got {n:?}"))
@@ -209,7 +209,7 @@ impl Storage {
             _ => FreshnessCheck::Head,
         };
         storage.lister = lister.map(|(l, _)| Lister(l));
-        storage.list_on_load = !cheap;
+        storage.list_on_load = list_on_load;
         if scheme != "file" && scheme != "memory" {
             storage.warm_connections = warm_connections;
         }
@@ -236,14 +236,14 @@ impl Storage {
         Self::new(store, base.to_string(), true).unwrap()
     }
 
-    /// This store as `timelake_requests=cheap` would open it.
+    /// This store as `timelake_version_lookup=hint` would open it.
     #[cfg(test)]
-    pub(crate) fn cheap(mut self) -> Self {
+    pub(crate) fn hint_lookup(mut self) -> Self {
         self.list_on_load = false;
         self
     }
 
-    /// Whether a cold table load lists the metadata files (see [`REQUESTS_OPTION`]).
+    /// Whether a cold table load lists the metadata files (see [`VERSION_LOOKUP_OPTION`]).
     pub(crate) fn list_on_load(&self) -> bool {
         self.list_on_load
     }
@@ -775,13 +775,13 @@ mod tests {
         assert!(open("memory://", "list").is_err(), "memory can't list a name");
         assert!(open("s3://b", "maybe").is_err());
 
-        let tigris_cheap = HashMap::from([
+        let tigris_hint = HashMap::from([
             ("aws_endpoint".to_string(), "https://t3.storage.dev".to_string()),
             ("aws_region".to_string(), "auto".to_string()),
-            (REQUESTS_OPTION.to_string(), "cheap".to_string()),
+            (VERSION_LOOKUP_OPTION.to_string(), "hint".to_string()),
         ]);
-        let s = Storage::open(&Url::parse("s3://b").unwrap(), tigris_cheap).unwrap();
-        assert_eq!((s.check, s.warm_connections, s.list_on_load), (FreshnessCheck::Head, 0, false));
+        let s = Storage::open(&Url::parse("s3://b").unwrap(), tigris_hint).unwrap();
+        assert_eq!((s.check, s.list_on_load), (FreshnessCheck::List, false));
         let fast = Storage::open(&Url::parse("s3://b").unwrap(), HashMap::from([("aws_region".into(), "x".into())]));
         let fast = fast.unwrap();
         assert_eq!((fast.warm_connections, fast.list_on_load), (0, true));
