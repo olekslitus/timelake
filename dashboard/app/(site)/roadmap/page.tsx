@@ -67,7 +67,8 @@ export default function RoadmapPage() {
       <section className="max-w-3xl space-y-4 border-t pt-10">
         <h2 className="text-xl font-medium tracking-tight">Build it with us</h2>
         <p className="text-muted-foreground">
-          Missing something you need, or want to help? Open an issue, or read the design behind each item.
+          Missing something you need, or want to help? Open an issue, read the design behind each item, or see how to
+          contribute.
         </p>
         <div className="flex flex-wrap gap-3">
           <Button nativeButton={false} render={<a href={`${REPO_URL}/issues/new`} target="_blank" rel="noreferrer" />}>
@@ -80,6 +81,9 @@ export default function RoadmapPage() {
             render={<a href={`${REPO_URL}/blob/main/SPEC.md`} target="_blank" rel="noreferrer" />}
           >
             Read the design
+          </Button>
+          <Button variant="outline" nativeButton={false} render={<Link href="/contribute" />}>
+            How to contribute
           </Button>
           <Button variant="outline" nativeButton={false} render={<Link href="/docs/changelog" />}>
             Changelog

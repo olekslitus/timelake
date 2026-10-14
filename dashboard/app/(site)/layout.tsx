@@ -25,6 +25,10 @@ export default function SiteLayout({ children }: LayoutProps<"/">) {
                 Apache 2.0
               </a>{" "}
               ·{" "}
+              <Link href="/contribute" className="hover:text-foreground">
+                Contribute
+              </Link>{" "}
+              ·{" "}
               <a href={REPO_URL} className="hover:text-foreground">
                 GitHub
               </a>

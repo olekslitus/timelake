@@ -19,11 +19,12 @@ const LINKS = [
   { href: "/benchmarks", label: "Benchmarks" },
   { href: "/explore", label: "Explorer" },
   { href: "/roadmap", label: "Roadmap" },
+  { href: "/contribute", label: "Contribute" },
 ]
 
 function NavLinks({ pathname }: { pathname: string | null }) {
   return (
-    <nav className="hidden items-center gap-1 sm:flex">
+    <nav className="hidden items-center gap-1 md:flex">
       {LINKS.map((l) => (
         <Link
           key={l.href}
@@ -66,7 +67,7 @@ export function SiteHeader() {
         </Button>
         <ThemeToggle />
         <Sheet>
-          <SheetTrigger render={<Button variant="ghost" size="icon" className="sm:hidden" aria-label="Open menu" />}>
+          <SheetTrigger render={<Button variant="ghost" size="icon" className="md:hidden" aria-label="Open menu" />}>
             <Menu className="size-4" />
           </SheetTrigger>
           <SheetContent side="left" className="w-72 overflow-y-auto">
