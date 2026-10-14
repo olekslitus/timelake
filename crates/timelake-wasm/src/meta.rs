@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use apache_avro::types::Value;
 use serde::{Deserialize, Serialize};
 use timelake_format::bounds::{Bound, decode};
-use timelake_format::{Contract, S_LVI};
+use timelake_format::{Contract, summary};
 
 use crate::Error;
 
@@ -134,7 +134,7 @@ pub fn parse_table_metadata(json: &str) -> Result<TableMeta, Error> {
         dedup: contract.dedup,
         properties: raw.properties,
         manifest_list: current.map(|s| s.manifest_list.clone()),
-        last_value_index: current.and_then(|s| s.summary.get(S_LVI).cloned()),
+        last_value_index: current.and_then(|s| s.summary.get(summary::LAST_VALUE_INDEX).cloned()),
         current_snapshot,
         snapshot_count: raw.snapshots.len(),
         snapshots: {

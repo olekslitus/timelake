@@ -116,9 +116,9 @@ impl Lake {
         let opts = TableOptions {
             time_column,
             series_key: series_key.unwrap_or_default(),
-            chunk: chunk.as_deref().map(Chunk::parse).transpose().map_err(|e| to_py(e.into()))?,
+            chunk: chunk.as_deref().map(str::parse::<Chunk>).transpose().map_err(|e| to_py(e.into()))?,
             dedup,
-            retention,
+            retention: retention.as_deref().map(timelake::parse_duration).transpose().map_err(|e| to_py(e.into()))?,
             properties: properties.unwrap_or_default(),
         };
         let lake = self.inner.clone();
@@ -198,17 +198,17 @@ impl Table {
 impl Table {
     #[getter]
     fn name(&self) -> String {
-        self.get().name.to_string()
+        self.get().name().to_string()
     }
 
     #[getter]
     fn location(&self) -> String {
-        self.get().location
+        self.get().location().to_string()
     }
 
     #[getter]
     fn version(&self) -> u64 {
-        self.get().version
+        self.get().version()
     }
 
     /// The table's pyarrow schema.
@@ -236,12 +236,14 @@ impl Table {
         d.set_item("rows", r.rows)?;
         d.set_item("files", r.files)?;
         d.set_item("bytes", r.bytes)?;
-        d.set_item("version", t.version)?;
+        d.set_item("version", t.version())?;
         d.set_item("commit_ms", r.commit.duration.as_secs_f64() * 1000.0)?;
         d.set_item("attempts", r.commit.attempts)?;
         d.set_item("duplicate", r.commit.duplicate)?;
-        if let Some(m) = r.maintenance {
-            d.set_item("maintenance", report(py, &m)?)?;
+        match &r.maintenance {
+            Some(Ok(m)) => d.set_item("maintenance", report(py, m)?)?,
+            Some(Err(e)) => d.set_item("maintenance_error", e.to_string())?,
+            None => {}
         }
         Ok(d)
     }
@@ -275,11 +277,11 @@ impl Table {
         let t = self.get();
         let t2 = t.clone();
         let (files, manifests) = run(py, async move { Ok((t2.files().await?, t2.manifests().await?.len())) })?;
-        let c = &t.contract;
+        let c = t.contract();
         let d = PyDict::new(py);
-        d.set_item("name", t.name.to_string())?;
-        d.set_item("version", t.version)?;
-        d.set_item("location", &t.location)?;
+        d.set_item("name", t.name().to_string())?;
+        d.set_item("version", t.version())?;
+        d.set_item("location", t.location())?;
         d.set_item("time_column", &c.time_column)?;
         d.set_item("series_key", &c.series_key)?;
         d.set_item("chunk", c.chunk.map(|c| c.as_str()))?;
@@ -287,7 +289,7 @@ impl Table {
         d.set_item("rows", files.iter().map(|f| f.data_file.record_count()).sum::<u64>())?;
         d.set_item("files", files.len())?;
         d.set_item("bytes", files.iter().map(|f| f.data_file.file_size_in_bytes()).sum::<u64>())?;
-        d.set_item("snapshots", t.metadata.snapshots().len())?;
+        d.set_item("snapshots", t.metadata().snapshots().len())?;
         d.set_item("manifests", manifests)?;
         d.set_item("last_value_index", t.last_value_index())?;
         Ok(d)
@@ -295,7 +297,7 @@ impl Table {
 
     fn __repr__(&self) -> String {
         let t = self.get();
-        format!("Table({}, v{})", t.name, t.version)
+        format!("Table({}, v{})", t.name(), t.version())
     }
 }
 
