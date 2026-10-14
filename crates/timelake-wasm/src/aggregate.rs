@@ -117,7 +117,7 @@ impl Aggregator {
         for row in (0..batch.num_rows()).filter(|&r| time.is_valid(r)) {
             let t = time.value(row);
             key.clear();
-            key.extend_from_slice(&bucket_bytes(bucket_start(t, self.spec.every, self.spec.origin)));
+            key.extend_from_slice(&bucket_bytes(bucket_start(t, self.spec.every, self.spec.origin.unwrap_or(0))));
             if let Some(by) = &by {
                 key.extend_from_slice(by.row(row).data());
             }

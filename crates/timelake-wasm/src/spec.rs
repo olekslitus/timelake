@@ -35,9 +35,8 @@ pub struct QuerySpec {
 pub struct BucketSpec {
     /// Bucket width in microseconds.
     pub every: i64,
-    /// A bucket boundary, in microseconds since the epoch.
-    #[serde(default)]
-    pub origin: i64,
+    /// A bucket boundary, in microseconds since the epoch (default 0, the epoch itself).
+    pub origin: Option<i64>,
     /// Extra group-by columns (typically the series key).
     #[serde(default)]
     pub by: Vec<String>,

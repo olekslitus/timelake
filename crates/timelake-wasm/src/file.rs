@@ -22,7 +22,7 @@ pub const COALESCE_GAP: u64 = 64 * 1024;
 /// Rows per decoded batch.
 const BATCH_ROWS: usize = 64 * 1024;
 /// The footer ends with a 4-byte metadata length and the `PAR1` magic.
-const FOOTER_TRAILER: u64 = 8;
+const FOOTER_TRAILER: usize = 8;
 
 /// The fetched parts of a file, as a sparse file the Parquet reader can read from.
 #[derive(Debug, Clone, Default)]
@@ -74,7 +74,7 @@ pub fn footer_len(tail: &[u8]) -> Result<u64> {
     let [.., l0, l1, l2, l3, b'P', b'A', b'R', b'1'] = *tail else {
         return Err(Error::invalid("not a Parquet file"));
     };
-    Ok(u64::from(u32::from_le_bytes([l0, l1, l2, l3])) + FOOTER_TRAILER)
+    Ok(u64::from(u32::from_le_bytes([l0, l1, l2, l3])) + FOOTER_TRAILER as u64)
 }
 
 /// Sorts ranges and merges those less than `gap` bytes apart.
@@ -105,11 +105,12 @@ impl FileReader {
     /// Opens a file of `size` bytes; `tail` must hold at least the last [`footer_len`] bytes.
     pub fn new(size: u64, tail: &[u8]) -> Result<Self> {
         let need = footer_len(tail)?;
-        let footer_start = (tail.len() as u64)
-            .checked_sub(need)
+        let metadata = usize::try_from(need)
+            .ok()
+            .and_then(|need| tail.len().checked_sub(need))
+            .map(|start| &tail[start..tail.len() - FOOTER_TRAILER])
             .ok_or_else(|| Error::invalid(format!("need the last {need} bytes for the footer")))?;
-        let footer_start = usize::try_from(footer_start).map_err(|_| Error::invalid("footer too large"))?;
-        let meta = Arc::new(ParquetMetaDataReader::decode_metadata(&tail[footer_start..tail.len() - 8])?);
+        let meta = Arc::new(ParquetMetaDataReader::decode_metadata(metadata)?);
         let reader_meta = ArrowReaderMetadata::try_new(meta.clone(), ArrowReaderOptions::new())?;
         Ok(Self {
             data: SparseFile { len: size, chunks: BTreeMap::new() },
