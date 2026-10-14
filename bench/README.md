@@ -15,7 +15,7 @@ uv sync                                                    # at the repo root: P
 (cd rust-reader && cargo build --release)                  # DataFusion 55 + Vortex reader (engines datafusion-rs*)
 GOBIN=$PWD/.bin go install github.com/timescale/tsbs/cmd/tsbs_generate_data@latest
 ```
-Run Python from anywhere in the repo with `uv run python …`; it uses the root `.venv`.
+Run Python from anywhere in the repo with `uv run python …`; it uses the root `.venv`. The scripts share `benchlib/` (paths, S3 settings per client, query loading, result records), which `uv sync` installs. Tests: `uv run pytest bench/tests`.
 
 ## Data
 Generated locally into `bench/data/` (git-ignored, several GB). Same generators and seeds everywhere:
@@ -26,7 +26,7 @@ Generated locally into `bench/data/` (git-ignored, several GB). Same generators 
 uv run python scripts/to_vortex.py          # Vortex copies
 uv run python scripts/tsbs_to_iceberg.py    # Iceberg copy (PyIceberg); add "s3" to write it through the proxy
 ```
-TPC-H SF10 and the ClickBench 10% subset are generated as in `infra/remote.sh` (`data`).
+TPC-H SF10 comes from `uv run python scripts/tpch_to_parquet.py data/tpch`; the ClickBench 10% subset is downloaded as in `infra/remote.sh` (`data`).
 
 | Suite | Data | Queries |
 |---|---|---|
