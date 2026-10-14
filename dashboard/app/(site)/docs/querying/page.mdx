@@ -1,0 +1,81 @@
+export const metadata = { title: "Querying" }
+
+# Querying
+
+The Timelake reader is Apache DataFusion with a Timelake table provider. You write standard SQL (DataFusion’s dialect); tables are addressed as `namespace.table` and always read at their latest committed version.
+
+## Time buckets
+
+`time_bucket(interval, ts [, origin])` groups rows into fixed time windows, like TimescaleDB's function of the same name. It is DataFusion's `date_bin` under another name: buckets are aligned to the Unix epoch (1970-01-01) unless you pass an origin. TimescaleDB aligns weekly buckets to Monday 2000-01-03, so for weeks pass that origin to get the same buckets.
+
+```sql
+SELECT device_id, time_bucket(INTERVAL '5 minutes', time) AS bucket, avg(temp), max(temp)
+FROM iot.readings
+WHERE time >= now() - INTERVAL '1 day'
+GROUP BY 1, 2
+```
+
+## What the reader accelerates
+
+### Time and series filters
+
+Filters are evaluated against each file’s Iceberg column bounds before any data is read, so a time range or a series key value skips whole files. Inside the sorted Parquet files, row-group statistics and page indexes skip the rest.
+
+### Latest row per series
+
+This query shape is rewritten to read the last-value index instead of scanning the table:
+
+```sql
+SELECT * FROM (
+  SELECT *, ROW_NUMBER() OVER (PARTITION BY device_id ORDER BY time DESC) AS rn
+  FROM iot.readings
+) WHERE rn = 1
+```
+
+The `PARTITION BY` columns must be exactly the series key and the ordering must be the time column descending. Other predicates combined with `rn = 1` are applied to the latest rows, as the SQL means.
+
+### Latest row matching a series filter
+
+```sql
+SELECT * FROM iot.readings WHERE device_id = 'pump-7' ORDER BY time DESC LIMIT 1
+```
+
+Rewritten to the index when the table has a series key, the filters (if any) reference only series key columns, and the limit is 1. Without a filter it returns the newest row of the whole table. A filter on any other column (for example `temp > 80`) keeps the normal scan, because the latest matching row may not be the latest row.
+
+Both rewrites need a last-value index, which every append maintains (a table whose first rows were written by another tool has none, and these queries scan). Check with `EXPLAIN`: a rewritten query reads an in-memory source instead of Parquet files:
+
+```console
+$ timelake sql "EXPLAIN SELECT * FROM iot.readings WHERE device_id = 'pump-1' ORDER BY time DESC LIMIT 1"
+…
+| physical_plan | SortExec: TopK(fetch=1), expr=[time@0 DESC], preserve_partitioning=[false] |
+|               |   FilterExec: device_id@1 = pump-1                                         |
+|               |     DataSourceExec: partitions=1, partition_sizes=[1]                      |
+```
+
+`partition_sizes` means an in-memory source (the index). A normal scan shows `file_groups` and Parquet files instead.
+
+### Object storage
+
+Before planning, the reader loads every table a query references concurrently (version hint, metadata, manifests, last-value index), and it reads each Parquet footer once. On remote stores it uses more scan partitions than cores (4× cores, at least 32) because the work is latency-bound. Table versions loaded for planning are reused for one second within a process; the process’s own commits are always visible immediately.
+
+## Joins with plain tables
+
+```sql
+SELECT d.site, avg(r.temp)
+FROM iot.readings r JOIN iot.devices d USING (device_id)
+WHERE r.time >= TIMESTAMP '2026-01-03 00:00:00'
+GROUP BY 1
+```
+
+## Reading with DuckDB
+
+Timelake tables follow Iceberg’s Hadoop-catalog layout, so DuckDB’s iceberg extension reads a table directory directly. It sees committed data and none of the reader’s rewrites.
+
+```sql
+INSTALL iceberg; LOAD iceberg;
+SELECT * FROM iceberg_scan('s3://my-bucket/lake/iot/readings');
+-- the last-value index is plain Parquet; timelake duckdb <table> prints its current location
+SELECT * FROM read_parquet('s3://my-bucket/lake/iot/readings/metadata/lvi-….parquet');
+```
+
+Duplicates written since the last compaction are visible to DuckDB until compaction removes them; the Timelake reader sees the same rows.

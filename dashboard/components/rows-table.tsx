@@ -2,12 +2,16 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { formatValue } from "@/lib/format"
 import type { Row } from "@/lib/lake/types"
 
+/** Rows sampled to decide whether a column is numeric (right-aligned). */
+const TYPE_SAMPLE = 50
+
 /** A generic table for query results. Numbers right-aligned and monospaced. */
 export function RowsTable({ rows, max = 500 }: { rows: Row[]; max?: number }) {
-  if (rows.length === 0) return <p className="py-6 text-center text-sm text-muted-foreground">No rows.</p>
-  const columns = Object.keys(rows[0])
+  const [first] = rows
+  if (!first) return <p className="py-6 text-center text-sm text-muted-foreground">No rows.</p>
+  const columns = Object.keys(first)
   const numeric = new Set(
-    columns.filter((c) => rows.slice(0, 50).every((r) => r[c] === null || typeof r[c] === "number")),
+    columns.filter((c) => rows.slice(0, TYPE_SAMPLE).every((r) => r[c] === null || typeof r[c] === "number")),
   )
   return (
     <div className="space-y-2">

@@ -1,13 +1,16 @@
+import createMDX from "@next/mdx"
 import type { NextConfig } from "next"
+import { createCssVariablesTheme } from "shiki"
 
 const nextConfig: NextConfig = {
   cacheComponents: true,
+  // Docs pages are MDX (app/(site)/docs/**/page.mdx).
+  pageExtensions: ["ts", "tsx", "mdx"],
   // The TypeScript client (with its WASM reader) is a workspace package consumed from source.
   transpilePackages: ["@timelake/client"],
-  // Benchmark results are read from disk; ship them with the server too (cached at build normally).
+  // Files read from disk at runtime: benchmark results (when /benchmarks revalidates) and the OG image fonts.
   outputFileTracingIncludes: {
     "/benchmarks": ["./data/results/**"],
-    "/": ["./data/results/**"],
     "/opengraph-image": ["./assets/fonts/**"],
   },
   partialPrefetching: true,
@@ -21,4 +24,17 @@ const nextConfig: NextConfig = {
   },
 }
 
-export default nextConfig
+// Turbopack takes plugins by name with JSON options. Code is highlighted at build time; the colors are CSS
+// variables (--shiki-*, in globals.css), so one render follows the light and dark themes.
+const withMDX = createMDX({
+  options: {
+    remarkPlugins: ["remark-gfm"],
+    rehypePlugins: [
+      "rehype-slug",
+      ["rehype-autolink-headings", { behavior: "wrap" }],
+      ["rehype-pretty-code", { theme: createCssVariablesTheme({ name: "site" }), keepBackground: false }],
+    ],
+  },
+})
+
+export default withMDX(nextConfig)

@@ -1,0 +1,65 @@
+import { ArchitectureDiagram } from "@/components/architecture-diagram"
+
+export const metadata = { title: "Architecture" }
+
+# Architecture
+
+The engine is one Rust crate (`timelake`) used by the CLI and the Python package. It builds on iceberg-rust’s spec types for metadata and manifests, the Rust `object_store` crate for I/O, Arrow and Parquet for data, and DataFusion for queries. A separate read-only WebAssembly reader (`timelake-wasm`, used by `@timelake/client`) shares the table rules in `timelake-format`. See the [Codebase tour](/docs/codebase) for where each part lives.
+
+<ArchitectureDiagram />
+
+## On-disk layout
+
+```text
+<warehouse>/timelake-tables.json            list of tables, for readers that can't list objects
+<warehouse>/<namespace>/<table>/
+  metadata/
+    v1.metadata.json … vN.metadata.json     table metadata, one per commit
+    version-hint.text                       "N": the latest version (best-effort pointer)
+    snap-<snapshot-id>-<uuid>.avro          manifest lists
+    <uuid>-{added|merged|deleted}-m.avro    manifests
+    lvi-<snapshot-id>-<uuid>.parquet        last-value index of a snapshot
+  data/
+    <time>_<chunk>=<label>/<uuid-v7>.parquet   e.g. time_day=2026-01-03/…
+    <uuid-v7>.parquet                       plain tables (no time column) are not partitioned
+```
+
+This is Iceberg’s Hadoop-catalog convention, which is why DuckDB’s `iceberg_scan` can open a table directory directly. Tables are Iceberg format version 2.
+
+## Commit protocol
+
+1. Load the current version: read `version-hint.text`, then read `vN.metadata.json` while checking whether `vN+1` already exists (the hint is written after a commit and may lag).
+2. Write data files, a manifest for them, the last-value index, and a new manifest list.
+3. Create `vN+1.metadata.json` with put-if-absent. If it already exists, another writer won: delete this attempt’s manifests, reload, and retry on top of the new version (up to 10 attempts, with jittered backoff). Data files are reused across retries.
+4. Overwrite `version-hint.text` with `N+1`.
+
+Appends carrying a batch id first check whether any retained snapshot already has that id; if so, the append is a no-op and its data files are deleted.
+
+Timelake writes its own commits rather than using iceberg-rust’s transaction API, which only supports fast appends. Three operations exist: **append**, **replace** (compaction: remove files, add files with the same rows) and **delete** (retention: remove files). Once a table has more than eight manifests, an append merges the existing ones into one, so planning a scan stays a few reads however many commits the table has seen.
+
+## Writer
+
+1. Align each batch to the table schema by column name, casting types.
+2. Sort by `(partition, series key…, time)`, keeping input order for ties, and split by partition.
+3. Write each partition (eight at a time) with ZSTD level 3, page-level statistics and page indexes, 1M-row row groups, byte-stream-split encoding for floats, delta encoding for the time column, and the sort order recorded in the file. Files roll over at the target size.
+
+## Last-value index
+
+On each append, the newest row of every series in the new data is merged with the previous snapshot’s index (later writes win on equal times) and written as a new Parquet file, referenced from the snapshot summary as `timelake.last-value-index`. Compaction keeps the index; retention drops series whose newest row is older than the cutoff. An index is only extended if it covers the whole table, so a table whose first rows were written by another engine has no index, and latest-row queries on it scan.
+
+## Compaction
+
+**Inline (size-tiered).** After an append, small files (under ¾ of the target size) in the touched partitions are grouped into size tiers of 4× (under 256 KiB, 256 KiB–1 MiB, 1–4 MiB, …). A tier with at least `timelake.compact-min-files` files is merged into one file, which lands in a higher tier. Each row is rewritten about once per tier, so write amplification grows with the logarithm of the data size rather than linearly.
+
+**Full (maintain).** A partition with at least two small files, or any file not in the table’s sort order, is rewritten. If it has an unsorted file or holds less than twice the target size, all its files are rewritten into sorted files; otherwise only the small ones. Rows are merged in commit order and, with dedup on, the last row of each `(series key, time)` group wins. v0 merges a partition in memory, so partitions should fit comfortably in RAM; pick the chunk interval accordingly.
+
+## Snapshot expiry
+
+Snapshots older than `timelake.snapshot-retention` are expired, keeping at least `timelake.min-snapshots` and at most `timelake.max-snapshots`. Files reachable only from expired snapshots (data files, manifests, manifest lists, indexes) are deleted, along with metadata files older than the metadata log. Inline, expiry runs in batches of about 20 snapshots.
+
+## Reader
+
+- A DataFusion catalog maps namespaces to schemas and tables to a Timelake table provider.
+- Before planning, all referenced tables are loaded concurrently. Planning prunes files with DataFusion’s `PruningPredicate` over the Iceberg lower and upper bounds of each file.
+- Remaining files are spread over scan partitions, footers are prefetched once per file into DataFusion’s metadata cache, and DataFusion’s Parquet scan does row-group and page pruning.
+- An optimizer rule replaces the scan in latest-row query shapes with a scan of the last-value index (see Querying).

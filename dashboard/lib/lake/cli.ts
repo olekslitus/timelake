@@ -6,11 +6,10 @@ import { promisify } from "node:util"
 
 import { connection } from "next/server"
 
-import { BUCKETS } from "@/lib/buckets"
-import { quoteIdent } from "@/lib/sql-guard"
+import { quoteIdent, quoteLiteral, quoteTableName } from "@/lib/sql"
 
-import { LakeInputError, LakeNotConfiguredError } from "./errors"
-import type { LakeBackend, Row, SeriesQuery, SeriesResult, TableInfo } from "./types"
+import { LakeNotConfiguredError } from "./errors"
+import type { LakeBackend, Row, SeriesPlan, SeriesResult, TableInfo } from "./types"
 
 const run = promisify(execFile)
 
@@ -29,7 +28,8 @@ const OPTIONS = (process.env.TIMELAKE_OPTIONS ?? "")
   .filter(Boolean)
   .flatMap((kv) => ["-o", kv.trim()])
 
-const NUMERIC = /^(Int|UInt|Float|Decimal)/
+/** Largest CLI output read (a SQL result as JSON lines). */
+const MAX_OUTPUT_BYTES = 256 * 1024 * 1024
 
 async function exists(p: string, mode: number): Promise<boolean> {
   try {
@@ -41,7 +41,7 @@ async function exists(p: string, mode: number): Promise<boolean> {
 }
 
 async function ensureConfigured(): Promise<void> {
-  await connection() // depends on this machine, not on build time
+  await connection() // depends on this machine at request time, not on the build
   if (!(await exists(BIN, constants.X_OK))) {
     throw new LakeNotConfiguredError(`The timelake CLI is not available at ${BIN}.`)
   }
@@ -52,10 +52,9 @@ async function ensureConfigured(): Promise<void> {
 }
 
 async function cli(args: string[], input?: string): Promise<string> {
-  await connection() // always read the lake at request time
   await ensureConfigured()
   try {
-    const child = run(BIN, ["-w", WAREHOUSE, ...OPTIONS, ...args], { maxBuffer: 256 << 20 })
+    const child = run(BIN, ["-w", WAREHOUSE, ...OPTIONS, ...args], { maxBuffer: MAX_OUTPUT_BYTES })
     if (input !== undefined) {
       child.child.stdin?.end(input)
     }
@@ -63,7 +62,7 @@ async function cli(args: string[], input?: string): Promise<string> {
     return stdout
   } catch (e) {
     const err = e as { stderr?: string; message: string }
-    throw new Error((err.stderr || err.message).trim().replace(/^Error: /, ""))
+    throw new Error((err.stderr || err.message).trim().replace(/^Error: /, ""), { cause: e })
   }
 }
 
@@ -80,34 +79,12 @@ async function sql(query: string): Promise<{ rows: Row[]; ms: number }> {
   return { rows: parseLines(out), ms: performance.now() - t }
 }
 
-async function tableInfo(name: string): Promise<TableInfo> {
-  return JSON.parse(await cli(["info", "--json", name]))
-}
-
-async function series({ table, column, bucket, series }: SeriesQuery): Promise<SeriesResult> {
-  const info = await tableInfo(table)
-  const tc = info.time_column
-  const col = info.schema.find((f) => f.name === column && NUMERIC.test(f.type))
-  if (!tc || !col) throw new LakeInputError("Pick a numeric column of a time-series table.")
-  if (!(BUCKETS as readonly string[]).includes(bucket)) throw new LakeInputError("Unknown bucket.")
-
-  let where = ""
-  const key = info.series_key[0]
-  if (key && series !== null && series !== "") {
-    const keyType = info.schema.find((f) => f.name === key)?.type ?? ""
-    let literal: string
-    if (NUMERIC.test(keyType)) {
-      if (!Number.isFinite(Number(series))) throw new LakeInputError(`${key} must be a number.`)
-      literal = String(Number(series))
-    } else {
-      literal = `'${series.replace(/'/g, "''")}'`
-    }
-    where = `WHERE ${quoteIdent(key)} = ${literal}`
-  }
+async function series({ table, timeColumn, column, bucket, key }: SeriesPlan): Promise<SeriesResult> {
   const c = quoteIdent(column)
+  const where = key ? `WHERE ${quoteIdent(key.column)} = ${quoteLiteral(key.value)}` : ""
   const query =
-    `SELECT time_bucket(INTERVAL '${bucket}', ${quoteIdent(tc)}) AS t, avg(${c}) AS avg, min(${c}) AS min, max(${c}) AS max, count(*) AS n\n` +
-    `FROM ${info.name}\n${where}\nGROUP BY 1 ORDER BY 1`
+    `SELECT time_bucket(INTERVAL '${bucket}', ${quoteIdent(timeColumn)}) AS t, avg(${c}) AS avg, min(${c}) AS min, max(${c}) AS max, count(*) AS n\n` +
+    `FROM ${quoteTableName(table)}\n${where}\nGROUP BY 1 ORDER BY 1`
   const { rows, ms } = await sql(query)
   return { rows: rows as SeriesResult["rows"], ms, query }
 }
@@ -118,7 +95,7 @@ export const cliBackend: LakeBackend = {
   capabilities: { sql: true },
   ensureConfigured,
   listTables: async () => JSON.parse(await cli(["ls", "--json"])),
-  tableInfo,
+  tableInfo: async (name): Promise<TableInfo> => JSON.parse(await cli(["info", "--json", name])),
   latest: async (name) => parseLines(await cli(["latest", "--format", "json", name])),
   sql,
   series,

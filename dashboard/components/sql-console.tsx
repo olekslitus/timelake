@@ -1,7 +1,7 @@
 "use client"
 
 import { CircleAlert, LoaderCircle, Play } from "lucide-react"
-import { useState } from "react"
+import { useState, useTransition } from "react"
 
 import { RowsTable } from "@/components/rows-table"
 import { Alert, AlertDescription } from "@/components/ui/alert"
@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Textarea } from "@/components/ui/textarea"
 import type { Row } from "@/lib/lake/types"
 
-const EXAMPLES: { label: string; sql: string }[] = [
+const EXAMPLES = [
   {
     label: "Latest position per truck",
     sql: "SELECT tags_id, time, latitude, longitude\nFROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY tags_id ORDER BY time DESC) AS rn FROM tsbs.readings)\nWHERE rn = 1\nORDER BY tags_id\nLIMIT 20",
@@ -27,29 +27,34 @@ const EXAMPLES: { label: string; sql: string }[] = [
     label: "Plan with pruning",
     sql: "EXPLAIN SELECT avg(velocity) FROM tsbs.readings WHERE tags_id = 7 AND time >= TIMESTAMP '2026-01-03 00:00:00'",
   },
-]
+] as const satisfies readonly { label: string; sql: string }[]
 
 type Result = { rows: Row[]; ms: number } | { error: string }
 
-export function SqlConsole() {
-  const [query, setQuery] = useState(EXAMPLES[0].sql)
-  const [result, setResult] = useState<Result | null>(null)
-  const [running, setRunning] = useState(false)
+/** Runs a query on the server; never rejects (network and parse errors become `{ error }`). */
+async function fetchResult(query: string): Promise<Result> {
+  try {
+    const r = await fetch("/api/sql", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ query }),
+    })
+    return (await r.json()) as Result
+  } catch (e) {
+    return { error: String(e) }
+  }
+}
 
-  async function runQuery() {
-    setRunning(true)
-    try {
-      const r = await fetch("/api/sql", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ query }),
-      })
-      setResult(await r.json())
-    } catch (e) {
-      setResult({ error: String(e) })
-    } finally {
-      setRunning(false)
-    }
+export function SqlConsole() {
+  const [query, setQuery] = useState<string>(EXAMPLES[0].sql)
+  const [result, setResult] = useState<Result | null>(null)
+  const [running, startTransition] = useTransition()
+
+  function runQuery() {
+    startTransition(async () => {
+      const next = await fetchResult(query)
+      startTransition(() => setResult(next))
+    })
   }
 
   return (

@@ -3,7 +3,7 @@ import { ThemeToggle } from "@/components/theme-toggle"
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
 import { WAREHOUSE } from "@/lib/lake"
 
-export default function AppLayout({ children }: { children: React.ReactNode }) {
+export default function AppLayout({ children }: LayoutProps<"/">) {
   return (
     <SidebarProvider>
       <AppSidebar warehouse={WAREHOUSE} />

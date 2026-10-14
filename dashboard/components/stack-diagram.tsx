@@ -40,13 +40,13 @@ const READERS: Endpoint[] = [
   { id: "agent", icon: BotMessageSquare, kind: "AI", name: "AI agent", via: "MCP", planned: true },
 ]
 
-const RUNTIME = [
+const RUNTIME: [string, string][] = [
   ["API", "Python · Rust · CLI · TS"],
   ["SQL", "DataFusion"],
   ["Memory", "Arrow"],
 ]
-const CORE = ["Core", "Sort · compact · index"]
-const BUCKET = [
+const CORE: [string, string] = ["Core", "Sort · compact · index"]
+const BUCKET: [string, string][] = [
   ["Catalog", "Files, no server"],
   ["Table", "Iceberg"],
   ["Files", "Parquet"],
@@ -158,11 +158,15 @@ export function StackDiagram() {
     const measure = () => {
       const o = root.getBoundingClientRect()
       const rel = (id: string) => {
-        const r = root.querySelector(`[data-node="${id}"]`)!.getBoundingClientRect()
-        return new DOMRect(r.left - o.left, r.top - o.top, r.width, r.height)
+        const r = root.querySelector(`[data-node="${id}"]`)?.getBoundingClientRect()
+        return r && new DOMRect(r.left - o.left, r.top - o.top, r.width, r.height)
       }
       const wide = window.matchMedia(WIDE).matches
-      setLines({ w: o.width, h: o.height, drawn: EDGES.map((e) => route(e, rel(e.from), rel(e.to), wide)) })
+      const drawn = EDGES.flatMap((e) => {
+        const [a, b] = [rel(e.from), rel(e.to)]
+        return a && b ? [route(e, a, b, wide)] : []
+      })
+      setLines({ w: o.width, h: o.height, drawn })
     }
     measure()
     const ro = new ResizeObserver(measure)

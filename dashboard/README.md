@@ -9,7 +9,7 @@ One Next.js app with the Timelake website, docs, benchmark results and the Explo
 | `/benchmarks` | Benchmark results on AWS S3 (Timelake vs Lance, naive Iceberg and S3 Tables) and local disk; TimescaleDB on Tiger Cloud |
 | `/explore` | Explorer: tables, freshness, partitions, snapshots, latest values, a series chart, read-only SQL console |
 
-Stack: Next.js 16 (App Router, Cache Components), React 19, bun, shadcn/ui (Base UI), Tailwind v4, Recharts, lucide icons.
+Stack: Next.js 16 (App Router, Cache Components), React 19, bun, shadcn/ui (Base UI), Tailwind v4, Recharts, lucide icons, MDX for the docs.
 
 ## Run
 ```bash
@@ -46,12 +46,21 @@ bun run sync-results
 | Path | What |
 |---|---|
 | `app/(site)/` | Landing page, `/docs`, `/benchmarks` (top-nav layout) |
+| `app/(site)/docs/**/page.mdx` | Docs pages (see [Docs](#docs)) |
 | `app/(app)/explore/` | Explorer pages (sidebar layout) |
 | `app/api/sql`, `app/api/series` | Route handlers used by the SQL console and the series chart |
-| `lib/lake/` | Explorer data layer: `types.ts` (the `LakeBackend` interface), `wasm.ts` (hosted, `@timelake/client`), `cli.ts` (local, the CLI), `index.ts` (picks the backend) |
+| `lib/lake/` | Explorer data layer: `types.ts` (the `LakeBackend` interface), `wasm.ts` (hosted, `@timelake/client`), `cli.ts` (local, the CLI), `index.ts` (picks the backend, checks series queries), `error-response.ts` (errors → API responses) |
 | `lib/benchmarks.ts` | Loads `/benchmarks` data (geometric means as in `bench/v0/summarize.py`) |
 | `scripts/sync-results.ts` | Copies benchmark results into `data/results/` |
 | `scripts/upload-demo-to-blob.ts` | Uploads the demo warehouse to Vercel Blob (`bun run upload-demo`) |
+
+## Docs
+Each docs page is a Markdown file with JSX allowed (MDX): `app/(site)/docs/<slug>/page.mdx`, served at `/docs/<slug>`.
+
+- **Add a page:** create `app/(site)/docs/<slug>/page.mdx` starting with `export const metadata = { title: "…" }` and a `# Title`, then add it to `lib/docs-nav.ts`.
+- **Order:** the sidebar and the previous/next links follow `lib/docs-nav.ts`.
+- **Writing:** GitHub-flavored Markdown (tables, autolinks). Fenced code blocks name a language (`bash`, `console`, `python`, `sql`, `ts`, `text`) and are highlighted at build time. Links to `/…` become client-side links. A React component is imported at the top of the page and used as a tag, as `architecture/page.mdx` does with `<ArchitectureDiagram />`.
+- **Plumbing:** `next.config.ts` (MDX plugins), `mdx-components.tsx`, and the `.prose-docs` and `--shiki-*` styles in `app/globals.css`. `.mdx` files are not run through oxfmt.
 
 ## Deploying to Vercel
 - **Project root:** `dashboard/`. **Framework:** Next.js. **Install:** `bun install`, which runs at the repo root because it is a bun workspace with `packages/timelake-client`. **Build:** `bun run build`.

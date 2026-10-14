@@ -6,7 +6,7 @@ import { mkdirSync, writeFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import path from "node:path"
 
-import opentype from "opentype.js"
+import { loadSync } from "opentype.js"
 
 import { MARKS, WORDMARK, markLines } from "./marks.mjs"
 
@@ -15,7 +15,7 @@ const fontFile = path.join(
   path.dirname(require.resolve("geist/package.json")),
   "dist/fonts/geist-sans/Geist-Medium.ttf",
 )
-const font = opentype.loadSync(fontFile)
+const font = loadSync(fontFile)
 
 export function lockupSvg(name, { color }) {
   const m = MARKS[name]

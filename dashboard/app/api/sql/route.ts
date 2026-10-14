@@ -1,12 +1,21 @@
-import { sql } from "@/lib/lake"
-import { errorResponse } from "@/lib/lake/http"
-import { readOnlyError } from "@/lib/sql-guard"
+import { z } from "zod"
 
+import { sql } from "@/lib/lake"
+import { badRequest, errorResponse, invalidRequest } from "@/lib/lake/error-response"
+import { readOnlyError } from "@/lib/sql"
+
+const SqlRequest = z.object(
+  { query: z.string({ error: "Empty query." }).trim().min(1, "Empty query.") },
+  { error: 'Send a JSON body: { "query": "SELECT …" }.' },
+)
+
+/** Runs one read-only SQL statement. Body: `{ "query": "…" }`. */
 export async function POST(request: Request) {
-  const { query } = (await request.json()) as { query?: string }
-  if (!query?.trim()) return Response.json({ error: "Empty query." }, { status: 400 })
+  const body = SqlRequest.safeParse(await request.json().catch(() => null))
+  if (!body.success) return invalidRequest(body.error)
+  const { query } = body.data
   const guard = readOnlyError(query)
-  if (guard) return Response.json({ error: guard }, { status: 400 })
+  if (guard) return badRequest(guard)
   try {
     return Response.json(await sql(query))
   } catch (e) {

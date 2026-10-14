@@ -1,9 +1,12 @@
+import type { Metadata } from "next"
 import { Suspense } from "react"
 
 import { ErrorState } from "@/components/error-state"
 import { PageHeader } from "@/components/page-header"
 import { TablesList, TablesListSkeleton } from "@/components/tables-list"
 import { attempt, loadTables } from "@/lib/lake"
+
+export const metadata: Metadata = { title: "Tables" }
 
 export default function TablesPage() {
   return (

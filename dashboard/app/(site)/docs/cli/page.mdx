@@ -1,0 +1,125 @@
+export const metadata = { title: "CLI reference" }
+
+# CLI reference
+
+```bash
+timelake [-w <warehouse>] [-o key=value]... <command>
+```
+
+Every command prints help with `--help`, for example `timelake import --help`. `timelake --version` prints the version.
+
+## Global options
+
+| Flag | Meaning |
+| --- | --- |
+| `-w, --warehouse <url\|path>` | Warehouse location: s3://bucket/prefix, gs://…, az://…, file:///… or a local path. Env: TIMELAKE_WAREHOUSE. Default ./warehouse. |
+| `-o, --option <key=value>` | Storage option, repeatable, e.g. `-o aws_endpoint=http://localhost:9000 -o aws_allow_http=true`. |
+
+## create
+
+Create a table. The schema comes from a file (`--from`) or `--schema`.
+
+```bash
+timelake create iot.readings --from sample.parquet --time-column time --series-key device_id
+timelake create iot.devices --schema "device_id:string,site:string,installed:date"
+```
+
+| Flag | Meaning |
+| --- | --- |
+| `--from <file>` | Take the schema from this Parquet or CSV file. |
+| `--schema <name:type,…>` | Schema inline. Types: int (int32), bigint (long, int64), double (float64), float (float32, real), string (text, varchar), bool, date, timestamp, timestamptz. |
+| `--time-column <col>` | The time column; makes this a time-series table. |
+| `--series-key <a,b>` | Columns that identify a series, comma-separated. |
+| `--chunk <hour\|day\|month>` | Time partition size (default day). Also accepts 1h, 1d, 24h, 1 month. |
+| `--retention <dur>` | Drop data older than this, e.g. 90d (units s, m, h, d, w, y). |
+| `--no-dedup` | Keep rows with identical (series, time) during compaction. |
+| `--prop <k=v>` | Extra table property; repeatable. |
+
+## append
+
+Append Parquet or CSV files to an existing table.
+
+```bash
+timelake append iot.readings day1.parquet day2.parquet --batch-id load-2026-01
+```
+
+| Flag | Meaning |
+| --- | --- |
+| `--rows-per-commit <n>` | Rows per commit (default 10,000,000; 0 = one commit per input file). |
+| `--no-maintain` | Skip inline auto-maintenance after each commit. |
+| `--batch-id <id>` | Idempotency key; the commit number is appended (id-0, id-1, …), so re-running the same load is a no-op. |
+
+## import
+
+Create the table if it doesn’t exist (schema from the first file, or `--from`/`--schema`), then append the files. Takes the flags of both `create` and `append`.
+
+```bash
+timelake import iot.readings readings/*.parquet --time-column time --series-key device_id --retention 365d
+```
+
+Inputs: `.parquet` files or directories of Parquet, and `.csv`, `.csv.gz` and `.tsv` with a header row.
+
+## sql
+
+Run SQL given as an argument or on stdin. Several statements separated by `;` run in order.
+
+```bash
+timelake sql "SELECT count(*) FROM iot.readings"
+echo "SELECT * FROM readings LIMIT 5" | timelake sql --namespace iot --format csv
+```
+
+| Flag | Meaning |
+| --- | --- |
+| `--format <table\|csv\|json\|none>` | Output format (default table). json writes one JSON object per line (newline-delimited), nulls included. none prints only the row count. |
+| `--namespace <ns>` | Namespace for unqualified table names (default default). |
+| `--set <key=value>` | DataFusion setting, e.g. --set datafusion.execution.target_partitions=32. |
+
+## latest
+
+Print the newest row of every series. It reads the last-value index; a table without one (for example, one first written by another tool) is scanned instead. Takes `--format` like `sql`.
+
+```console
+$ timelake latest iot.readings --format json
+{"time":"2026-01-05T10:15:00","device_id":"pump-1","temp":64.0,"humidity":40}
+{"time":"2026-01-05T10:10:00","device_id":"pump-2","temp":60.2,"humidity":44}
+```
+
+## maintain
+
+Compact, apply retention and expire snapshots, for the given tables or all tables.
+
+```bash
+timelake maintain
+timelake maintain iot.readings --no-expire
+```
+
+| Flag | Meaning |
+| --- | --- |
+| `--no-compact` | Skip compaction. |
+| `--no-retention` | Skip dropping partitions past the retention period. |
+| `--no-expire` | Skip snapshot expiry and file cleanup. |
+
+## info
+
+Show a table’s contract, schema, size, snapshots, last-value index and newest partitions.
+
+```bash
+timelake info iot.readings
+timelake info iot.readings --json
+```
+
+## ls
+
+List tables as `namespace.table`; `--json` prints a JSON array.
+
+## duckdb
+
+Print the DuckDB SQL that reads a table without Timelake, plus the location of its last-value index.
+
+## index
+
+Rewrite `timelake-tables.json` in the warehouse root, the list of tables that readers use when they can't list objects (plain HTTPS, browsers, `@timelake/client`). Creating and dropping tables updates it automatically, so run this only after copying tables in by other means.
+
+## drop
+
+Delete a table and all of its files. This cannot be undone.

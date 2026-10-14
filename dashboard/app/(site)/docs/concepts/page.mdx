@@ -1,0 +1,42 @@
+export const metadata = { title: "Concepts" }
+
+# Concepts
+
+## Warehouse and tables
+
+A **warehouse** is a root location such as `s3://bucket/lake` or a local directory. Each table lives at `<warehouse>/<namespace>/<table>` and is addressed as `namespace.table`; a bare name means the `default` namespace. Namespaces and table names use letters, digits, `_` and `-`.
+
+## Time-series and plain tables
+
+A **time-series table** has a time column. It is partitioned by time, sorted, indexed by series and maintained automatically. A **plain table** has no time column (device metadata, dimension tables): it is unpartitioned and unsorted, and you join it to time-series tables in SQL.
+
+## The table contract
+
+Like a TimescaleDB hypertable, a time-series table follows a small contract stored as Iceberg table properties (see [Table properties](/docs/table-properties)):
+
+| Element | Meaning |
+| --- | --- |
+| time column | Required for time-series tables. A timestamp, stored with microsecond precision and NOT NULL. Text times (from CSV) are parsed as UTC. |
+| series key | Optional columns that identify a series, e.g. `device_id` or `(site, metric)`. |
+| chunk interval | Partition size: `hour`, `day` (default) or `month`. |
+| dedup | Remove rows with the same series key and time during compaction; the latest write wins. On by default when a series key is set. |
+| retention | Optional; whole partitions older than this are dropped by maintenance. |
+
+## Partitions and sort order
+
+Rows are split into partitions by the chunk interval of the time column (Iceberg’s `hour`, `day` or `month` transform), and each file is sorted by `(series key…, time)`. Files record their sort order, and Parquet statistics and page indexes let readers skip row groups and pages that cannot match a series or time filter.
+
+## Commits and snapshots
+
+Every append, compaction, retention run and expiry is one atomic Iceberg commit producing a new table version. A commit writes the next `vN.metadata.json` only if it does not exist yet, so exactly one of several concurrent writers wins and the others retry on top of it. An append can carry a **batch id**; appending the same batch id again is a no-op, which makes retries safe.
+
+## Last-value index
+
+Each append updates a small Parquet file holding the newest row of every series (on equal times, the later write wins), and the new snapshot references it. A table whose first rows were written by another tool has no index; latest-row queries on it scan the table instead. `timelake latest` and `Lake.latest()` read it, and the reader rewrites latest-row SQL to use it (see [Querying](/docs/querying)).
+
+## Maintenance
+
+- **Inline (default).** After each append, small files in the touched partitions that have grown into a group of similar size are merged, partitions past the retention period are dropped, and old snapshots are expired in batches.
+- **Explicit.** `timelake maintain` (or `Table.maintain()`) rewrites each partition with several small or unsorted files into sorted, deduplicated files of the target size, drops partitions past retention, expires snapshots and deletes files no snapshot references any more.
+
+Both are safe to run while others write: they commit like any writer and abort if the files they rewrote were changed concurrently.

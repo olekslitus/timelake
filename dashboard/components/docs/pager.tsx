@@ -1,14 +1,19 @@
+"use client"
+
 import { ArrowLeft, ArrowRight } from "lucide-react"
 import Link from "next/link"
+import { usePathname } from "next/navigation"
+import { Suspense } from "react"
 
 import { DOCS_NAV } from "@/lib/docs-nav"
 
-/** Previous / next links in nav order. */
-export function Pager({ href }: { href: string }) {
-  const flat = DOCS_NAV.flatMap((g) => g.items)
-  const i = flat.findIndex((x) => x.href === href)
-  const prev = i > 0 ? flat[i - 1] : null
-  const next = i >= 0 && i < flat.length - 1 ? flat[i + 1] : null
+const PAGES = DOCS_NAV.flatMap((g) => g.items)
+
+function PagerLinks() {
+  const pathname = usePathname()
+  const i = PAGES.findIndex((p) => p.href === pathname)
+  const prev = i > 0 ? PAGES[i - 1] : undefined
+  const next = i >= 0 ? PAGES[i + 1] : undefined
   return (
     <div className="mt-16 flex justify-between gap-4 border-t pt-6 text-sm">
       {prev ? (
@@ -27,11 +32,11 @@ export function Pager({ href }: { href: string }) {
   )
 }
 
-export function DocPage({ href, children }: { href: string; children: React.ReactNode }) {
+/** Previous / next links in sidebar order (lib/docs-nav.ts). */
+export function DocsPager() {
   return (
-    <article className="prose-docs min-w-0">
-      {children}
-      <Pager href={href} />
-    </article>
+    <Suspense>
+      <PagerLinks />
+    </Suspense>
   )
 }

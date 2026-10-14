@@ -76,15 +76,11 @@ export function SiteHeader() {
             </SheetHeader>
             <div className="space-y-6 px-4 pb-6">
               <div className="space-y-1">
-                <Link href="/" className="block py-1 text-sm">
-                  Home
-                </Link>
-                <Link href="/benchmarks" className="block py-1 text-sm">
-                  Benchmarks
-                </Link>
-                <Link href="/explore" className="block py-1 text-sm">
-                  Explorer
-                </Link>
+                {[{ href: "/", label: "Home" }, ...LINKS].map((l) => (
+                  <Link key={l.href} href={l.href} className="block py-1 text-sm">
+                    {l.label}
+                  </Link>
+                ))}
                 <a href={REPO_URL} className="block py-1 text-sm">
                   GitHub
                 </a>

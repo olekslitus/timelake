@@ -5,18 +5,24 @@ import { connection } from "next/server"
 import { BUCKETS } from "@/lib/buckets"
 
 import { LakeInputError, LakeNotConfiguredError } from "./errors"
-import type { LakeBackend, Row, SeriesQuery, SeriesResult, TableInfo } from "./types"
+import type { LakeBackend, Row, SeriesPlan, SeriesResult, TableInfo } from "./types"
 
 /**
  * Reads a warehouse served over HTTPS (Vercel Blob, a public bucket, a CDN) with the WASM reader
  * in @timelake/client. No binary and no server-side engine: this is the hosted mode.
  */
-const URL_ = process.env.TIMELAKE_URL ?? ""
+const LAKE_URL = process.env.TIMELAKE_URL ?? ""
+
+/** How long a loaded table version is reused before checking for new commits. */
+const CACHE_MS = 10_000
+
+const HOUR_MS = 3_600_000
+const DAY_MS = 24 * HOUR_MS
 
 let lake: Lake | null = null
 function getLake(): Lake {
-  if (!URL_) throw new LakeNotConfiguredError("TIMELAKE_URL is not set.")
-  lake ??= new Lake(URL_, { cacheMs: 10_000 })
+  if (!LAKE_URL) throw new LakeNotConfiguredError("TIMELAKE_URL is not set.")
+  lake ??= new Lake(LAKE_URL, { cacheMs: CACHE_MS })
   return lake
 }
 
@@ -37,11 +43,11 @@ function partitionLabel(chunk: string | null, v: number | null): string {
   if (v === null || chunk === null) return "-"
   const iso = (ms: number) => new Date(ms).toISOString()
   if (chunk === "hour")
-    return iso(v * 3_600_000)
+    return iso(v * HOUR_MS)
       .slice(0, 13)
       .replace("T", "-")
   if (chunk === "month") return `${1970 + Math.floor(v / 12)}-${String((v % 12) + 1).padStart(2, "0")}`
-  return iso(v * 86_400_000).slice(0, 10)
+  return iso(v * DAY_MS).slice(0, 10)
 }
 
 function toInfo(c: ClientInfo): TableInfo {
@@ -88,55 +94,39 @@ function toInfo(c: ClientInfo): TableInfo {
   }
 }
 
-const EVERY: Record<string, "1m" | "10m" | "1h" | "1d"> = {
-  "1 minute": "1m",
-  "10 minutes": "10m",
-  "1 hour": "1h",
-  "1 day": "1d",
-}
-
-async function series({ table, column, bucket, series }: SeriesQuery): Promise<SeriesResult> {
+async function series({ table, column, bucket, key }: SeriesPlan): Promise<SeriesResult> {
   await connection()
   const t = getLake().table(table)
-  const info = await t.info()
-  const col = info.schema.find((f) => f.name === column && ["int", "long", "float", "double"].includes(f.type))
-  if (!info.timeColumn || !col) throw new LakeInputError("Pick a numeric column of a time-series table.")
-  if (!(BUCKETS as readonly string[]).includes(bucket)) throw new LakeInputError("Unknown bucket.")
-  const key = info.seriesKey[0]
-  let value: string | number | undefined
-  if (key && series !== null && series !== "") {
-    const keyType = info.schema.find((f) => f.name === key)?.type ?? ""
-    if (["int", "long"].includes(keyType)) {
-      if (!Number.isFinite(Number(series))) throw new LakeInputError(`${key} must be a number.`)
-      value = Number(series)
-    } else {
-      value = series
-    }
-  }
-  const every = EVERY[bucket]
-  const agg = { [column]: ["avg", "min", "max"], "*": ["count"] } as const
-  const rows = await t.bucket({ series: value, every, agg })
+  const every = BUCKETS[bucket]
+  const rows = await t.bucket({ series: key?.value, every, agg: { [column]: ["avg", "min", "max"], "*": ["count"] } })
   const pick = (r: Record<string, unknown>, k: string) => (r[k] ?? null) as number | null
-  const q = `await lake.table(${JSON.stringify(table)}).bucket({\n  ${value !== undefined ? `series: ${JSON.stringify(value)}, ` : ""}every: "${every}",\n  agg: { ${column}: ["avg", "min", "max"], "*": ["count"] },\n})\n// ${t.lastStats.requests} HTTP requests, ${(t.lastStats.bytes / 1024).toFixed(0)} KiB from ${t.lastStats.files} file(s)`
+  const { requests, bytes, files, ms } = t.lastStats
+  const query = [
+    `await lake.table(${JSON.stringify(table)}).bucket({`,
+    `  ${key ? `series: ${JSON.stringify(key.value)}, ` : ""}every: "${every}",`,
+    `  agg: { ${column}: ["avg", "min", "max"], "*": ["count"] },`,
+    `})`,
+    `// ${requests} HTTP requests, ${(bytes / 1024).toFixed(0)} KiB from ${files} file(s)`,
+  ].join("\n")
   return {
     rows: rows.map((r) => {
       const o = r as unknown as Record<string, unknown>
       return {
-        t: (r.bucket as Date).toISOString(),
+        t: r.bucket.toISOString(),
         avg: pick(o, `${column}_avg`),
         min: pick(o, `${column}_min`),
         max: pick(o, `${column}_max`),
         n: Number(o.count ?? 0),
       }
     }),
-    ms: t.lastStats.ms,
-    query: q,
+    ms,
+    query,
   }
 }
 
 export const wasmBackend: LakeBackend = {
   kind: "wasm",
-  warehouse: URL_,
+  warehouse: LAKE_URL,
   capabilities: { sql: false },
   async ensureConfigured() {
     await connection()

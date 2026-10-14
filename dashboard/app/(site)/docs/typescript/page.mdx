@@ -1,0 +1,68 @@
+export const metadata = { title: "TypeScript client" }
+
+# TypeScript client
+
+`@timelake/client` reads Timelake tables over HTTPS from the browser, Node, Bun, or serverless functions. A WebAssembly build of Timelake's reader (`crates/timelake-wasm`) parses the Iceberg metadata, prunes files and row groups, decodes Parquet, and computes aggregates. The package only fetches the byte ranges the reader asks for. There is no server and no query engine to run. Rows can be validated and typed with Zod.
+
+```ts
+import { z } from "zod"
+import { Lake } from "@timelake/client"
+
+const Reading = z.object({
+  time: z.coerce.date(),          // times arrive as ISO strings
+  tags_id: z.number().int(),
+  velocity: z.number().nullable(),
+})
+
+const lake = new Lake("https://<store>.public.blob.vercel-storage.com/demo")
+const readings = lake.table("tsbs.readings", Reading)
+
+await readings.latest({ series: [1, 2, 3] })        // newest row per truck (last-value index)
+await readings.range({ series: 7, from: "2026-01-03T12:00:00Z", to: "2026-01-03T13:00:00Z" })
+const hourly = await readings.bucket({
+  series: 7, every: "1h",
+  agg: { velocity: ["avg", "max"], "*": ["count"] },
+})
+hourly[0].velocity_avg                               // number | null, typed from the agg map
+```
+
+## Install
+
+The package isn't published to npm yet. Inside this repository it is a bun workspace package, so other workspace packages (like the website) depend on it with `"@timelake/client": "workspace:*"`. It needs `zod` 4 as a peer dependency.
+
+## What it reads
+
+A warehouse served over plain HTTP(S), such as Vercel Blob, a public S3, R2 or GCS bucket, or a CDN. The server must support `Range` requests (it then answers `206`); without them the client downloads whole files and still returns correct results. A plain HTTP server can't list files, so the client finds tables through the warehouse's `timelake-tables.json`, which the writer maintains (`timelake index` rewrites it).
+
+## API
+
+| Call | Returns |
+| --- | --- |
+| `new Lake(url, { fetch?, concurrency?, cacheMs?, rewriteUrl? })` | A warehouse handle. `concurrency` caps parallel requests (default 16). `cacheMs` controls how long a loaded table version is reused (default 5000). `rewriteUrl` maps object URLs when a warehouse has moved. |
+| `lake.tables()` | `string[]` of `namespace.table`. |
+| `lake.table(name, schema?)` | A table handle. Rows are typed and validated with the Zod schema if one is given; otherwise they are `Record<string, unknown>`. |
+| `table.latest({ series?, columns? })` | The newest row of each series, read from the last-value index in a single request. Throws if the table has no index. |
+| `table.range({ series?, from?, to?, columns?, limit?, order? })` | Rows in `[from, to)`, ordered by time. `columns` narrows the result type to those columns. |
+| `table.bucket({ series?, from?, to?, every, agg, by? })` | One row per bucket (and per `by` value): `bucket: Date` plus `<column>_<op>` for each aggregate (`count`, `sum`, `avg`, `min`, `max`, `first`, `last`); `"*": ["count"]` gives `count`. |
+| `table.info()` | Contract, schema, snapshots and live files of the current version. |
+| `table.zodSource()` | The TypeScript source of a Zod schema for the table, ready to paste. |
+| `table.refresh()` | Forget the cached table version, so the next query reads the newest one. |
+| `zodSource(info, exportName?)`, `readerVersion()` | Standalone exports: generate Zod source from a `table.info()` result; the version of the embedded WASM reader. |
+| `table.lastStats` | Requests, bytes, files and milliseconds of the last query. |
+
+`series` is a value or a list of values of the first series-key column, or an object such as `{ device_id: ["a", "b"] }`. Times are `Date` objects, ISO strings, or epoch milliseconds. Durations are written like `500ms`, `30s`, `10m`, `1h`, `1d` or `1w`, or given as a number of milliseconds. Buckets are aligned to the Unix epoch.
+
+## How a query runs
+
+1. Read `version-hint.text`, then the table metadata, the manifest list, and the manifests. These are cached per table handle for `cacheMs`.
+2. Prune data files on their Iceberg column bounds (time range, series key).
+3. For each remaining file, fetch the Parquet footer, then only the row groups and columns the query needs.
+4. Decode, filter, and sort or aggregate in WebAssembly, and return JSON rows (validated with Zod if given).
+
+## Limits
+
+- It is a reader: writes go through the CLI, the Python package, or the Rust library.
+- It answers time-series query shapes, not arbitrary SQL. For SQL, use the engine (CLI, Python) or plain DuckDB.
+- The WASM module is embedded as base64, about 8 MB of JavaScript (about 2 MB gzipped). That is fine on servers; in browsers, load it lazily.
+- Pruning works at the row-group level. Tables meant for web reads should use smaller row groups (the demo uses `timelake.row-group-rows=65536`).
+- **Known issue:** a `range` or `bucket` query that needs 16 or more files waits forever with the default `concurrency` of 16. Until it is fixed, set `concurrency` higher than the number of files a query can touch, or run `timelake maintain` so tables have fewer files.
