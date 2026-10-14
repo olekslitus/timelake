@@ -128,11 +128,14 @@ The [docs](https://timelake.dev/docs) cover a [quick start](https://timelake.dev
 
 ## Development
 ```bash
+uv sync && bun install && prek install                   # environments and git hooks (uv tool install prek)
+prek run --all-files --hook-stage pre-push               # every formatter, linter and type checker
 cargo test --workspace                                   # Rust tests
-uv sync && uv run pytest crates/timelake-py/tests        # Python package (built by uv) and its tests
-(cd packages/timelake-client && bun test)                # TS client + WASM vs the engine (needs cargo build -p timelake-cli)
-(cd packages/timelake-client && bun run build:wasm)      # rebuild the WASM after changing crates/timelake-wasm
+uv run pytest crates/timelake-py/tests                   # Python package
+uv run pytest bench/tests                                # benchmark helpers
+cargo build -p timelake-cli && (cd packages/timelake-client && bun test)   # TS client + WASM vs the engine
 ```
+See [Development](https://timelake.dev/docs/development) for each part, the tools and CI.
 
 ## License
 Licensed under the [Apache License, Version 2.0](LICENSE). Unless you state otherwise, any contribution you submit for inclusion in Timelake is licensed under the same terms, without additional conditions (Apache 2.0, §5).

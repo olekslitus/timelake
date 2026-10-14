@@ -12,15 +12,35 @@ How to build, test and run each part of the repository. For what each part is, s
 | uv | Python package and benchmarks | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
 | Bun | Website and TypeScript client | `curl -fsSL https://bun.sh/install \| bash` |
 | Go | The benchmark proxy only | `brew install go` |
-| LLVM, wasm-bindgen | Rebuilding the WASM reader only | `brew install llvm`, `rustup target add wasm32-unknown-unknown`, `cargo install wasm-bindgen-cli` |
+| LLVM, wasm-bindgen | Rebuilding the WASM reader only | `brew install llvm` (Linux: `clang` and `llvm` packages), `rustup target add wasm32-unknown-unknown`, `cargo install wasm-bindgen-cli --version 0.2.129` (must match `crates/timelake-wasm/Cargo.lock`) |
+| prek | Git hooks | `uv tool install prek` |
+
+## First setup
+
+```bash
+uv sync                          # Python environment in ./.venv (builds the Python package)
+bun install                      # JavaScript dependencies
+prek install                     # Git hooks: formatters and fast lints on commit, clippy and type checks on push
+```
+
+Check everything the way CI does:
+
+```bash
+prek run --all-files --hook-stage pre-push       # formatters, linters and type checkers for every language
+cargo test --workspace                           # Rust tests
+uv run pytest crates/timelake-py/tests           # Python package tests
+uv run pytest bench/tests                        # benchmark helper tests
+cargo build -p timelake-cli && (cd packages/timelake-client && bun test)   # TypeScript client vs the engine
+```
 
 ## Rust: engine and CLI
 
 ```bash
 cargo build --release -p timelake-cli        # → target/release/timelake
 cargo test --workspace                          # tests
-cargo clippy --workspace --all-targets          # lints
-cargo fmt --all                                 # formatting
+cargo clippy --workspace --all-targets          # lints (pedantic set, see [workspace.lints] in Cargo.toml)
+cargo fmt --all                                 # formatting (rustfmt.toml: width 120)
+cargo doc --no-deps --open                      # API docs
 ```
 
 The Cargo workspace (root `Cargo.toml`) holds `timelake`, `timelake-format`, `timelake-cli` and `timelake-py`, with one `Cargo.lock` and one `target/`. `timelake-wasm` is built separately for WebAssembly (see below).
@@ -38,6 +58,8 @@ target/release/timelake sql "SELECT count(*) FROM iot.readings"
 ```bash
 uv sync                                    # at the repo root: builds the package into ./.venv
 uv run pytest crates/timelake-py/tests
+uv run ruff format . && uv run ruff check .  # formatting and lints (config in the root pyproject.toml)
+uv run ty check                            # type check
 ```
 
 The root `pyproject.toml` is a uv workspace with two members: the package (`crates/timelake-py`) and the benchmarks (`bench`). `uv sync` and `uv run` rebuild the native module with maturin whenever Rust sources change. The Python files live in `python/timelake`; the native part is imported as `timelake._timelake`.
@@ -47,7 +69,8 @@ The root `pyproject.toml` is a uv workspace with two members: the package (`crat
 ```bash
 bun install                                         # at the repo root (bun workspace)
 cd packages/timelake-client
-bun run build:wasm                                  # after changing crates/timelake-wasm
+bun run build:wasm                                  # after changing crates/timelake-wasm or timelake-format (about 4 minutes)
+bun run check:wasm                                  # is the embedded WASM current?
 bun run typecheck
 ```
 
@@ -64,12 +87,13 @@ cargo build -p timelake-cli                         # the tests use target/debug
 bun install                       # at the repo root
 cd dashboard
 bun run dev                       # http://127.0.0.1:3000
-bun run lint
-bunx tsc --noEmit                 # type check
+bun run typecheck                 # Next.js route types, then tsc
 bun run build                     # production build, as Vercel runs it
 ```
 
-Docs pages are plain React files in `dashboard/app/(site)/docs/<page>/page.tsx`; the sidebar order is in `dashboard/lib/docs-nav.ts`. After re-running benchmarks, copy the results the site uses with `bun run sync-results`.
+Linting and formatting run from the repo root for all JavaScript and TypeScript: `bun run lint` (oxlint) and `bun run format` (oxfmt).
+
+Docs pages are Markdown (MDX) files in `dashboard/app/(site)/docs/<page>/page.mdx`; the sidebar order is in `dashboard/lib/docs-nav.ts`. After re-running benchmarks, copy the results the site uses with `bun run sync-results`.
 
 The Explorer runs the local CLI against `TIMELAKE_WAREHOUSE` (default: the v0 benchmark tables in `bench/data`). See `dashboard/README.md` for its settings and the hosted mode.
 
@@ -85,11 +109,30 @@ Then follow `bench/README.md` (query suites and data), `bench/v0/README.md` (the
 
 ## Code style
 
-- **Rust:** `rustfmt` and `clippy`; errors with `thiserror` in libraries and `anyhow` in the CLI.
-- **TypeScript:** no semicolons, double quotes, strict TypeScript.
-- **Comments:** explain why, not what. Public items get a doc comment.
+| Language | Format | Lint | Types |
+| --- | --- | --- | --- |
+| Rust | rustfmt (width 120) | clippy, pedantic set | the compiler |
+| Python | ruff format (width 120) | ruff (broad rule set, Google-style docstrings) | ty; full annotations |
+| TypeScript | oxfmt (width 120, no semicolons) | oxlint | `tsc`, strict with `noUncheckedIndexedAccess` |
+| Go | gofmt | go vet | the compiler |
+
+- **Errors:** `thiserror` in Rust libraries, `anyhow` in the CLI; specific exception types in Python.
+- **Comments:** explain why, not what. Public items get a short doc comment.
 - **Commits:** short imperative subject with the area first, such as `bench: …`, `Site: …` or `SPEC: …`.
 
 ## Continuous integration
 
-Vercel builds and deploys the website on every push to `main`. There are no automated tests or lint checks on pushes yet; run the commands above before pushing. Setting up CI and pre-commit hooks is the next step on the roadmap.
+GitHub Actions (`.github/workflows/ci.yml`) runs on every push to `main` and every pull request, with no secrets:
+
+| Job | Checks |
+| --- | --- |
+| Rust | `cargo fmt --check`, clippy with warnings as errors, `cargo test --workspace` |
+| WASM reader | fmt, clippy for `wasm32` and the host, unit and golden tests |
+| Python | `uv sync --locked`, ruff format and lint, ty, the package and benchmark tests |
+| TypeScript | oxlint, oxfmt, `tsc`, the embedded WASM matches its sources, website results match `bench/results` |
+| TypeScript client | client tests against a debug build of the CLI |
+| Go | gofmt, go vet |
+
+Vercel builds and deploys the website separately: a preview for every pull request and production on every push to `main`.
+
+Formatting-only commits are listed in `.git-blame-ignore-revs`; run `git config blame.ignoreRevsFile .git-blame-ignore-revs` once so `git blame` skips them.

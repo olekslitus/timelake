@@ -68,60 +68,69 @@ What lives where, which technologies are used and why, and how a write and a que
 
 ## The engine, file by file
 
-`crates/timelake/src`, about 2,700 lines. Read them in this order:
+`crates/timelake/src`, about 4,000 lines including unit tests. Read them in this order:
 
 | File | What it does |
 | --- | --- |
-| `lib.rs` | The public API: `Lake`, `Table`, `Session`, options and results. |
-| `storage.rs` | Opens the right object store for a URL (`s3://`, `gs://`, `az://`, `https://`, local). Provides read, write, `write_if_absent` (the conditional write), list and delete. Also adapts the store to iceberg-rust's file interface. |
-| `lake.rs` | The catalog. `Lake` is a warehouse; `Table` is one version of a table. `create_table` writes `v1.metadata.json`; `table()` finds the current version (version hint, then check the next one); `files()` lists live data files from the manifests. Caches manifests, which never change once written. |
-| `write.rs` | Turns Arrow batches into Parquet: `align_batch` (match the schema), `sort_and_split` (sort by partition, series, time), `writer_properties` (compression, encodings, statistics), `write_partition`. |
-| `lvi.rs` | The last-value index: compute the newest row per series, merge it with the previous index, read and write it. |
-| `commit.rs` | Writes manifests, the manifest list and new table metadata, then commits with `write_if_absent`. Retries up to 10 times when another writer wins. Three kinds of change: append, replace (compaction) and delete (retention). |
-| `ops.rs` | The operations users call: `Table::append` (with inline maintenance) and `Table::maintain` (compaction with dedup, retention, snapshot expiry, file cleanup). |
-| `query.rs` | The SQL reader. `Session` wraps a DataFusion context; `TimelakeProvider` plans scans with file pruning; `LatestRewrite` rewrites latest-row queries to read the index; `time_bucket` is registered here. |
-| `error.rs` | Error types: not found, already exists, invalid input, conflict, storage, and so on. |
+| `lib.rs` | The public API: `Lake`, `Table`, `Session`, options and results, with a short example. |
+| `name.rs` | `TableName`: parses and validates `namespace.table` once, at the boundary. |
+| `storage.rs` | Opens the right object store for a URL (`s3://`, `gs://`, `az://`, `https://`, local). Read, write, `write_if_absent` (the conditional write), list and delete; also adapts the store to iceberg-rust's file interface. |
+| `lake.rs` | The catalog. `Lake` is a warehouse: `create_table` writes `v1.metadata.json`, `table()` finds the current version (version hint, then a check for the next one), `tables()` lists them. |
+| `table.rs` | `Table`: one version of a table (name, metadata, contract, schema) and `files()`, the live data files from its manifests. |
+| `cache.rs` | Small bounded caches for files that never change once written (manifests, manifest lists, last-value indexes) and recently loaded table versions. |
+| `schema.rs` | Fits Arrow data to a table: types Iceberg can store on create (`normalize_schema`), columns matched by name and cast on write (`align_batch`). |
+| `sort.rs` | One sorting helper: sort by key columns keeping input order on ties, and keep the last row of each group. Used for writing, dedup and the last-value index. |
+| `write.rs` | Turns batches into Parquet: `sort_and_split` (sort by partition, series, time), `writer_properties` (compression, encodings, statistics), `write_partition`. |
+| `lvi.rs` | The last-value index: the newest row per series, merged with the previous index, read and written as Parquet. |
+| `commit.rs` | The commit layer. A `SnapshotWriter` writes manifests, the last-value index, the manifest list and the new metadata, then commits with `write_if_absent`; a lost race cleans up and retries (up to 10 times). Three kinds of change: append, replace (compaction) and delete (retention). |
+| `append.rs` | `Table::append`, with inline maintenance afterwards. |
+| `maintain.rs` | `Table::maintain`: retention, compaction with dedup, snapshot expiry and file cleanup. |
+| `query/` | The SQL reader: `session.rs` (`Session`: parse, plan, run), `catalog.rs` (namespaces and tables for DataFusion), `provider.rs` (a table as a pruned Parquet scan or the last-value index), `stats.rs` (min/max from manifests), `rewrite.rs` (latest-row queries onto the index). |
+| `error.rs` | `Error`: not found, already exists, invalid input, conflict, and the underlying storage, Arrow and Parquet errors. |
 
-Tests: `crates/timelake/tests/lifecycle.rs` creates tables, appends, queries, maintains and checks results, all on local disk.
+Tests live next to the code (`#[cfg(test)]` modules, with fault-injecting test storage in `testing.rs`) and in `crates/timelake/tests`: end to end on local disk (`lifecycle.rs`), concurrent commits (`commits.rs`) and SQL (`sql.rs`).
 
 ## Follow an append through the code
 
-`timelake append iot.readings day1.csv`, or `t.append(batch)` in Python, ends up in `Table::append` (`ops.rs`):
+`timelake append iot.readings day1.csv`, or `t.append(batch)` in Python, ends up in `Table::append` (`append.rs`):
 
 1. `sort_and_split` (`write.rs`): match columns to the table, compute each row's day, sort by day, series key and time, and cut the batch into one piece per day.
-2. `write_partition` (`write.rs`): write each day's rows as Parquet under `data/time_day=…/`, up to eight days in parallel. Returns a description of each file (path, size, row count, min/max per column).
+2. `write_partition` (`write.rs`): write each day's rows as Parquet under `data/time_day=…/`, several days at a time. Each file comes back with its path, size, row count and min/max per column.
 3. `latest_per_series` (`lvi.rs`): the newest row of each series in the new data.
-4. `commit` → `try_commit` (`commit.rs`): write a manifest for the new files and the merged last-value index at the same time, then the manifest list, then the new metadata. With more than eight manifests, they are merged into one so reads stay quick.
-5. `publish` (`commit.rs`): `write_if_absent(vN+1.metadata.json)`. If the file already exists, another writer won: delete this attempt's metadata files, reload, and retry. On success, update `version-hint.text`.
-6. Back in `append`: if inline maintenance is on, run size-tiered compaction on the days this append touched, and expire old snapshots in batches.
+4. `commit` (`commit.rs`): a `SnapshotWriter` writes a manifest for the new files and the merged last-value index at the same time, then the manifest list, then the new metadata. With more than eight manifests, the old ones are merged into one so reads stay quick.
+5. `publish` (`commit.rs`): `write_if_absent(vN+1.metadata.json)`. If the file already exists, another writer won: delete every file this attempt wrote, reload, and retry. On success, update `version-hint.text`.
+6. Back in `append`: if inline maintenance is on, run size-tiered compaction on the days this append touched, and expire old snapshots in batches. If that fails, the append still succeeded: the error is returned in the result, not raised.
 
 ## Follow a query through the code
 
-`timelake sql "…"` or `lake.sql("…")` calls `Session::sql` (`query.rs`):
+`timelake sql "…"` or `lake.sql("…")` calls `Session::sql` (`query/session.rs`):
 
 1. Parse the SQL and find every table it mentions.
 2. `prefetch`: load all those tables in parallel: metadata, manifests and the last-value index.
-3. DataFusion plans the query. It asks `LakeCatalog` → `NamespaceSchema` for each table and gets a `TimelakeProvider`.
-4. The optimizer runs `LatestRewrite`. If the query asks for the newest row per series (or the newest row for some series), the table scan is replaced with a scan of the last-value index.
-5. Otherwise `TimelakeProvider::scan_data` drops files whose min/max values can't match the `WHERE` clause, spreads the remaining files over parallel scan tasks, fetches every file footer once, and hands the files to DataFusion's Parquet reader, which skips row groups and pages.
+3. DataFusion plans the query. It asks the lake catalog (`query/catalog.rs`) for each table and gets a `TimelakeProvider` (`query/provider.rs`).
+4. The optimizer runs the latest-row rewrite (`query/rewrite.rs`). If the query asks for the newest row per series (or the newest row for some series), the table scan is replaced with a scan of the last-value index.
+5. Otherwise the provider drops files whose min/max values (`query/stats.rs`) can't match the `WHERE` clause, spreads the remaining files over parallel scan tasks, fetches every file footer once, and hands the files to DataFusion's Parquet reader, which skips row groups and pages.
 6. DataFusion runs the rest (filters, joins, aggregates) and returns Arrow batches.
 
 ## The CLI and the Python package
 
-- `crates/timelake-cli/src/main.rs`: one file. `clap` defines the commands; CSV and Parquet inputs are read with DataFusion; results print as a table, CSV or JSON. Hidden flags (`--bench-runs`, `--proxy-admin`) exist for the benchmark runner.
-- `crates/timelake-py/src/lib.rs`: classes `Lake` and `Table`. Each method runs the engine on a shared Tokio runtime and releases Python's GIL while it waits. Data comes in through the Arrow C stream interface, so pyarrow and polars objects work directly. Tests are in `crates/timelake-py/tests`.
+- `crates/timelake-cli/src`: `main.rs` defines the commands with `clap` and prints results as a table, CSV or JSON; `load.rs` reads CSV and Parquet and appends them in commits; `info.rs` renders `timelake info` as text or JSON; `bench.rs` is the hidden benchmark mode of `timelake sql`. `tests/cli.rs` runs the binary end to end.
+- `crates/timelake-py/src/lib.rs`: classes `Lake` and `Table`. Each method runs the engine on a shared Tokio runtime and releases Python's GIL while it waits. Data comes in through the Arrow C stream interface, so pyarrow and polars objects work directly. Errors map to `KeyError`, `FileExistsError`, `ValueError` and `timelake.ConflictError`.
+- `crates/timelake-py/python/timelake`: the Python side: `__init__.py`, the type stub `_timelake.pyi`, `_types.py` (typed result dicts) and `py.typed`. Tests are in `crates/timelake-py/tests`.
 
 ## The WebAssembly reader and the TypeScript client
 
 The WASM module never makes network requests. The TypeScript client fetches bytes and hands them in, which keeps the module small and identical in every JavaScript runtime:
 
-1. The client fetches `version-hint.text` and `vN.metadata.json`; `new Table(json)` (`crates/timelake-wasm/src/meta.rs`) parses it.
+1. The client fetches `version-hint.text` and `vN.metadata.json`; `new Table(json)` parses it (`meta.rs`).
 2. The client fetches the manifest list and manifests; the module parses them (Avro) into a list of files.
-3. `planFiles(query)` drops files whose min/max values can't match.
-4. For each file, the client fetches the end of the file (the footer). `ParquetFile.plan` (`query.rs`) returns the byte ranges of the row groups and columns needed. The client fetches just those ranges.
-5. `Query.push` decodes, filters and aggregates; `finish` returns JSON rows. The client validates them with Zod if a schema was given.
+3. `planFiles(query)` drops files whose min/max values can't match (`prune.rs`).
+4. For each file, the client fetches the end of the file (the footer). `ParquetFile.plan` (`file.rs`) returns the byte ranges of the row groups and columns needed. The client fetches just those ranges.
+5. `Query.push` decodes and filters each file (`filter.rs`) and collects rows, time buckets (`aggregate.rs`) or the newest row per series (`latest.rs`); `finish` returns JSON rows (`output.rs`). The client validates them with Zod if a schema was given.
 
-`packages/timelake-client/scripts/build-wasm.sh` compiles the crate, shrinks it with `wasm-opt`, and embeds it as base64 in `src/wasm/inline.js`, so the package loads without a separate `.wasm` file. The generated files are committed; rebuild them after changing `crates/timelake-wasm`.
+`spec.rs` describes the query a host sends; `error.rs` the errors it gets back. The crate has its own unit tests and a golden test on a small table written by the engine (`crates/timelake-wasm/tests`).
+
+`packages/timelake-client/scripts/build-wasm.sh` compiles the crate, shrinks it with `wasm-opt`, and embeds it as base64 in `src/wasm/inline.js`, so the package loads without a separate `.wasm` file. The generated files are committed with a hash of their sources in the header; `bun run check:wasm` (and CI) fails when they are stale. The client's tests build a small warehouse with the CLI, serve it locally and compare answers with the engine's, without network access.
 
 ## The website
 
@@ -142,11 +151,13 @@ Vercel builds and deploys the site on every push to `main` (project root `dashbo
 | --- | --- |
 | `bench/run.py` | Runs one query suite on one engine: each query in a fresh process, one first run plus repeats, and records time, rows, requests and bytes to `bench/results/*.jsonl`. |
 | `bench/queries` | The TSBS IoT and single-truck queries, written once per engine. |
-| `bench/scripts` | Data preparation: TSBS output to Parquet, Iceberg and Vortex; TimescaleDB in Docker. |
+| `bench/scripts` | Data preparation: TSBS output to Parquet, Iceberg and Vortex; TPC-H to Parquet. |
+| `bench/benchlib` | Shared helpers for the scripts: query files, result records and summaries, S3 settings for each engine, v0 helpers. |
 | `bench/v0` | The v0 comparison: `ingest.py` streams the same data into Timelake, Lance, PyIceberg and S3 Tables; `run_queries.sh` runs the suites; `summarize.py` writes the report; `tsdb_cloud.py` does the same for TimescaleDB on Tiger Cloud. |
 | `bench/tools/s3proxy` | Go. Sits between the engines and storage, counts requests and bytes, and can add a fixed delay. In AWS mode it signs requests for the real bucket. |
 | `bench/infra` | AWS: one CloudFormation stack (buckets, optional instance) and scripts to create, use and delete it. |
-| `bench/run_*.sh`, `compare_*.py` | Run whole sets of suites (Phase 0, RustFS, AWS) and print comparison tables. |
+| `bench/run_aws.sh`, `bench/compare_aws.py` | Run the suites and the v0 comparison against AWS S3 and S3 Tables, and print the comparison tables. |
+| `bench/tests` | Tests for the helpers and the summary scripts (`uv run pytest bench/tests`). |
 | `bench/results` | Raw results (`.jsonl`) and write-ups: `BASELINE.md` (Phase 0), `V0.md`, `S3.md`, `TIMESCALE.md`. |
 
 How to build and test each part is on [Development](/docs/development).
