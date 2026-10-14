@@ -39,6 +39,13 @@ repos:
         types: [rust]
         pass_filenames: false
         stages: [pre-push]
+      - id: wasm-bundle
+        name: embedded WASM matches its sources
+        entry: bash -c 'cd packages/timelake-client && bun run check:wasm'
+        language: system
+        files: ^(crates/timelake-(wasm|format)/|packages/timelake-client/src/wasm/)
+        pass_filenames: false
+        stages: [pre-push]
 
       # Python
       - id: ruff-format
