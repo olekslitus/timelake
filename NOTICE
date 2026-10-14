@@ -2,3 +2,7 @@ Timelake
 Copyright 2026 Oleksandr Litus and the Timelake contributors
 
 This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product includes the Geist and Geist Mono fonts, Copyright (c) 2023 Vercel, in collaboration with
+basement.studio, licensed under the SIL Open Font License, Version 1.1 (see dashboard/assets/fonts/OFL-Geist.txt).
+The Timelake wordmark is set in Geist and outlined.

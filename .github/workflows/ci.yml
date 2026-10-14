@@ -1,0 +1,110 @@
+# Checks every push to main and every pull request. Needs no secrets.
+# Vercel builds and deploys the website separately (a preview per pull request, production on main).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  rust:
+    name: Rust (engine, CLI, Python bindings)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: rustup toolchain install   # from rust-toolchain.toml
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+
+  wasm:
+    name: WASM reader
+    runs-on: ubuntu-latest
+    env:
+      CC_wasm32_unknown_unknown: clang
+      AR_wasm32_unknown_unknown: llvm-ar
+    steps:
+      - uses: actions/checkout@v5
+      - run: sudo apt-get update && sudo apt-get install -y clang llvm
+      - run: rustup toolchain install   # from rust-toolchain.toml
+      - run: rustup target add wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/timelake-wasm
+      - run: cargo fmt --manifest-path crates/timelake-wasm/Cargo.toml --check
+      - run: cargo clippy --manifest-path crates/timelake-wasm/Cargo.toml --target wasm32-unknown-unknown -- -D warnings
+      - run: cargo clippy --manifest-path crates/timelake-wasm/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --manifest-path crates/timelake-wasm/Cargo.toml
+      - name: Embedded WASM matches its sources
+        run: bash packages/timelake-client/scripts/build-wasm.sh --check
+
+  python:
+    name: Python (package and benchmarks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+      - run: rustup toolchain install   # from rust-toolchain.toml
+      - uses: Swatinem/rust-cache@v2
+      - run: uv sync --locked
+      - run: uv run --no-sync ruff format --check .
+      - run: uv run --no-sync ruff check .
+      - run: uv run --no-sync ty check
+      - run: uv run --no-sync pytest crates/timelake-py/tests
+
+  web:
+    name: TypeScript (website and client)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - run: bun run lint
+      - run: bun run format:check
+      - run: bun run typecheck
+      - name: Website results match bench/results
+        run: bun dashboard/scripts/sync-results.ts && git diff --exit-code dashboard/data/results
+
+  client:
+    name: TypeScript client vs the engine
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: rustup toolchain install   # from rust-toolchain.toml
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build -p timelake-cli
+      - run: bun install --frozen-lockfile
+      - run: bun test
+        working-directory: packages/timelake-client
+
+  go:
+    name: Go (s3proxy)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bench/tools/s3proxy
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: bench/tools/s3proxy/go.mod
+      - run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
