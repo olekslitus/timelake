@@ -36,12 +36,15 @@ Nothing has been released yet. This section describes what is on `main`.
   metadata, the live files, and (while they fit in 1 MiB) the last-value index and the Parquet footers of the newest
   files. A cold query reads it together with a listing of the table's metadata files that confirms it is current, so a
   first `latest` query takes one round trip to storage instead of three, and a first filtered scan two instead of six.
-  A process that already has a table only checks for a newer version. A cold load also opens a few connections early.
-  Measured from a laptop on Tigris, first queries take 210–500 ms instead of 760–1,190. Other engines see no change.
-  New table properties `timelake.head-format` (`arrow`, `json`, a codec registered with `Lake::register_head_codec`,
-  or `none`) and `timelake.head-inline-bytes`; new storage options `timelake_freshness_check` (`head` or `list`, `list`
-  by default on Tigris) and `timelake_warm_connections` (default 4). If you write a table with an older Timelake after
-  this one, delete its `metadata/timelake-head`.
+  A process that already has a table only checks for a newer version. Measured from a laptop, first queries take
+  245–545 ms instead of 510–1,030 on S3, and 210–520 instead of 760–1,190 on Tigris. The TypeScript client reads the
+  head too and checks for a newer version while its query runs (`TableInfo.manifests` is `null` for a table read from
+  its head). Other engines see no change. New table properties `timelake.head-format` (`arrow`, `json`, a codec
+  registered with `Lake::register_head_codec`, or `none`) and `timelake.head-inline-bytes`; new storage options
+  `timelake_requests` (`fast` or `cheap`: no LIST, one more round trip), `timelake_freshness_check` (`head` or `list`,
+  `list` by default on Tigris) and `timelake_warm_connections` (off by default). The requests each operation makes,
+  and what they cost, are in the storage docs. If you write a table with an older Timelake after this one, delete its
+  `metadata/timelake-head`.
 - **Faster commits:** an append uploads its data files and metadata all at once, then makes the one conditional
   write, so it waits for two round trips to storage instead of five. The version hint is now updated in the
   background; Rust programs should call `timelake::flush()` before exiting (the CLI and the Python package do).

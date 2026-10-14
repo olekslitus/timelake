@@ -29,7 +29,8 @@ Timelake’s own options work with every backend:
 | Key | Meaning |
 | --- | --- |
 | `timelake_freshness_check` | How a reader that already has a table version checks for a newer one: `head` (a HEAD request; the default) or `list` (a LIST of the exact name; the default on Tigris, where a HEAD of a missing key takes about 285 ms). `list` needs S3, GCS or Azure. |
-| `timelake_warm_connections` | Connections a cold table load opens ahead of the data reads, with small HEAD requests. Default 4 on remote stores; `0` turns it off. |
+| `timelake_requests` | `fast` (the default) or `cheap`: fewer, cheaper requests for slower first queries. See [Requests and cost](#requests-and-cost). |
+| `timelake_warm_connections` | Connections a first table load opens ahead of the data reads, with small HEAD requests. Off (`0`) by default: it measured at most about 20 ms faster. |
 | `timelake_local_root` | Write objects under a local directory (see below). |
 
 ```bash
@@ -56,9 +57,33 @@ timelake -w https://<store>.public.blob.vercel-storage.com/demo \
 
 `timelake_local_root` works with any URL: objects are written under the local directory while every path recorded in Iceberg metadata keeps the URL.
 
-## Requests per table load
+## Requests and cost
 
-The first time a process reads a table, it lists the table’s `metadata/v…` files while it reads the head (on S3 a LIST is priced like a PUT, $0.005 per 1,000). Later loads in the same process send one HEAD (or LIST) to check for a newer version. Writing a head costs one small GET and one PUT per commit, plus a GET per new data file for its footer.
+Object stores charge per request as well as per GB. On AWS S3 Standard (us-east-1 and us-east-2, October 2026) a PUT, COPY, POST or LIST costs $0.005 per 1,000 and a GET or HEAD $0.0004 per 1,000. Tigris charges the same for writes and LISTs and $0.0005 per 1,000 reads; R2 and Wasabi charge differently. Check your store’s price list.
+
+**Writing.** An append that lands in one partition, without maintenance:
+
+| Request | Count | Why |
+| --- | ---: | --- |
+| PUT | 4 | the data file, its manifest, the manifest list, the last-value index |
+| PUT (conditional) | 1 | `vN+1.metadata.json`: the commit |
+| PUT | 2 | the version hint and the head, in the background |
+| GET | 2 | the head’s first bytes (so it never moves backwards) and the new file’s footer, in the background |
+
+So about 7 PUTs and 2 GETs: at one append per second, about $3 a day on S3. Each extra partition adds 1 PUT (and 1 GET for its footer); a large file is uploaded in parts. Inline maintenance adds the reads and writes of the files it compacts. With `timelake.head-format=none` a table has no head: 1 PUT and 2 GETs fewer per commit, and slower first queries.
+
+**Reading.** What a query sends before it reads data:
+
+| Situation | `fast` (default) | `cheap` |
+| --- | --- | --- |
+| First query on a table in this process | 1 GET (head) + 1 LIST | 2 GETs (head, version hint) + 1 HEAD; one more round trip |
+| Later queries (after 1 s) | 1 HEAD (a LIST on Tigris) | 1 HEAD |
+| Plain HTTPS (can’t list) | 2 GETs + 1 HEAD | same |
+| Table without a head | + GETs of the metadata, manifest list and manifests | same |
+
+Then each query reads its data: one GET per byte range, a few per file, and none for footers the head carried. A dashboard that refreshes one table every 5 seconds sends about 17,000 checks a day plus its data reads: a few cents a day on S3.
+
+`timelake_requests=cheap` saves the LIST of a first load (a LIST costs about 12 GETs) at the price of one round trip, about 60 ms from a laptop to S3. It pays off for many short-lived processes that each read a table once, such as serverless functions. `timelake_freshness_check=head` keeps Tigris on HEAD checks, which are cheaper there but slow when the next version doesn’t exist (about 285 ms).
 
 ## Conditional writes are required
 

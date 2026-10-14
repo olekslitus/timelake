@@ -10,7 +10,8 @@ measured from a laptop (M1 Pro) over the internet, against the numbers before it
 - **Cold load in one round trip:** on stores that list by prefix, a cold load lists `metadata/v` while it reads the
   head. The listing says which version is newest, so a current head needs no second request. A reader that already has
   a version checks only for `vN+1`, without downloading the head again.
-- **P3:** a cold load also sends 4 small HEAD requests, so the data reads that follow find open connections.
+- **P3:** a cold load can also send a few small HEAD requests, so the data reads that follow find open connections.
+  Measured below, it gained little, so it is off by default (`timelake_warm_connections`).
 
 Unit test (`cold_queries_read_the_head_first`): a cold `latest` waits for 1 round trip (P1: 2, before: 3), a cold
 filtered scan for 2 (P1: 3, before: 6).
@@ -25,10 +26,20 @@ three batches alternating between setups; median of 15 first runs in a fresh `La
 | `one-truck-history` | 1,187 | 522 | 497 |
 | `fleet-avg-velocity` | 1,094 | 511 | 492 |
 
-P1 alone measured 318 / 446 / 1,052 / 714 ms on Tigris (one run each, below). Opening connections early saves about
-20 ms on the scans and nothing on point queries: less than expected, but it costs 4 HEAD requests per cold load, so it
-stays on (`timelake_warm_connections=0` turns it off). Queries-only runs read but don't write, so they are cheap to
-repeat on a free tier. S3 numbers for this step are still to be measured.
+**S3 us-east-2, cold queries only** (same method, on a warehouse written by a full run of this code; "no head" is the
+P1 run written with `--head-format none`):
+
+| First query | No head | Head + footers | + 4 warm-up connections | `timelake_requests=cheap` |
+|---|---:|---:|---:|---:|
+| `one-truck-latest` | 509 | 240 | 245 | 305 |
+| `last-loc` | 601 | 313 | 329 | 366 |
+| `one-truck-history` | 1,031 | 560 | 543 | 644 |
+| `fleet-avg-velocity` | 991 | 567 | 543 | 621 |
+
+P1 alone measured 318 / 446 / 1,052 / 714 ms on Tigris (one run each, below). Opening connections early saves at most
+about 20 ms on the scans and nothing on point queries, within noise on S3; it costs 4 HEAD requests per cold load, so
+it is off by default (`timelake_warm_connections=4` turns it on). `cheap` costs about one round trip (60 ms on S3) per
+cold load and avoids the LIST. Queries-only runs read but don't write, so they are cheap to repeat on a free tier.
 
 ## P1: one-request table state (2026-10-14)
 

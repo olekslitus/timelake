@@ -4200,7 +4200,6 @@ name = "timelake"
 version = "0.0.1"
 dependencies = [
  "arrow",
- "arrow-schema",
  "async-trait",
  "bytes",
  "chrono",
@@ -4238,7 +4237,14 @@ dependencies = [
 name = "timelake-format"
 version = "0.0.1"
 dependencies = [
+ "arrow-array",
+ "arrow-ipc",
+ "arrow-json",
+ "arrow-schema",
+ "arrow-select",
  "chrono",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -16,7 +16,8 @@ export type TableInfo = {
   rows: number
   files: number
   bytes: number
-  manifests: number
+  /** null when the table was read from its head object. */
+  manifests: number | null
   snapshot_count: number
   last_commit_ms: number | null
   last_value_index: string | null

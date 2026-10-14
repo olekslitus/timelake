@@ -18,7 +18,7 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-timelake-format = { path = "../timelake-format" }
+timelake-format = { path = "../timelake-format", features = ["head"] }
 # The wasm-bindgen CLI must be this exact version (build-wasm.sh checks).
 wasm-bindgen = "=0.2.129"
 js-sys = "0.3"

@@ -1,0 +1,73 @@
+export const metadata = { title: "Performance history" }
+
+# Performance history
+
+Every change made to speed Timelake up, with what it measured before and after. The [Benchmarks page](/benchmarks) shows the latest numbers; this page keeps the history. Raw measurements are in [`bench/results/PERFORMANCE.md`](https://github.com/polythings/timelake/blob/main/bench/results/PERFORMANCE.md) and the `.jsonl` files next to it.
+
+All numbers are from a laptop (M1 Pro) over the internet to AWS S3 us-east-2 or Tigris, unless noted. A “first query” runs in a fresh process, so nothing is cached. Single runs vary by 10–20%; where it matters, numbers are medians of many runs.
+
+## Summary
+
+| Date | Change | Commit | Effect |
+| --- | --- | --- | --- |
+| 2026-10-14 | Footers in the head, cold loads in one round trip | `4e8a1fa` | First query on S3: `latest` 314 → 240 ms, a filtered scan of one truck 823 → 560 ms |
+| 2026-10-14 | Table state in one object (the head) | `cbe7e3a` | First `latest` query on S3: 502 → 314 ms; on Tigris 868 → 318 ms |
+| 2026-10-13 | Two-step commit | `d2b80cd` | Commit p50 on S3: 483 → 243 ms; a 1,728-commit ingest 1,307 → 795 s |
+
+Altogether, the first `latest` query on S3 went from about 510 ms to 240 ms, and on Tigris from about 810 ms to 210 ms.
+
+## Footers in the head, cold loads in one round trip (2026-10-14)
+
+- **What changed:** the head also carries the Parquet footers of the newest files. A cold load lists the table’s metadata files while it reads the head, so it knows at once whether the head is current. A process that already has a table only checks for a newer version.
+- **Round trips** (unit test): a first `latest` query 2 → 1, a first filtered scan 3 → 2.
+- **Measured** (median of 15 first runs, ms):
+
+| First query | S3 before | S3 after | Tigris before | Tigris after |
+| --- | ---: | ---: | ---: | ---: |
+| `one-truck-latest` | 509 | 240 | 810 | 210 |
+| `last-loc` | 601 | 313 | 762 | 269 |
+| `one-truck-history` | 1,031 | 560 | 1,187 | 522 |
+| `fleet-avg-velocity` | 991 | 567 | 1,094 | 511 |
+
+“Before” here is the same table without a head, read by the same code.
+
+- **Tried and turned off:** opening a few connections ahead of the data reads. It saved at most about 20 ms on scans and nothing on point queries, and it costs requests, so it is off by default (`timelake_warm_connections`).
+- **Cost option:** `timelake_requests=cheap` reads the version hint instead of listing. A first query takes one more round trip (about 60 ms on S3: `latest` 305 ms) and avoids the LIST. See [Requests and cost](/docs/storage#requests-and-cost).
+
+## Table state in one object (2026-10-14)
+
+- **What changed:** after each commit the writer also writes `metadata/timelake-head`: the table metadata, the live files with their statistics, and the last-value index. A reader gets them in one request instead of following the version hint, metadata, manifest list and manifests. See [Architecture](/docs/architecture#head-object).
+- **Round trips** (unit test): a first `latest` query 3 → 2, a first filtered scan 6 → 3.
+- **Measured** (first query, ms; S3 mean of two runs, Tigris one run):
+
+| First query | S3 before | S3 after | Tigris before | Tigris after |
+| --- | ---: | ---: | ---: | ---: |
+| `one-truck-latest` | 502 | 314 | 868 | 318 |
+| `last-loc` | 676 | 421 | 1,097 | 446 |
+| `one-truck-history` | 986 | 823 | 1,484 | 1,052 |
+| `fleet-avg-velocity` | 1,013 | 780 | 1,143 | 714 |
+
+## Two-step commit (2026-10-13)
+
+- **What changed:** an append encodes its data files, manifests, manifest list and last-value index first, uploads them all at once, then makes the one conditional write that commits. The version hint is written in the background.
+- **Round trips** (unit test): an append 5 → 2.
+- **Measured** (the full v0 ingest on S3, 1,728 commits):
+
+| | Before | After |
+| --- | ---: | ---: |
+| Commit p50 | 483 ms | 243 ms |
+| Commit p95 | 2,007 ms | 1,630 ms |
+| Whole ingest | 1,307 s | 795 s |
+
+## Measure it yourself
+
+```bash
+# 100 commits and 4 queries against any S3-compatible store (a new, empty prefix)
+BENCH_URL=s3://bucket/run-1 BENCH_OPTIONS='{"aws_region": "us-east-2"}' \
+  uv run python bench/v0/small.py --label s3
+
+# Only the queries, 5 first runs each, against what an earlier run wrote (reads only)
+BENCH_URL=s3://bucket/run-1 uv run python bench/v0/small.py --label s3 --queries-only --cold-runs 5
+```
+
+`--head-format none` writes tables without a head, for a “before” on the same code.

@@ -199,7 +199,7 @@ impl Lake {
         }
         let metadata = new_table_metadata(&name, &location, schema, &opts)?;
         let head_format = Contract::from_properties(metadata.properties())?.head_format;
-        if head_format != head::NO_HEAD && self.head_codecs().get(&head_format).is_none() {
+        if head_format != timelake_format::head::NO_HEAD && self.head_codecs().get(&head_format).is_none() {
             return Err(Error::invalid(format!("unknown head format {head_format:?} (built in: arrow, json, none)")));
         }
         if !storage.write_if_absent(&metadata_uri(&location, 1), Bytes::from(serde_json::to_vec(&metadata)?)).await? {
@@ -299,9 +299,12 @@ impl Lake {
         }
     }
 
-    /// The newest committed version, listed, or else the version hint.
+    /// The newest committed version, listed, or else (on stores that can't list, or with
+    /// `timelake_requests=cheap`) the version hint.
     async fn newest_version(&self, location: &str, hint_uri: &str) -> Result<Newest> {
-        if let Some(listed) = self.storage().list_prefix(&format!("{location}/metadata/v")).await? {
+        if self.storage().list_on_load()
+            && let Some(listed) = self.storage().list_prefix(&format!("{location}/metadata/v")).await?
+        {
             return Ok(Newest::Listed(listed.iter().filter_map(|uri| metadata_version(uri)).max()));
         }
         let Some(hint) = self.storage().read_opt(hint_uri).await? else { return Ok(Newest::Hint(None)) };

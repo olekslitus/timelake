@@ -115,7 +115,7 @@ function TableStats({ info, now }: { info: TableInfo; now: number }) {
       <StatCard
         label="Live data"
         value={formatBytes(info.bytes)}
-        hint={`${info.files} files · ${info.manifests} manifests`}
+        hint={info.manifests === null ? `${info.files} files` : `${info.files} files · ${info.manifests} manifests`}
         icon={HardDrive}
       />
       <StatCard

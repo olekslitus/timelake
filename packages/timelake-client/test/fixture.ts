@@ -21,6 +21,8 @@ export interface Fixture {
   dir: string
   /** Runs SQL through the engine and returns the rows. */
   sql(query: string): Record<string, unknown>[]
+  /** Runs the CLI on the warehouse; returns its output. */
+  cli(...args: string[]): string
   close(): void
 }
 
@@ -60,9 +62,13 @@ function serve(root: string) {
   })
 }
 
-/** Removes the last-value index from every snapshot, like a commit by another Iceberg writer. */
+/**
+ * Removes the last-value index from every snapshot, and the head object, like a commit by another
+ * Iceberg writer.
+ */
 function dropLastValueIndex(tableDir: string) {
   const dir = path.join(tableDir, "metadata")
+  rmSync(path.join(dir, "timelake-head"))
   for (const name of readdirSync(dir).filter((f) => f.endsWith(".metadata.json"))) {
     const meta = JSON.parse(readFileSync(path.join(dir, name), "utf8")) as {
       snapshots?: { summary?: Record<string, string> }[]
@@ -100,6 +106,7 @@ export function buildFixture(): Fixture {
   return {
     url,
     dir: root,
+    cli,
     sql: (query) =>
       cli("sql", "--format", "json", query)
         .split("\n")

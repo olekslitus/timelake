@@ -9,7 +9,7 @@ use bytes::{Buf, Bytes};
 use parquet::arrow::ProjectionMask;
 use parquet::arrow::arrow_reader::{ArrowReaderMetadata, ArrowReaderOptions, ParquetRecordBatchReaderBuilder};
 use parquet::errors::ParquetError;
-use parquet::file::metadata::{ParquetMetaData, ParquetMetaDataReader};
+use parquet::file::metadata::{PageIndexPolicy, ParquetMetaData, ParquetMetaDataReader};
 use parquet::file::reader::{ChunkReader, Length};
 
 use crate::error::{Error, Result};
@@ -110,7 +110,17 @@ impl FileReader {
             .and_then(|need| tail.len().checked_sub(need))
             .map(|start| &tail[start..tail.len() - FOOTER_TRAILER])
             .ok_or_else(|| Error::invalid(format!("need the last {need} bytes for the footer")))?;
-        let meta = Arc::new(ParquetMetaDataReader::decode_metadata(metadata)?);
+        Self::with_metadata(size, Arc::new(ParquetMetaDataReader::decode_metadata(metadata)?))
+    }
+
+    /// Opens a file of `size` bytes from a footer stored apart from it, as the head object carries
+    /// them (written by `ParquetMetaDataWriter`: page indexes, metadata, length, magic).
+    pub fn from_footer(size: u64, footer: &Bytes) -> Result<Self> {
+        let reader = ParquetMetaDataReader::new().with_page_index_policy(PageIndexPolicy::Optional);
+        Self::with_metadata(size, Arc::new(reader.parse_and_finish(footer)?))
+    }
+
+    fn with_metadata(size: u64, meta: Arc<ParquetMetaData>) -> Result<Self> {
         let reader_meta = ArrowReaderMetadata::try_new(meta.clone(), ArrowReaderOptions::new())?;
         Ok(Self {
             data: SparseFile { len: size, chunks: BTreeMap::new() },

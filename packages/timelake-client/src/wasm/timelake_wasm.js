@@ -4,6 +4,12 @@
  * One Parquet file, read through the byte ranges the host fetches.
  */
 export class ParquetFile {
+    static __wrap(ptr) {
+        const obj = Object.create(ParquetFile.prototype);
+        obj.__wbg_ptr = ptr;
+        ParquetFileFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
     __destroy_into_raw() {
         const ptr = this.__wbg_ptr;
         this.__wbg_ptr = 0;
@@ -140,6 +146,12 @@ if (Symbol.dispose) Query.prototype[Symbol.dispose] = Query.prototype.free;
  * A table at one version: its metadata plus the data files of the current snapshot.
  */
 export class Table {
+    static __wrap(ptr) {
+        const obj = Object.create(Table.prototype);
+        obj.__wbg_ptr = ptr;
+        TableFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
     __destroy_into_raw() {
         const ptr = this.__wbg_ptr;
         this.__wbg_ptr = 0;
@@ -188,6 +200,21 @@ export class Table {
             throw takeFromExternrefTable0(ret[1]);
         }
         return takeFromExternrefTable0(ret[0]);
+    }
+    /**
+     * A table from its head object (`metadata/timelake-head`). Throws for a head this reader
+     * can't decode (another codec or layout); read the table through its metadata instead.
+     * @param {Uint8Array} bytes
+     * @returns {Table}
+     */
+    static fromHead(bytes) {
+        const ptr0 = passArray8ToWasm0(bytes, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.table_fromHead(ptr0, len0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return Table.__wrap(ret[0]);
     }
     /**
      * Contract, schema and snapshot summary (a plain object).
@@ -241,6 +268,21 @@ export class Table {
         return this;
     }
     /**
+     * Opens a data file from the footer the head carried; undefined if it didn't carry one.
+     * @param {string} path
+     * @param {number} size
+     * @returns {ParquetFile | undefined}
+     */
+    openFile(path, size) {
+        const ptr0 = passStringToWasm0(path, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.table_openFile(this.__wbg_ptr, ptr0, len0, size);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return ret[0] === 0 ? undefined : ParquetFile.__wrap(ret[0]);
+    }
+    /**
      * Data files that may contain rows matching `query`, in the same shape as `files()`.
      * @param {any} query
      * @returns {any}
@@ -251,6 +293,32 @@ export class Table {
             throw takeFromExternrefTable0(ret[1]);
         }
         return takeFromExternrefTable0(ret[0]);
+    }
+    /**
+     * Runs `query` on the last-value index the head carried; returns the result as a JSON array
+     * string, or undefined when the index wasn't in the head.
+     * @param {any} query
+     * @returns {string | undefined}
+     */
+    queryLastValues(query) {
+        const ret = wasm.table_queryLastValues(this.__wbg_ptr, query);
+        if (ret[3]) {
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        let v1;
+        if (ret[0] !== 0) {
+            v1 = getStringFromWasm0(ret[0], ret[1]);
+            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        }
+        return v1;
+    }
+    /**
+     * The table version the head describes (`vN.metadata.json`); undefined for `new Table`.
+     * @returns {number | undefined}
+     */
+    get version() {
+        const ret = wasm.table_version(this.__wbg_ptr);
+        return ret[0] === 0 ? undefined : ret[1];
     }
 }
 if (Symbol.dispose) Table.prototype[Symbol.dispose] = Table.prototype.free;

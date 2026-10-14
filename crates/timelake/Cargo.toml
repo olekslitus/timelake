@@ -9,11 +9,10 @@ homepage.workspace = true
 publish.workspace = true
 
 [dependencies]
-timelake-format = { path = "../timelake-format" }
+timelake-format = { path = "../timelake-format", features = ["head"] }
 iceberg.workspace = true
 datafusion.workspace = true
 arrow.workspace = true
-arrow-schema.workspace = true
 parquet.workspace = true
 object_store.workspace = true
 tokio.workspace = true

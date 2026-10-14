@@ -5,6 +5,7 @@ use arrow_array::RecordBatch;
 use crate::aggregate::Aggregator;
 use crate::error::{Error, Result};
 use crate::file::FileReader;
+use crate::filter::filter;
 use crate::latest::LatestRows;
 use crate::output::rows_json;
 use crate::spec::QuerySpec;
@@ -49,6 +50,17 @@ impl Collector {
                 State::Buckets(agg) => agg.push(&batch)?,
                 State::Latest(latest) => latest.push(&batch)?,
             }
+        }
+        Ok(())
+    }
+
+    /// Adds the matching rows of a batch already in memory (the last-value index from a head).
+    pub fn push_batch(&mut self, batch: &RecordBatch) -> Result<()> {
+        let batch = filter(batch, &self.spec)?;
+        match &mut self.state {
+            State::Rows(rows) => rows.push(batch),
+            State::Buckets(agg) => agg.push(&batch)?,
+            State::Latest(latest) => latest.push(&batch)?,
         }
         Ok(())
     }

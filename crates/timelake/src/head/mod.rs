@@ -31,7 +31,6 @@ use bytes::Bytes;
 use iceberg::spec::{DataContentType, DataFileBuilder, DataFileFormat, Datum, ManifestStatus, TableMetadata};
 
 pub(crate) use self::codec::Codecs;
-pub use self::codec::{ArrowCodec, HeadCodec, HeadDoc, JsonCodec};
 use crate::background;
 use crate::error::{Error, Result};
 use crate::lake::Lake;
@@ -41,30 +40,19 @@ use crate::storage::{Storage, VersionedWrite};
 use crate::table::{LiveEntry, Table};
 use crate::write::{file_partition, partition_struct};
 use crate::{footer, lvi};
+pub use timelake_format::FormatError;
+use timelake_format::head::section::{COLUMNS, FILES, FOOTERS, LAST_VALUES, METADATA};
+pub use timelake_format::head::{ArrowCodec, HeadCodec, HeadDoc, JsonCodec};
+use timelake_format::head::{FILE_NAME, Header, LAYOUT, LAYOUT_KEY, MAX_HEADER, encode};
 
-const MAGIC: &[u8; 4] = b"TLHD";
-const HEADER_VERSION: u8 = 1;
-/// The longest header: magic, header version, table version, codec name length, codec name.
-const MAX_HEADER: u64 = 4 + 1 + 8 + 1 + 255;
-/// Property naming the layout of the sections; a reader skips heads with a layout it doesn't know.
-const LAYOUT_KEY: &str = "layout";
-const LAYOUT: &str = "1";
-/// `timelake.head-format` value that turns the head off.
-pub(crate) const NO_HEAD: &str = "none";
 /// Attempts to replace a head that other writers keep changing; they write newer ones anyway.
 const WRITE_ATTEMPTS: usize = 5;
-
-const METADATA: &str = "metadata";
-const FILES: &str = "files";
-const COLUMNS: &str = "columns";
-const LAST_VALUES: &str = "last_values";
-const FOOTERS: &str = "footers";
 /// Footers read from the store at once while writing a head.
 const FOOTER_READS: usize = 16;
 
 /// Location of a table's head.
 pub(crate) fn uri(location: &str) -> String {
-    format!("{location}/metadata/timelake-head")
+    format!("{location}/metadata/{FILE_NAME}")
 }
 
 /// Writes `table`'s head in the background. Failures are ignored: readers fall back to the
@@ -193,39 +181,6 @@ fn decode(lake: &Lake, name: &TableName, location: &str, bytes: &[u8]) -> Result
         }
     }
     Ok(table.with_files(Arc::new(files)))
-}
-
-/// The fixed part of a head: which table version it describes and which codec wrote the rest.
-struct Header<'a> {
-    version: u64,
-    codec: &'a str,
-    body: &'a [u8],
-}
-
-impl<'a> Header<'a> {
-    fn parse(bytes: &'a [u8]) -> Option<Self> {
-        let rest = bytes.strip_prefix(MAGIC)?;
-        let (&header_version, rest) = rest.split_first()?;
-        if header_version != HEADER_VERSION {
-            return None;
-        }
-        let (version, rest) = rest.split_first_chunk::<8>()?;
-        let (&len, rest) = rest.split_first()?;
-        let (codec, body) = rest.split_at_checked(len.into())?;
-        Some(Self { version: u64::from_le_bytes(*version), codec: std::str::from_utf8(codec).ok()?, body })
-    }
-}
-
-fn encode(version: u64, codec: &dyn HeadCodec, doc: &HeadDoc) -> Result<Vec<u8>> {
-    let name = codec.name();
-    let len = u8::try_from(name.len()).map_err(|_| Error::invalid(format!("head codec name too long: {name}")))?;
-    let mut out = Vec::from(*MAGIC);
-    out.push(HEADER_VERSION);
-    out.extend_from_slice(&version.to_le_bytes());
-    out.push(len);
-    out.extend_from_slice(name.as_bytes());
-    out.extend_from_slice(&codec.encode(doc)?);
-    Ok(out)
 }
 
 // --- sections ------------------------------------------------------------------------------------
@@ -448,7 +403,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::testing::{Op, T0, batch, faulty_lake, opts, reopen, schema};
+    use crate::testing::{FaultyStore, Op, T0, batch, faulty_lake, opts, reopen, reopen_cheap, schema};
     use crate::{AppendOptions, Session, TableOptions, property};
 
     fn no_maintenance() -> AppendOptions {
@@ -507,6 +462,10 @@ mod tests {
     /// Round trips a cold query waits for, one after another, on a store where each request
     /// takes 100 ms of (paused) time: `None` runs `latest`, `Some(sql)` a query.
     async fn cold_round_trips(head_format: &str, sql: Option<&str>) -> u128 {
+        cold_round_trips_with(head_format, sql, reopen).await
+    }
+
+    async fn cold_round_trips_with(head_format: &str, sql: Option<&str>, open: fn(&Arc<FaultyStore>) -> Lake) -> u128 {
         const RTT: Duration = Duration::from_millis(100);
         let (lake, store) = faulty_lake();
         let o = with_properties(&[(property::HEAD_FORMAT, head_format)]);
@@ -515,7 +474,7 @@ mod tests {
         crate::flush().await;
 
         store.set_latency(RTT);
-        let session = Session::new(reopen(&store));
+        let session = Session::new(open(&store));
         let started = tokio::time::Instant::now();
         let df = match sql {
             None => session.latest("iot.r").await.unwrap(),
@@ -533,6 +492,9 @@ mod tests {
         let scan = Some("SELECT value FROM iot.r WHERE device = 2");
         assert_eq!(cold_round_trips("arrow", None).await, 1);
         assert_eq!(cold_round_trips("arrow", scan).await, 2);
+        // `timelake_requests=cheap`: the version hint instead of a listing, then the check.
+        assert_eq!(cold_round_trips_with("arrow", None, reopen_cheap).await, 2);
+        assert_eq!(cold_round_trips_with("arrow", scan, reopen_cheap).await, 3);
         assert_eq!(cold_round_trips("none", None).await, 3);
         assert_eq!(cold_round_trips("none", scan).await, 6);
     }
@@ -636,10 +598,10 @@ mod tests {
         fn name(&self) -> &'static str {
             "reversed"
         }
-        fn encode(&self, doc: &HeadDoc) -> Result<Vec<u8>> {
+        fn encode(&self, doc: &HeadDoc) -> Result<Vec<u8>, FormatError> {
             Ok(JsonCodec.encode(doc)?.into_iter().rev().collect())
         }
-        fn decode(&self, bytes: &[u8]) -> Result<HeadDoc> {
+        fn decode(&self, bytes: &[u8]) -> Result<HeadDoc, FormatError> {
             JsonCodec.decode(&bytes.iter().rev().copied().collect::<Vec<_>>())
         }
     }

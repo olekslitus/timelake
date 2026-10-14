@@ -46,6 +46,8 @@ pub struct Storage {
     check: FreshnessCheck,
     /// Connections opened ahead of a cold table load (P3); 0 for local stores.
     warm_connections: usize,
+    /// A cold table load lists the metadata files to find the newest version (else reads the hint).
+    list_on_load: bool,
 }
 
 /// A store's raw-prefix listing.
@@ -65,10 +67,16 @@ pub const LOCAL_ROOT_OPTION: &str = "timelake_local_root";
 /// `head` or `list` (see [`Storage::open`]).
 pub const FRESHNESS_CHECK_OPTION: &str = "timelake_freshness_check";
 
-/// Storage option setting how many connections a cold table load opens ahead of the data reads
-/// (default 4 on remote stores; 0 turns it off).
+/// Storage option trading speed for fewer, cheaper requests: `fast` (the default) or `cheap`.
+/// `cheap` makes a cold table load read the version hint instead of listing the metadata files
+/// (one more round trip, no LIST) and checks for newer versions with HEAD requests even on Tigris.
+/// [`FRESHNESS_CHECK_OPTION`] overrides the second.
+pub const REQUESTS_OPTION: &str = "timelake_requests";
+
+/// Storage option setting how many connections a cold table load opens ahead of the data reads,
+/// with small HEAD requests (P3). Off by default: measured on S3 and Tigris it saved at most
+/// about 20 ms on cold scans and nothing on point queries.
 pub const WARM_CONNECTIONS_OPTION: &str = "timelake_warm_connections";
-const DEFAULT_WARM_CONNECTIONS: usize = 4;
 
 /// How [`Storage::check_exists`] asks whether an object exists. A HEAD request is the cheapest
 /// on most stores; on some (Tigris) a HEAD of a missing key is slow while a LIST of its exact
@@ -110,11 +118,19 @@ impl Storage {
                 return Err(Error::config(format!("{FRESHNESS_CHECK_OPTION} must be head or list, got {other:?}")));
             }
         };
+        let cheap = match options.remove(REQUESTS_OPTION).as_deref().map(str::to_ascii_lowercase).as_deref() {
+            None | Some("fast") => false,
+            Some("cheap") => true,
+            Some(other) => {
+                return Err(Error::config(format!("{REQUESTS_OPTION} must be fast or cheap, got {other:?}")));
+            }
+        };
+        let check = check.or(cheap.then_some(false));
         let warm_connections = match options.remove(WARM_CONNECTIONS_OPTION) {
             Some(n) => n.trim().parse().map_err(|_| {
                 Error::config(format!("{WARM_CONNECTIONS_OPTION} must be a non-negative integer, got {n:?}"))
             })?,
-            None => DEFAULT_WARM_CONNECTIONS,
+            None => 0,
         };
         let scheme = url.scheme();
         let authority = url.host_str().unwrap_or_default();
@@ -193,6 +209,7 @@ impl Storage {
             _ => FreshnessCheck::Head,
         };
         storage.lister = lister.map(|(l, _)| Lister(l));
+        storage.list_on_load = !cheap;
         if scheme != "file" && scheme != "memory" {
             storage.warm_connections = warm_connections;
         }
@@ -201,13 +218,34 @@ impl Storage {
 
     fn new(store: Arc<dyn ObjectStore>, base: String, listable: bool) -> Result<Self> {
         let url = Url::parse(&format!("{base}/")).map_err(|e| Error::config(format!("bad store URL {base}: {e}")))?;
-        Ok(Self { store, base, url, listable, lister: None, check: FreshnessCheck::Head, warm_connections: 0 })
+        Ok(Self {
+            store,
+            base,
+            url,
+            listable,
+            lister: None,
+            check: FreshnessCheck::Head,
+            warm_connections: 0,
+            list_on_load: true,
+        })
     }
 
     /// A listable store addressed as `base` (`scheme://authority`).
     #[cfg(test)]
     pub(crate) fn from_store(store: Arc<dyn ObjectStore>, base: &str) -> Self {
         Self::new(store, base.to_string(), true).unwrap()
+    }
+
+    /// This store as `timelake_requests=cheap` would open it.
+    #[cfg(test)]
+    pub(crate) fn cheap(mut self) -> Self {
+        self.list_on_load = false;
+        self
+    }
+
+    /// Whether a cold table load lists the metadata files (see [`REQUESTS_OPTION`]).
+    pub(crate) fn list_on_load(&self) -> bool {
+        self.list_on_load
     }
 
     /// Whether the store supports listing (plain HTTPS does not).
@@ -736,6 +774,17 @@ mod tests {
         assert_eq!(open("memory://", "head").unwrap(), "Head");
         assert!(open("memory://", "list").is_err(), "memory can't list a name");
         assert!(open("s3://b", "maybe").is_err());
+
+        let tigris_cheap = HashMap::from([
+            ("aws_endpoint".to_string(), "https://t3.storage.dev".to_string()),
+            ("aws_region".to_string(), "auto".to_string()),
+            (REQUESTS_OPTION.to_string(), "cheap".to_string()),
+        ]);
+        let s = Storage::open(&Url::parse("s3://b").unwrap(), tigris_cheap).unwrap();
+        assert_eq!((s.check, s.warm_connections, s.list_on_load), (FreshnessCheck::Head, 0, false));
+        let fast = Storage::open(&Url::parse("s3://b").unwrap(), HashMap::from([("aws_region".into(), "x".into())]));
+        let fast = fast.unwrap();
+        assert_eq!((fast.warm_connections, fast.list_on_load), (0, true));
     }
 
     #[tokio::test]

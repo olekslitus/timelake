@@ -58,7 +58,8 @@ test("finds a commit the version hint doesn't mention yet", async () => {
 test("latest matches the engine", async () => {
   const t = lake.table("iot.readings", Reading)
   const rows = await t.latest()
-  expect(t.lastStats.requests).toBe(1)
+  // The last-value index came with the table's head: no request beyond loading the table.
+  expect(t.lastStats.requests).toBe(0)
   const expected = fx.sql(
     "SELECT tags_id, velocity FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY tags_id ORDER BY time DESC) rn FROM iot.readings) WHERE rn = 1 ORDER BY tags_id",
   )
@@ -69,6 +70,40 @@ test("latest matches the engine", async () => {
   )
   const some = await t.latest({ series: [3, 7] })
   expect(some.map((r) => r.tags_id).toSorted()).toEqual([3, 7])
+})
+
+test("reads tables from their head, others through manifests", async () => {
+  expect((await lake.table("iot.readings").info()).manifests).toBeNull()
+  expect((await lake.table("iot.unindexed").info()).manifests).toBe(1)
+})
+
+test("notices a version newer than the head", async () => {
+  const csv = path.join(fx.dir, "moving.csv")
+  writeFileSync(csv, "time,tags_id,velocity\n2026-01-01T00:00:00Z,1,1.5\n")
+  fx.cli(
+    "import",
+    "iot.moving",
+    csv,
+    "--schema",
+    "time:timestamptz,tags_id:int,velocity:double",
+    "--time-column",
+    "time",
+    "--series-key",
+    "tags_id",
+  )
+  const meta = path.join(fx.dir, "lake/iot/moving/metadata")
+  const [head, hint] = [
+    readFileSync(path.join(meta, "timelake-head")),
+    readFileSync(path.join(meta, "version-hint.text")),
+  ]
+  writeFileSync(csv, "time,tags_id,velocity\n2026-01-01T00:05:00Z,1,2.5\n")
+  fx.cli("append", "iot.moving", csv)
+  // As if the newest commit's head and hint were not written yet.
+  writeFileSync(path.join(meta, "timelake-head"), head)
+  writeFileSync(path.join(meta, "version-hint.text"), hint)
+  const t = new Lake(fx.url).table("iot.moving")
+  expect((await t.latest()).map((r) => r.velocity)).toEqual([2.5])
+  expect((await t.info()).version).toBe(Number(hint) + 1)
 })
 
 test("latest scans tables without a last-value index (B12)", async () => {

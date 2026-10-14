@@ -63,14 +63,28 @@ export class Table {
      */
     files(): any;
     /**
+     * A table from its head object (`metadata/timelake-head`). Throws for a head this reader
+     * can't decode (another codec or layout); read the table through its metadata instead.
+     */
+    static fromHead(bytes: Uint8Array): Table;
+    /**
      * Contract, schema and snapshot summary (a plain object).
      */
     info(): any;
     constructor(metadata_json: string);
     /**
+     * Opens a data file from the footer the head carried; undefined if it didn't carry one.
+     */
+    openFile(path: string, size: number): ParquetFile | undefined;
+    /**
      * Data files that may contain rows matching `query`, in the same shape as `files()`.
      */
     planFiles(query: any): any;
+    /**
+     * Runs `query` on the last-value index the head carried; returns the result as a JSON array
+     * string, or undefined when the index wasn't in the head.
+     */
+    queryLastValues(query: any): string | undefined;
     /**
      * The current snapshot's last-value index (newest row per series), if it has one.
      */
@@ -79,6 +93,10 @@ export class Table {
      * The current snapshot's manifest list, if the table has a snapshot.
      */
     readonly manifestList: string | undefined;
+    /**
+     * The table version the head describes (`vN.metadata.json`); undefined for `new Table`.
+     */
+    readonly version: number | undefined;
 }
 
 /**
@@ -103,11 +121,15 @@ export interface InitOutput {
     readonly table_addManifest: (a: number, b: number, c: number) => [number, number];
     readonly table_addManifestList: (a: number, b: number, c: number) => [number, number, number, number];
     readonly table_files: (a: number) => [number, number, number];
+    readonly table_fromHead: (a: number, b: number) => [number, number, number];
     readonly table_info: (a: number) => [number, number, number];
     readonly table_lastValueIndex: (a: number) => [number, number];
     readonly table_manifestList: (a: number) => [number, number];
     readonly table_new: (a: number, b: number) => [number, number, number];
+    readonly table_openFile: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly table_planFiles: (a: number, b: any) => [number, number, number];
+    readonly table_queryLastValues: (a: number, b: any) => [number, number, number, number];
+    readonly table_version: (a: number) => [number, number];
     readonly version: () => [number, number];
     readonly rust_zstd_wasm_shim_calloc: (a: number, b: number) => number;
     readonly rust_zstd_wasm_shim_free: (a: number) => void;

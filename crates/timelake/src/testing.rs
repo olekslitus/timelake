@@ -194,6 +194,11 @@ pub(crate) fn reopen(store: &Arc<FaultyStore>) -> Lake {
     Lake::with_storage(Storage::from_store(store.clone(), "memory://test"), "memory://test/wh")
 }
 
+/// Like [`reopen`], with `timelake_requests=cheap`.
+pub(crate) fn reopen_cheap(store: &Arc<FaultyStore>) -> Lake {
+    Lake::with_storage(Storage::from_store(store.clone(), "memory://test").cheap(), "memory://test/wh")
+}
+
 pub(crate) const T0: i64 = 1_767_225_600_000_000; // 2026-01-01T00:00:00Z
 
 pub(crate) fn schema() -> Schema {

@@ -24,6 +24,8 @@ use std::fmt;
 
 pub mod bounds;
 pub mod contract;
+#[cfg(feature = "head")]
+pub mod head;
 
 pub use contract::{Chunk, Contract, TableOptions, format_duration, parse_duration};
 

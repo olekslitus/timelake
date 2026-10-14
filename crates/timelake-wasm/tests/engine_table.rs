@@ -13,7 +13,7 @@ use std::path::PathBuf;
 
 use serde_json::{Value, json};
 use timelake_wasm::{
-    Collector, DataFile, FileReader, ManifestContent, QuerySpec, TableMeta, parse_manifest, parse_manifest_list,
+    Collector, DataFile, FileReader, Head, ManifestContent, QuerySpec, TableMeta, parse_manifest, parse_manifest_list,
     plan_files,
 };
 
@@ -130,4 +130,42 @@ fn scans_for_the_latest_rows_like_the_index() {
     let mut collector = Collector::new(spec).unwrap();
     collector.push(&reader).unwrap();
     assert_eq!(by_tag(serde_json::from_str(&collector.finish().unwrap()).unwrap()), latest);
+}
+
+/// The head describes the same version as the metadata chain: files, bounds, the last-value
+/// index, and footers that open each file without reading its tail.
+#[test]
+fn head_matches_the_metadata() {
+    let head = Head::parse(&fetch(&format!("{URL}lake/iot/readings/metadata/timelake-head"))).unwrap();
+    let (meta, mut files) = load();
+    assert_eq!(head.version, 2);
+    assert_eq!(head.meta.manifest_list, meta.manifest_list);
+    let mut from_head = head.files.clone();
+    from_head.sort_by(|a, b| a.path.cmp(&b.path));
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    assert_eq!(from_head, files);
+
+    let spec: QuerySpec =
+        serde_json::from_value(json!({ "timeColumn": "time", "columns": ["tags_id", "velocity"] })).unwrap();
+    let mut collector = Collector::new(spec.clone()).unwrap();
+    collector.push_batch(head.last_values.as_ref().unwrap()).unwrap();
+    let rows: Value = serde_json::from_str(&collector.finish().unwrap()).unwrap();
+    assert_eq!(rows.as_array().unwrap().len(), 2);
+
+    // Reading a file from its footer in the head gives what reading its tail gives.
+    let read = |mut reader: FileReader, bytes: &[u8]| {
+        for r in reader.plan(&spec) {
+            let range = usize::try_from(r.start).unwrap()..usize::try_from(r.end).unwrap();
+            reader.add_range(r.start, bytes[range].to_vec());
+        }
+        let mut c = Collector::new(spec.clone()).unwrap();
+        c.push(&reader).unwrap();
+        c.finish().unwrap()
+    };
+    for f in &files {
+        let bytes = fetch(&f.path);
+        let footer = head.footers.get(&f.path).unwrap();
+        let from_footer = FileReader::from_footer(f.size, footer).unwrap();
+        assert_eq!(read(from_footer, &bytes), read(FileReader::new(f.size, &bytes).unwrap(), &bytes));
+    }
 }
