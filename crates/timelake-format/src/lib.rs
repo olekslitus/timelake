@@ -60,6 +60,8 @@ pub mod property {
     pub const HEAD_FORMAT: &str = "timelake.head-format";
     /// Bytes the head may spend on optional sections such as the last-value index.
     pub const HEAD_INLINE_BYTES: &str = "timelake.head-inline-bytes";
+    /// The table format version (see [`crate::FORMAT_VERSION`]); absent means 1.
+    pub const FORMAT_VERSION: &str = "timelake.format-version";
 }
 
 /// Snapshot summary keys: Timelake's own, and the standard Iceberg counters Timelake maintains.
@@ -94,6 +96,14 @@ pub mod summary {
     /// Equality deletes in the table (always 0).
     pub const TOTAL_EQUALITY_DELETES: &str = "total-equality-deletes";
 }
+
+/// The newest table format this version of Timelake reads and writes, recorded in each table as
+/// `timelake.format-version`. Any Timelake reads tables of older formats; it refuses to write to a
+/// table of a newer one. `timelake upgrade` brings a table to this format.
+///
+/// - 1: tables written by Timelake 0.1 and 0.2 (no property).
+/// - 2: the head object (`metadata/timelake-head`), from 0.3.
+pub const FORMAT_VERSION: u32 = 2;
 
 /// Optional warehouse-level index of table names, for stores that cannot list (plain HTTPS).
 pub const TABLES_INDEX: &str = "timelake-tables.json";

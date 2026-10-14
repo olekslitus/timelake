@@ -8,15 +8,17 @@ All numbers are from a laptop (M1 Pro) over the internet to AWS S3 us-east-2 or 
 
 ## Summary
 
-| Date | Change | Commit | Effect |
+Each version is a [tag on GitHub](https://github.com/polythings/timelake/tags): check it out to run the same benchmark on it.
+
+| Version | Change | Commit | Effect |
 | --- | --- | --- | --- |
-| 2026-10-14 | Footers in the head, cold loads in one round trip | `4e8a1fa` | First query on S3: `latest` 314 → 240 ms, a filtered scan of one truck 823 → 560 ms |
-| 2026-10-14 | Table state in one object (the head) | `cbe7e3a` | First `latest` query on S3: 502 → 314 ms; on Tigris 868 → 318 ms |
-| 2026-10-13 | Two-step commit | `d2b80cd` | Commit p50 on S3: 483 → 243 ms; a 1,728-commit ingest 1,307 → 795 s |
+| 0.3.0 | Footers in the head, cold loads in one round trip | `4e8a1fa` | First query on S3: `latest` 314 → 240 ms, a filtered scan of one truck 823 → 560 ms |
+| 0.3.0 | Table state in one object (the head) | `cbe7e3a` | First `latest` query on S3: 502 → 314 ms; on Tigris 868 → 318 ms |
+| 0.2.0 | Two-step commit | `d2b80cd` | Commit p50 on S3: 483 → 243 ms; a 1,728-commit ingest 1,307 → 795 s |
 
-Altogether, the first `latest` query on S3 went from about 510 ms to 240 ms, and on Tigris from about 810 ms to 210 ms.
+From 0.2.0 to 0.3.0, the first `latest` query on S3 went from about 510 ms to 240 ms, and on Tigris from about 810 ms to 210 ms. 0.1.0 is the baseline for 0.2.0’s commit numbers.
 
-## Footers in the head, cold loads in one round trip (2026-10-14)
+## 0.3.0: footers in the head, cold loads in one round trip
 
 - **What changed:** the head also carries the Parquet footers of the newest files. A cold load lists the table’s metadata files while it reads the head, so it knows at once whether the head is current. A process that already has a table only checks for a newer version.
 - **Round trips** (unit test): a first `latest` query 2 → 1, a first filtered scan 3 → 2.
@@ -34,7 +36,7 @@ Altogether, the first `latest` query on S3 went from about 510 ms to 240 ms, and
 - **Tried and turned off:** opening a few connections ahead of the data reads. It saved at most about 20 ms on scans and nothing on point queries, and it costs requests, so it is off by default (`timelake_warm_connections`).
 - **Cost option:** `timelake_version_lookup=hint` reads the version hint instead of listing. A first query takes one more round trip (about 60 ms on S3: `latest` 305 ms) and avoids the LIST. See [Requests and cost](/docs/storage#request-options-trade-offs).
 
-## Table state in one object (2026-10-14)
+## 0.3.0: table state in one object
 
 - **What changed:** after each commit the writer also writes `metadata/timelake-head`: the table metadata, the live files with their statistics, and the last-value index. A reader gets them in one request instead of following the version hint, metadata, manifest list and manifests. See [Architecture](/docs/architecture#head-object).
 - **Round trips** (unit test): a first `latest` query 3 → 2, a first filtered scan 6 → 3.
@@ -47,7 +49,7 @@ Altogether, the first `latest` query on S3 went from about 510 ms to 240 ms, and
 | `one-truck-history` | 986 | 823 | 1,484 | 1,052 |
 | `fleet-avg-velocity` | 1,013 | 780 | 1,143 | 714 |
 
-## Two-step commit (2026-10-13)
+## 0.2.0: two-step commit
 
 - **What changed:** an append encodes its data files, manifests, manifest list and last-value index first, uploads them all at once, then makes the one conditional write that commits. The version hint is written in the background.
 - **Round trips** (unit test): an append 5 → 2.

@@ -124,9 +124,27 @@ After changing `crates/timelake-wasm` or `crates/timelake-format`, rebuild the e
   commit as the change.
 - **How:** one line, written for someone using Timelake. Say what changed for them and, for a breaking change, what to
   do. For example, "Commits make one round trip fewer and take about half as long", not "Engine: parallel uploads".
-- **Releasing:** rename `Unreleased` to `## 0.1.0 – 2026-11-02`, bump the version in `Cargo.toml`,
-  `crates/timelake-py/pyproject.toml`, `crates/timelake-wasm/Cargo.toml` and `packages/timelake-client/package.json`,
-  commit, and tag it `v0.1.0`.
+
+## Versions and releases
+
+Everything shares one version: the Rust crates, the CLI, the Python package, the WASM reader, the TypeScript client
+and the website. It follows [Semantic Versioning as Cargo applies it](https://doc.rust-lang.org/cargo/reference/semver.html):
+before 1.0, a minor release (0.3 → 0.4) may break the API or behaviour, and its changelog entry says what to do; a
+patch release (0.3.0 → 0.3.1) never does. Tables carry their own format version (`timelake.format-version`,
+`FORMAT_VERSION` in `timelake-format`): bump it when an older Timelake must not write the tables a newer one creates,
+and teach `timelake upgrade` to bring older tables to it.
+
+To release, from a clean `main`:
+
+```bash
+cargo install cargo-semver-checks --locked     # once
+uv run python scripts/release.py 0.4.0         # checks, bumps, changelog section, commit, tag v0.4.0
+uv run python scripts/release.py 0.4.0 --push  # the same, then pushes and creates the GitHub release
+```
+
+The script runs `cargo semver-checks` on the library crates against the previous tag, so a patch release can't
+break the API, then sets the version in every package, turns `## Unreleased` into the release's section, rebuilds
+the WASM bundle, runs the checks, commits and tags. Publishing to crates.io, PyPI and npm is not set up yet.
 
 ## License
 

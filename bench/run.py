@@ -358,7 +358,7 @@ def engine_version(engine: str) -> str:
     if engine in RUST_ENGINES:
         return "df55.2+vortex0.88"
     if engine == "v0-timelake":
-        return "timelake0.0.1+df54.1"
+        return "timelake" + importlib.import_module("timelake").__version__ + "+df54.1"
     if engine.startswith("v0-lance"):
         return "lance" + importlib.import_module("lance").__version__
     if engine in V0_ENGINES:

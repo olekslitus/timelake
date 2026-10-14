@@ -118,6 +118,7 @@ async fn commit_with(
             tokio::time::sleep(Duration::from_millis(rand::random_range(BACKOFF_MILLIS) * attempt)).await;
             base = base.refresh().await?;
         }
+        writable(&base)?;
         if is_duplicate(&base, change, props) {
             let snapshot_id = base.metadata().current_snapshot_id().unwrap_or_default();
             let info = CommitInfo {
@@ -153,6 +154,20 @@ async fn commit_with(
     Err(Error::Conflict(format!("{}: gave up after {MAX_ATTEMPTS} attempts", table.name())))
 }
 
+/// Refuses to write to a table of a newer format than this Timelake knows: it could break what
+/// the newer format relies on.
+pub(crate) fn writable(table: &Table) -> Result<()> {
+    let format = table.contract().format_version;
+    if format > timelake_format::FORMAT_VERSION {
+        return Err(Error::invalid(format!(
+            "{} has table format {format}, newer than this Timelake writes ({}): upgrade Timelake",
+            table.name(),
+            timelake_format::FORMAT_VERSION
+        )));
+    }
+    Ok(())
+}
+
 /// Idempotency: an append whose batch id is already in the history is a no-op.
 fn is_duplicate(base: &Table, change: &Change, props: &HashMap<String, String>) -> bool {
     let (Change::Append { .. }, Some(id)) = (change, props.get(summary::BATCH_ID)) else { return false };
@@ -166,6 +181,7 @@ pub(crate) async fn publish(
     metadata: TableMetadata,
     files: Option<Arc<Vec<LiveEntry>>>,
 ) -> Result<Option<Table>> {
+    writable(base)?;
     let storage = base.lake().storage();
     let version = base.version() + 1;
     let bytes = Bytes::from(serde_json::to_vec(&metadata)?);
@@ -548,6 +564,21 @@ mod tests {
         store.fail(Op::Put, "-m.avro");
         t.append(&[batch(&[(T0 + 1, 1, 2.0)])], no_maintenance()).await.unwrap_err();
         assert_eq!(store.paths().await, before);
+    }
+
+    /// A table of a newer format than this Timelake knows can be read but not written.
+    #[tokio::test]
+    async fn refuses_to_write_newer_formats() {
+        let (lake, _store) = faulty_lake();
+        let mut o = opts();
+        o.properties.insert(crate::property::FORMAT_VERSION.into(), (timelake_format::FORMAT_VERSION + 1).to_string());
+        let t = lake.create_table("iot.r", &schema(), o).await.unwrap();
+        let err = t.append(&[batch(&[(T0, 1, 1.0)])], no_maintenance()).await.unwrap_err();
+        assert!(matches!(err, Error::Invalid(ref m) if m.contains("upgrade Timelake")), "{err}");
+        assert!(lake.table("iot.r").await.is_ok());
+
+        let t = lake.create_table("iot.new", &schema(), opts()).await.unwrap();
+        assert_eq!(t.contract().format_version, timelake_format::FORMAT_VERSION);
     }
 
     /// The version hint is only a shortcut for readers: failing to update it doesn't fail the commit.

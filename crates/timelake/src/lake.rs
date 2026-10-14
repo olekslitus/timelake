@@ -451,6 +451,7 @@ fn new_table_metadata(
         .format_version(FormatVersion::V2)
         .build();
     let mut props: HashMap<String, String> = HashMap::from([
+        (property::FORMAT_VERSION.into(), timelake_format::FORMAT_VERSION.to_string()),
         ("write.format.default".into(), "parquet".into()),
         ("write.parquet.compression-codec".into(), "zstd".into()),
         // Keep metadata.json small: it is read by every query.

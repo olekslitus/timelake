@@ -1,0 +1,150 @@
+r"""Cuts a release: one version for every package, a CHANGELOG section, a commit and a `vX.Y.Z` tag.
+
+    uv run python scripts/release.py 0.4.0            # prepare: bump, changelog, checks, commit, tag
+    uv run python scripts/release.py 0.4.0 --push     # then push the commit and tag, and create the GitHub release
+
+Before tagging, `cargo semver-checks` compares the public API of the library crates (`timelake`, `timelake-format`)
+with the previous tag, following https://doc.rust-lang.org/cargo/reference/semver.html: a patch release must not
+break the API; before 1.0, a minor release may (Cargo treats 0.y -> 0.(y+1) as a major change). Install it with
+`cargo install cargo-semver-checks --locked`.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime
+import json
+import re
+import subprocess
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+CHANGELOG = ROOT / "CHANGELOG.md"
+SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+LIBRARIES = ["timelake", "timelake-format"]
+
+
+def run(*cmd: str, cwd: Path = ROOT) -> str:
+    """Runs a command and returns its output; fails loudly."""
+    print("$", " ".join(cmd))
+    # The commands are fixed in this script; only the version (validated) and tag names vary.
+    return subprocess.run(cmd, cwd=cwd, check=True, capture_output=True, text=True).stdout  # noqa: S603
+
+
+def parse(version: str) -> tuple[int, int, int]:
+    """`X.Y.Z` as numbers."""
+    m = SEMVER.match(version)
+    if not m:
+        raise SystemExit(f"not a version: {version} (use X.Y.Z)")
+    major, minor, patch = (int(g) for g in m.groups())
+    return major, minor, patch
+
+
+def previous_tag() -> str | None:
+    """The newest `v*` tag."""
+    tags = run("git", "tag", "--list", "v*", "--sort=-v:refname").split()
+    return tags[0] if tags else None
+
+
+def release_type(old: tuple[int, int, int], new: tuple[int, int, int]) -> str:
+    """The change `cargo semver-checks` must allow, by Cargo's rules (0.y -> 0.(y+1) is major)."""
+    if new <= old:
+        raise SystemExit(f"{'.'.join(map(str, new))} is not after {'.'.join(map(str, old))}")
+    if new[0] != old[0] or (new[0] == 0 and new[1] != old[1]):
+        return "major"
+    return "minor" if new[0] > 0 and new[1] != old[1] else "patch"
+
+
+def replace(path: Path, pattern: str, value: str) -> None:
+    """Replaces the first match of `pattern` in `path`, which must have one."""
+    text = path.read_text()
+    new, n = re.subn(pattern, value, text, count=1, flags=re.MULTILINE)
+    if n != 1:
+        raise SystemExit(f"{path}: no match for {pattern}")
+    path.write_text(new)
+
+
+def bump(version: str) -> None:
+    """Sets `version` in every package: Rust workspace, WASM crate, Python package, npm packages."""
+    replace(ROOT / "Cargo.toml", r'^version = "[^"]+"', f'version = "{version}"')
+    replace(ROOT / "crates/timelake-wasm/Cargo.toml", r'^version = "[^"]+"', f'version = "{version}"')
+    replace(ROOT / "crates/timelake-py/pyproject.toml", r'^version = "[^"]+"', f'version = "{version}"')
+    for package in ("packages/timelake-client/package.json", "dashboard/package.json"):
+        path = ROOT / package
+        data = json.loads(path.read_text())
+        data["version"] = version
+        path.write_text(json.dumps(data, indent=2) + "\n")
+
+
+def changelog(version: str) -> str:
+    """Turns `## Unreleased` into the release's section; returns its text for the release notes."""
+    text = CHANGELOG.read_text()
+    head, sep, rest = text.partition("## Unreleased\n")
+    if not sep:
+        raise SystemExit("CHANGELOG.md has no '## Unreleased' section")
+    body, _, older = rest.partition("\n## ")
+    body = "\n".join(line for line in body.splitlines() if not line.startswith("Nothing has been released")).strip()
+    if not body:
+        raise SystemExit("the Unreleased section is empty: nothing to release")
+    date = datetime.datetime.now(datetime.UTC).date().isoformat()
+    section = f"## {version} – {date}\n\n{body}\n"
+    CHANGELOG.write_text(f"{head}## Unreleased\n\n{section}" + (f"\n## {older}" if older else ""))
+    return body
+
+
+def main() -> None:
+    """Checks, bumps, commits and tags; with `--push`, publishes the tag and the GitHub release."""
+    parser = argparse.ArgumentParser(description="Cut a Timelake release.")
+    parser.add_argument("version", help="the new version, X.Y.Z")
+    parser.add_argument("--push", action="store_true", help="push the tag and create the GitHub release")
+    parser.add_argument("--skip-semver-checks", action="store_true", help="only when the tool can't run")
+    args = parser.parse_args()
+    new = parse(args.version)
+    tag = f"v{args.version}"
+
+    if run("git", "status", "--porcelain").strip():
+        raise SystemExit("the working tree has changes: commit or stash them first")
+    if run("git", "branch", "--show-current").strip() != "main":
+        raise SystemExit("release from main")
+    previous = previous_tag()
+    if previous and not args.skip_semver_checks:
+        kind = release_type(parse(previous.removeprefix("v")), new)
+        for package in LIBRARIES:
+            run(
+                "cargo",
+                "semver-checks",
+                "check-release",
+                "-p",
+                package,
+                "--baseline-rev",
+                previous,
+                "--release-type",
+                kind,
+            )
+
+    bump(args.version)
+    notes = changelog(args.version)
+    run("cargo", "update", "--workspace")
+    run("cargo", "update", "--manifest-path", "crates/timelake-wasm/Cargo.toml", "-p", "timelake-wasm")
+    run("uv", "lock")
+    run("bun", "install")
+    run("bun", "run", "build:wasm", cwd=ROOT / "packages/timelake-client")
+    run("prek", "run", "--all-files", "--hook-stage", "pre-push")
+
+    run("git", "add", "-A")
+    run("git", "commit", "-m", f"Release {tag}")
+    run("git", "tag", "-a", tag, "-m", f"Timelake {args.version}")
+    notes_file = ROOT / "target" / f"release-notes-{tag}.md"
+    notes_file.parent.mkdir(exist_ok=True)
+    notes_file.write_text(notes + "\n")
+    if args.push:
+        run("git", "push", "origin", "main", tag)
+        run("gh", "release", "create", tag, "--title", f"Timelake {args.version}", "--notes-file", str(notes_file))
+    else:
+        print(
+            f"Tagged {tag}. Push with: git push origin main {tag} && gh release create {tag} --notes-file {notes_file}"
+        )
+
+
+if __name__ == "__main__":
+    main()

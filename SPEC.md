@@ -1026,6 +1026,17 @@ Open from v0:
 
 **TypeScript client and WASM reader.** The client GETs the head and the hint together; the WASM reader decodes heads written with the built-in codecs (the codecs and header live in `timelake-format` under its `head` feature, shared with the engine). A HEAD for `vN+1` runs alongside the query's data reads; if a newer version exists, the result is dropped and the query reruns on the metadata chain from `vN+1`. `latest` answers from the inline index without a request, and scans open files from inline footers.
 
+### 19.3 Versions, releases and demos
+
+**Decided 2026-10-14:**
+- **One version for everything** (crates, CLI, Python package, WASM reader, TypeScript client, website), following [Cargo's semver rules](https://doc.rust-lang.org/cargo/reference/semver.html). `cargo-semver-checks` runs on the library crates in the release script (`scripts/release.py`) against the previous tag. Every version is a git tag `vX.Y.Z` with a GitHub release, so performance claims name a version that can be checked out and re-measured. 0.1.0 (before the performance work) and 0.2.0 (two-step commit) were tagged after the fact; 0.3.0 is the first release cut with the script.
+- **Table format version** `timelake.format-version`, separate from the software version: readers read older formats; writers refuse newer ones.
+- **`timelake upgrade`** brings tables to the current format without data loss: each step is an ordinary commit, older snapshots stay until expiry, and `--dry-run` shows the plan.
+
+**Next:** publishing to crates.io, PyPI and npm (with CLI binaries on each GitHub release), set up by a release workflow on tags.
+
+**Later: comparison demos on the website.** Live demos that run the same queries against Timelake and other engines (DuckDB on plain Iceberg, PyIceberg, a TimescaleDB or ClickHouse instance) over the same data, showing time per query and a running cost counter (requests, bytes, and dollars at the store's prices), so visitors feel the difference rather than read about it.
+
 ---
 
 ## 20. Open source vs. premium (draft, D12)

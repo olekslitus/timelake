@@ -28,7 +28,9 @@ const Reading = z.object({
 const byTag = (a: { tags_id: number }, b: { tags_id: number }) => a.tags_id - b.tags_id
 
 test("wasm loads", () => {
-  expect(readerVersion()).toBe("0.0.1")
+  // The WASM crate and the npm package share the project's one version.
+  const pkg = JSON.parse(readFileSync(path.join(import.meta.dir, "../package.json"), "utf8")) as { version: string }
+  expect(readerVersion()).toBe(pkg.version)
 })
 
 test("lists tables and reads info", async () => {

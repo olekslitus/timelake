@@ -158,6 +158,8 @@ pub struct Contract {
     pub head_format: String,
     /// Bytes the head may spend on optional sections (the last-value index).
     pub head_inline_bytes: u64,
+    /// The table format version (see [`crate::FORMAT_VERSION`]).
+    pub format_version: u32,
 }
 
 impl Contract {
@@ -192,6 +194,7 @@ impl Contract {
             compact_min_files: p.number(property::COMPACT_MIN_FILES, Self::DEFAULT_COMPACT_MIN_FILES)?,
             head_format: p.get(property::HEAD_FORMAT).unwrap_or(Self::DEFAULT_HEAD_FORMAT).to_ascii_lowercase(),
             head_inline_bytes: p.number(property::HEAD_INLINE_BYTES, Self::DEFAULT_HEAD_INLINE_BYTES)?,
+            format_version: p.number(property::FORMAT_VERSION, 1)?,
         })
     }
 
@@ -359,7 +362,7 @@ mod tests {
         assert_eq!(c.retention, None);
         assert_eq!(c.snapshot_retention, Duration::from_secs(3600));
         assert_eq!((c.min_snapshots, c.max_snapshots, c.compact_min_files), (5, 100, 8));
-        assert_eq!((c.head_format.as_str(), c.head_inline_bytes), ("arrow", 1 << 20));
+        assert_eq!((c.head_format.as_str(), c.head_inline_bytes, c.format_version), ("arrow", 1 << 20, 1));
         assert!(c.sort_columns().is_empty());
     }
 

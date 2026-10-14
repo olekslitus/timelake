@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import doctest
+import importlib.metadata
 import inspect
 import subprocess
 import sys
@@ -25,7 +26,7 @@ def test_docstring_example_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
 
 
 def test_version_matches_the_distribution() -> None:
-    assert timelake.__version__ == "0.0.1"
+    assert timelake.__version__ == importlib.metadata.version("timelake")
 
 
 def test_all_names_exist() -> None:

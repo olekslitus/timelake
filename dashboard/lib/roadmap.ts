@@ -45,6 +45,14 @@ export const NOW: RoadmapItem[] = [
 ]
 
 export const COMING_UP: RoadmapItem[] = [
+  {
+    title: "Install from crates.io, PyPI and npm",
+    description: "Every release published to the usual registries, with CLI binaries on GitHub.",
+  },
+  {
+    title: "Side-by-side demos",
+    description: "The same queries on Timelake and other engines, with time and a running cost counter.",
+  },
   { title: "Rollups", description: "Hourly and daily summaries that stay up to date as data lands." },
   {
     title: "Time-series functions",
