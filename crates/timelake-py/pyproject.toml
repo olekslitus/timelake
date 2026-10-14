@@ -31,3 +31,7 @@ cache-keys = [
     { file = "../timelake/src/**/*.rs" },
     { file = "../timelake-format/src/**/*.rs" },
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["network: needs internet access (deselect with -m 'not network')"]

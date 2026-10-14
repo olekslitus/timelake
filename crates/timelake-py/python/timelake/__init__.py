@@ -11,6 +11,6 @@
 Tables are plain Iceberg + Parquet: `duckdb.sql("SELECT * FROM iceberg_scan('<table location>')")`.
 """
 
-from ._timelake import Lake, Table
+from ._timelake import ConflictError, Lake, Table
 
-__all__ = ["Lake", "Table"]
+__all__ = ["ConflictError", "Lake", "Table"]

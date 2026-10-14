@@ -5,13 +5,22 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use arrow_array::ffi_stream::ArrowArrayStreamReader;
 use arrow_pyarrow::{FromPyArrow, IntoPyArrow};
+use pyo3::create_exception;
 use pyo3::exceptions::{PyFileExistsError, PyKeyError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use timelake::arrow::array::{RecordBatch, RecordBatchIterator, RecordBatchReader};
 use timelake::arrow::datatypes::Schema;
+use timelake::arrow::error::ArrowError;
 use timelake::datafusion::prelude::SessionConfig;
 use timelake::{AppendOptions, Chunk, MaintainOptions, Session, TableOptions};
+
+create_exception!(
+    timelake,
+    ConflictError,
+    PyRuntimeError,
+    "Another writer committed first and the operation could not be rebased onto its commit."
+);
 
 fn rt() -> &'static tokio::runtime::Runtime {
     static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
@@ -27,12 +36,28 @@ where
     py.detach(|| rt().block_on(f)).map_err(to_py)
 }
 
+/// Maps engine errors to the closest built-in Python exception.
 fn to_py(e: timelake::Error) -> PyErr {
     match e {
         timelake::Error::NotFound(m) => PyKeyError::new_err(m),
         timelake::Error::AlreadyExists(m) => PyFileExistsError::new_err(m),
+        timelake::Error::Conflict(m) => ConflictError::new_err(m),
         timelake::Error::Invalid(m) | timelake::Error::Config(m) => PyValueError::new_err(m),
+        timelake::Error::Format(e) => PyValueError::new_err(e.to_string()),
+        timelake::Error::Arrow(e) => arrow_err(e),
         e => PyRuntimeError::new_err(e.to_string()),
+    }
+}
+
+/// Bad input data (a cast that can't be done, a schema that doesn't fit) is a `ValueError`.
+fn arrow_err(err: ArrowError) -> PyErr {
+    match err {
+        ArrowError::CastError(_)
+        | ArrowError::SchemaError(_)
+        | ArrowError::InvalidArgumentError(_)
+        | ArrowError::ParseError(_)
+        | ArrowError::ComputeError(_) => PyValueError::new_err(err.to_string()),
+        err => PyRuntimeError::new_err(err.to_string()),
     }
 }
 
@@ -43,9 +68,7 @@ fn batches(data: &Bound<'_, PyAny>) -> PyResult<Vec<RecordBatch>> {
         return Ok(vec![b]);
     }
     let reader = ArrowArrayStreamReader::from_pyarrow_bound(data)?;
-    reader
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e: timelake::arrow::error::ArrowError| PyValueError::new_err(e.to_string()))
+    reader.collect::<Result<Vec<_>, _>>().map_err(arrow_err)
 }
 
 fn to_pyarrow_table(py: Python<'_>, schema: Arc<Schema>, batches: Vec<RecordBatch>) -> PyResult<Py<PyAny>> {
@@ -317,5 +340,6 @@ fn report<'py>(py: Python<'py>, r: &timelake::MaintainReport) -> PyResult<Bound<
 fn _timelake(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Lake>()?;
     m.add_class::<Table>()?;
+    m.add("ConflictError", m.py().get_type::<ConflictError>())?;
     Ok(())
 }
