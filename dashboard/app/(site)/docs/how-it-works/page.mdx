@@ -1,0 +1,153 @@
+export const metadata = { title: "How it works" }
+
+# How it works
+
+This page follows a small table from the first write to a query, and shows the files Timelake creates on the way. It uses the same data as the [Quick start](/docs/quick-start): two pumps reporting a temperature every five minutes.
+
+## The idea in one paragraph
+
+Your data is a set of files in a folder or a bucket. There is no database server. When you write, Timelake turns your rows into files that are sorted and grouped by time, and records which files make up the table. When you read, it uses that record to open only the files, and only the parts of files, that can contain the answer. Everything Timelake needs to know is in those files, so any machine that can reach the bucket can read or write the table.
+
+## The building blocks
+
+| Piece | What it is | Why Timelake uses it |
+| --- | --- | --- |
+| Object storage | A place to keep files by name: S3, R2, Google Cloud Storage, Azure, MinIO, or a local folder. | Cheap, durable and already where most companies keep their data. You pay per GB and per request. |
+| Parquet | A file format that stores a table column by column, compressed, with small summaries (min and max values) for each block. | A query that needs one column, or one time range, can read a small part of the file. |
+| Apache Iceberg | A set of metadata files that says which Parquet files form a table, with their row counts and min and max values. | It makes a folder of files behave like one table with versions, and many tools already read it (DuckDB, Spark, Trino, Snowflake). |
+| Apache Arrow | The in-memory column format that data uses while it moves between programs. | Python, Rust and the query engine share data without converting it. |
+| DataFusion | A SQL engine written in Rust that Timelake embeds. | Timelake adds its own table reader and rules to it, so SQL can use the time-series layout. |
+
+## 1. Creating the table
+
+```bash
+timelake import iot.readings readings.csv --time-column time --series-key device_id
+```
+
+This tells Timelake two things about the data: which column holds the time (`time`) and which columns say which device a row belongs to (`device_id`, the _series key_). Those two choices decide how files are laid out. They are stored with the table, so every writer follows them.
+
+## 2. Writing rows
+
+The same command then appends the six rows of `readings.csv`. Timelake:
+
+1. **Matches columns to the table** by name and converts types (for example, text times become timestamps).
+2. **Splits rows by day.** Each day is a _partition_, a folder such as `time_day=2026-01-05`. A query for one day never opens another day's folder.
+3. **Sorts each day by device, then time.** All of `pump-1`'s rows sit together, in time order. A query for one device reads one small stretch of the file.
+4. **Writes a Parquet file** per day, compressed, with min and max values for each block.
+5. **Updates the last-value index**, a tiny file with the newest row of every device.
+6. **Commits**: writes new metadata that lists the new file, and makes it the current version of the table.
+
+After the first append, the warehouse holds these files:
+
+```text
+warehouse/
+  timelake-tables.json                    the list of tables, for readers that can't list a bucket
+  iot/readings/
+    data/
+      time_day=2026-01-05/
+        01a137a8-….parquet                the six rows, sorted by device and time
+    metadata/
+      v1.metadata.json                    version 1: the empty table (schema, settings)
+      v2.metadata.json                    version 2: the table after the append
+      version-hint.text                   "2": which version is current
+      snap-2566…-….avro                   manifest list: the manifests of version 2
+      7e01002d-…-added-m.avro             manifest: the data files, with row counts and min/max values
+      lvi-2566…-….parquet                 last-value index: newest row per device
+```
+
+The `metadata/` folder is standard Iceberg. Reading a table means following a chain: `version-hint.text` → `v2.metadata.json` → manifest list → manifests → data files.
+
+## 3. Two writers at the same time
+
+There is no server to coordinate writers, so the commit itself has to be safe. Every commit creates the next metadata file, say `v3.metadata.json`, with a _conditional write_: "create this file only if it doesn't exist yet". Object stores do this check atomically. If two writers try at once, exactly one succeeds. The other sees that `v3` exists, reloads the table, and tries again as `v4`. Its data files are already written, so the retry is cheap.
+
+A writer can also attach a **batch id** to an append. If the same id was already committed, the append does nothing. That makes retries safe, for example when a network call timed out but the commit actually went through:
+
+```console
+$ timelake append iot.readings fix.csv --batch-id gateway-7-000001
+  commit 0: 2 rows, 1 files, 0.0 MB, commit 2 ms [0.0s]
+$ timelake append iot.readings fix.csv --batch-id gateway-7-000001
+  commit 0: 2 rows, 1 files, 0.0 MB, commit 0 ms (duplicate batch, skipped) [0.0s]
+```
+
+## 4. Reading
+
+```bash
+timelake sql "SELECT device_id, avg(temp) FROM iot.readings
+              WHERE device_id = 'pump-1' AND time >= TIMESTAMP '2026-01-05 10:00:00'
+              GROUP BY 1"
+```
+
+For a query like this, the reader:
+
+1. **Loads the current version** by following the metadata chain above. It reads every table in the query at the same time, so a join doesn't wait for one table before the next.
+2. **Skips whole files.** The manifests hold each file's min and max time and device. A file whose times all fall before 10:00, or whose devices are all `pump-2`, is never opened.
+3. **Skips parts of files.** Inside a file, Parquet keeps min and max values per block (row groups and pages). Because rows are sorted by device and time, one device's rows are in a few blocks, and the rest are skipped.
+4. **Reads only the needed columns** (`device_id`, `time`, `temp`) and runs the SQL on them.
+
+### The newest value of every device
+
+"What is each device doing right now?" is the most common question for this kind of data, and the most expensive one for a normal engine: it has to look at every row to find each device's newest one. Timelake keeps the answer ready in the last-value index and rewrites such queries to read it:
+
+```console
+$ timelake latest iot.readings
++---------------------+-----------+------+----------+
+| time                | device_id | temp | humidity |
++---------------------+-----------+------+----------+
+| 2026-01-05T10:10:00 | pump-1    | 63.1 | 41       |
+| 2026-01-05T10:10:00 | pump-2    | 60.2 | 44       |
++---------------------+-----------+------+----------+
+```
+
+The same happens for plain SQL written in the usual ways, such as `ORDER BY time DESC LIMIT 1` for one device. See [Querying](/docs/querying) for the exact shapes.
+
+## 5. Keeping the table tidy
+
+Frequent small appends leave the table in a state that gets slower over time:
+
+- **Many small files.** Each append adds at least one file per day it touches, and every file costs a request to open.
+- **Duplicates.** A device may send the same reading twice, or a corrected one.
+- **Old versions.** Every commit keeps the previous versions and their files around.
+
+Other systems run separate jobs for this (AWS Glue, Spark, S3 Tables' managed compaction). Timelake does it in the writer: after an append it merges small files once enough of a similar size pile up, and it expires old versions in batches. `timelake maintain` does a full pass on demand. It rewrites each day into sorted files, removes duplicates (the latest write wins), drops data past the retention period, and deletes files no version needs any more.
+
+```console
+$ timelake sql "SELECT * FROM iot.readings WHERE device_id = 'pump-1' ORDER BY time"
+| 2026-01-05T10:10:00 | pump-1    | 63.1 | 41       |    ← first reading
+| 2026-01-05T10:10:00 | pump-1    | 63.4 | 41       |    ← corrected reading, same time
+$ timelake maintain iot.readings
+iot.readings: compacted 1 partitions (2 → 1 files, 8 rows, 1 duplicates removed) …
+$ timelake sql "SELECT * FROM iot.readings WHERE device_id = 'pump-1' ORDER BY time"
+| 2026-01-05T10:10:00 | pump-1    | 63.4 | 41       |    ← only the latest write is left
+```
+
+## 6. Reading without Timelake
+
+The table is ordinary Iceberg and Parquet, so other tools read it with no Timelake software. DuckDB, for example:
+
+```sql
+INSTALL iceberg; LOAD iceberg;
+SELECT device_id, count(*), max(temp)
+FROM iceberg_scan('warehouse/iot/readings')
+GROUP BY 1 ORDER BY 1;
+
+┌───────────┬──────────────┬─────────────┐
+│ device_id │ count_star() │ max("temp") │
+├───────────┼──────────────┼─────────────┤
+│ pump-1    │            4 │        64.0 │
+│ pump-2    │            3 │        60.2 │
+└───────────┴──────────────┴─────────────┘
+```
+
+These tools see the same rows. They don't get the last-value index or Timelake's query rewrites, so the same queries are usually slower.
+
+## Why requests matter on S3
+
+On a local disk, opening a file takes microseconds. On S3, every request takes tens of milliseconds before the first byte arrives, and costs money. So Timelake tries to make fewer requests and to send them in parallel:
+
+- Fewer, larger files after compaction.
+- Skipping files and blocks using min and max values.
+- The last-value index, which answers "latest" questions with one small file.
+- Loading all tables of a query at once, and reading each file's footer (its table of contents) once.
+
+On real AWS S3, the "latest position of every truck" query took 18 requests with Timelake and 1,733 with a plain Iceberg table. See [Benchmarks](/benchmarks) for the full results.

@@ -1,0 +1,19 @@
+export const metadata = { title: "Benchmarks (docs)" }
+
+# Benchmarks
+
+The results, charts and methodology are on the [Benchmarks page](/benchmarks). The benchmark lives in the repository under `bench/`:
+
+- `bench/v0/`: the v0 comparison. `ingest.py` streams TSBS IoT into Timelake, Lance and PyIceberg as 5-minute micro-batches and runs each system’s maintenance; `run_queries.sh` runs the query suites; `summarize.py` writes `bench/results/V0.md`.
+- `bench/run_aws.sh`: the same benchmark against AWS S3 and S3 Tables, from your machine. The buckets come from `bench/infra` (one CloudFormation stack; `down.sh` deletes it).
+- `bench/run.py`: the query runner. Each query runs in a fresh process: one first run, then repeats, with request and byte counts when going through the proxy.
+- `bench/tools/s3proxy`: counts requests and bytes. In front of AWS it signs each request for the real bucket; in front of a local RustFS it can add a fixed delay per request.
+- `bench/queries/`: the 12 TSBS IoT queries ported to every engine, and 5 single-device queries.
+
+```bash
+aws login --profile timelake        # any AWS account; the scripts use us-east-2
+bench/infra/up.sh                   # buckets: S3, S3 Express, S3 Tables
+bench/run_aws.sh                    # a few hours
+uv run python bench/compare_aws.py laptop
+bench/infra/down.sh
+```

@@ -1,0 +1,65 @@
+export const metadata = { title: "Storage & configuration" }
+
+# Storage & configuration
+
+Timelake uses the Rust `object_store` crate for everything: Iceberg metadata, Parquet data and query scans. The warehouse URL picks the backend.
+
+| Scheme | Backend | Credentials |
+| --- | --- | --- |
+| local path, `file://` | Local filesystem | — |
+| `s3://`, `s3a://` | Amazon S3 and S3-compatible stores | `AWS_*` environment variables, plus options |
+| `gs://` | Google Cloud Storage | `GOOGLE_*` environment variables, plus options |
+| `az://`, `abfs://`, `abfss://` | Azure Blob Storage / ADLS | `AZURE_*` environment variables, plus options |
+| `https://`, `http://` | Any web server or public bucket (read-only, see below) | — |
+| `memory://` | In-memory (tests) | — |
+
+## Options
+
+Options are `object_store` configuration keys: `-o key=value` on the CLI, `storage_options` in Python. For S3, GCS and Azure, unknown keys are an error; other backends ignore options. Common S3 keys:
+
+| Key | Meaning |
+| --- | --- |
+| `aws_region` | Bucket region. |
+| `aws_access_key_id`, `aws_secret_access_key`, `aws_session_token` | Static credentials (otherwise the environment and instance credentials are used). |
+| `aws_endpoint` | Custom endpoint for S3-compatible stores, e.g. `http://localhost:9000`. |
+| `aws_allow_http` | `true` to allow a plain-HTTP endpoint. |
+
+```bash
+timelake -w s3://lake/wh -o aws_endpoint=http://localhost:9000 -o aws_allow_http=true ls
+```
+
+```python
+timelake.Lake("s3://lake/wh", storage_options={
+    "aws_endpoint": "http://localhost:9000",
+    "aws_allow_http": "true",
+})
+```
+
+## Read-only HTTPS
+
+An `http://` or `https://` warehouse (Vercel Blob, a public bucket, a CDN) can be read by the CLI, Python, and the TypeScript client, but not written to. Plain HTTP can't list objects, so tables are found through `timelake-tables.json`. To publish a warehouse at a URL, build it on local disk with its final URL already in the metadata, then upload the files with their paths unchanged:
+
+```bash
+timelake -w https://<store>.public.blob.vercel-storage.com/demo \
+         -o timelake_local_root=./site-files \
+         import tsbs.readings readings.parquet --time-column time --series-key tags_id
+# upload ./site-files/** to the store, keeping paths (dashboard: bun run upload-demo)
+```
+
+`timelake_local_root` works with any URL: objects are written under the local directory while every path recorded in Iceberg metadata keeps the URL.
+
+## Conditional writes are required
+
+Commits create the next `vN.metadata.json` with put-if-absent: on S3 that is `If-None-Match: *`, which AWS S3 has supported since 2024; GCS and Azure use their own preconditions. A store that ignores the condition would let two concurrent writers both believe they committed. Timelake has been tested on local disk, RustFS, AWS S3 and S3 Express One Zone (correctness only). With a store you haven’t tested, check that creating the same table twice fails the second time:
+
+```bash
+timelake -w s3://my-bucket/test create t --schema "x:int"     # created t
+timelake -w s3://my-bucket/test create t --schema "x:int"     # must fail: already exists
+timelake -w s3://my-bucket/test drop t
+```
+
+## Environment
+
+| Variable | Meaning |
+| --- | --- |
+| `TIMELAKE_WAREHOUSE` | Default warehouse for the CLI. |

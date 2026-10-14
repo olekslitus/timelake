@@ -163,3 +163,19 @@
 @media (max-width: 640px) {
   .prose-docs table { display: block; overflow-x: auto; }
 }
+/* Headings link to themselves (rehype-autolink-headings) but look like headings. */
+.prose-docs :is(h1, h2, h3) > a { color: inherit; font-weight: inherit; text-decoration: none; }
+/* Code highlighted at build time (rehype-pretty-code); the theme's colors are these variables. */
+.prose-docs {
+  --shiki-foreground: var(--foreground);
+  --shiki-token-comment: var(--muted-foreground);
+  --shiki-token-punctuation: var(--muted-foreground);
+  --shiki-token-keyword: var(--primary);
+  --shiki-token-link: var(--primary);
+  --shiki-token-string: var(--chart-3);
+  --shiki-token-string-expression: var(--chart-3);
+  --shiki-token-constant: var(--chart-4);
+  --shiki-token-function: var(--foreground);
+  --shiki-token-parameter: var(--foreground);
+}
+.prose-docs figure[data-rehype-pretty-code-figure] { margin: 0; }

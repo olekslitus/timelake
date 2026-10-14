@@ -1,0 +1,124 @@
+export const metadata = { title: "Python API" }
+
+# Python API
+
+The `timelake` package wraps the Rust library with PyO3. Data goes in and out as Apache Arrow, so pyarrow, polars and anything that implements the Arrow C stream interface work without copies. Calls release the GIL while they run.
+
+```python
+import timelake
+```
+
+## Lake
+
+```python
+lake = timelake.Lake(location, storage_options=None)
+```
+
+Opens a warehouse. `location` is a local path or an `s3://`, `gs://`, `az://` or `file://` URL; `storage_options` is a dict of object store options (see Storage & configuration). `lake.location` returns the normalized URL.
+
+| Method | Returns |
+| --- | --- |
+| `create_table(name, schema, time_column=None, series_key=None, chunk=None, retention=None, dedup=None, properties=None)` | `Table`. `schema` is a pyarrow schema or anything with a `.schema`. `chunk` is "hour", "day" or "month"; `retention` a duration such as "90d"; `properties` extra table properties. |
+| `table(name)` | `Table` at its latest version. |
+| `tables()` | `list[str]` of `namespace.table`. |
+| `sql(query, namespace="default")` | `pyarrow.Table`. Unqualified names resolve in `namespace`. |
+| `latest(table)` | `pyarrow.Table` with the newest row per series, from the last-value index (or a scan when the table has none). `table` is a full name such as `"iot.readings"`. |
+| `drop_table(name)` | Deletes the table and its files. |
+
+## Table
+
+Properties: `name`, `location`, `version`, `schema` (pyarrow). Methods that commit advance the handle to the new version.
+
+| Method | Returns |
+| --- | --- |
+| `append(data, batch_id=None, maintain=None)` | dict: `rows`, `files`, `bytes`, `version`, `commit_ms`, `attempts`, `duplicate`, and `maintenance` when inline maintenance did work. `maintain` overrides the table’s auto-maintain setting. |
+| `maintain(compact=True, retention=True, expire=True)` | dict: `partitions_compacted`, `files_rewritten`, `files_written`, `rows_rewritten`, `duplicates_removed`, `partitions_dropped`, `snapshots_expired`, `objects_deleted`, `seconds`. |
+| `info()` | dict: `name`, `version`, `location`, contract (`time_column`, `series_key`, `chunk`, `dedup`), size (`rows`, `files`, `bytes`), `snapshots`, `manifests`, `last_value_index`. |
+| `refresh()` | Reloads the latest committed version. |
+
+## Input data
+
+`append` accepts a pyarrow `RecordBatch`, `Table` or `RecordBatchReader`, a polars DataFrame, or any object with `__arrow_c_stream__`. Columns are matched by name and cast to the table types; missing nullable columns become nulls, and columns not in the table are an error.
+
+## Errors
+
+| Exception | When |
+| --- | --- |
+| `KeyError` | The table doesn’t exist. |
+| `FileExistsError` | Creating a table that already exists. |
+| `ValueError` | Invalid input or configuration: a column not in the table, a missing required column, an unknown storage option. |
+| `RuntimeError` | Storage, query or commit failures, including a commit conflict that could not be rebased. Today a bad duration (`retention="90 parsecs"`), chunk name or type cast also raises `RuntimeError`; these will become `ValueError`. |
+
+## Examples
+
+### Create a table and append
+
+```python
+import datetime as dt
+import pyarrow as pa
+import timelake
+
+lake = timelake.Lake("s3://my-bucket/lake", storage_options={"aws_region": "eu-west-1"})
+schema = pa.schema([("time", pa.timestamp("us", tz="UTC")), ("device_id", pa.string()), ("temp", pa.float64())])
+t = lake.create_table("iot.readings", schema, time_column="time", series_key=["device_id"], retention="365d")
+
+batch = pa.table({"time": [dt.datetime.now(dt.timezone.utc)], "device_id": ["pump-7"], "temp": [71.5]}, schema=schema)
+print(t.append(batch, batch_id="gateway-3-000042"))
+
+hourly = lake.sql("""
+  SELECT time_bucket(INTERVAL '1 hour', time) AS hour, avg(temp) AS temp
+  FROM iot.readings WHERE device_id = 'pump-7' GROUP BY 1 ORDER BY 1
+""")
+```
+
+### Open an existing table
+
+```python
+lake = timelake.Lake("s3://my-bucket/lake")
+print(lake.tables())                 # ['iot.readings', ...]
+t = lake.table("iot.readings")
+print(t.version, t.schema)
+print(t.info()["rows"])
+```
+
+### Write from polars or pandas
+
+```python
+import polars as pl
+
+df = pl.DataFrame({
+    "time": [dt.datetime(2026, 1, 5, 10, 0, tzinfo=dt.timezone.utc)],
+    "device_id": ["pump-7"],
+    "temp": [71.5],
+})
+t.append(df)                                   # polars works directly
+
+import pandas as pd
+t.append(pa.Table.from_pandas(pdf))            # pandas: convert to Arrow first
+```
+
+### Read into pandas or polars
+
+```python
+result = lake.sql("SELECT * FROM iot.readings WHERE time > now() - INTERVAL '1 hour'")
+pdf = result.to_pandas()
+pldf = pl.from_arrow(result)
+```
+
+### Retries with a batch id
+
+If a load may be retried (a queue redelivers a message, a network call times out), give each batch a stable id. A repeat is skipped and reported with `duplicate: True`:
+
+```python
+r = t.append(batch, batch_id="kinesis-shard-7-seq-1234")
+r = t.append(batch, batch_id="kinesis-shard-7-seq-1234")
+r["duplicate"]                                 # True: nothing was written the second time
+```
+
+### Maintenance
+
+```python
+report = t.maintain()                          # compact, apply retention, expire snapshots
+print(report["duplicates_removed"], report["files_rewritten"])
+t.maintain(expire=False)                       # keep old snapshots this time
+```
