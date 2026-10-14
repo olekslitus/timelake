@@ -8,6 +8,13 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
 
 ## Unreleased
 
+### Added
+
+- **Install from the usual registries:** `pip install timelake`, `cargo install timelake-cli` (or the `timelake`
+  library crate), and `npm install @timelake/client`. The CLI also has one-line installers for macOS, Linux and
+  Windows and binaries on each [GitHub release](https://github.com/polythings/timelake/releases), with build
+  attestations. See the [Quick start](https://timelake.dev/docs/quick-start).
+
 ### Changed
 
 - **Table format versions are semantic versions,** separate from Timelake's: tables created now record

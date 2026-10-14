@@ -6,13 +6,19 @@ In about ten minutes: build the `timelake` command, load a small CSV file of sen
 
 ## 1. Install
 
-Timelake isn't published to package registries yet, so you build it from the repository. You need Rust (`rustup` installs the pinned version 1.94 on first use):
+Install the `timelake` command (macOS and Linux):
 
 ```bash
-git clone https://github.com/polythings/timelake && cd timelake
-cargo build --release -p timelake-cli      # takes a few minutes the first time
-export PATH=$PWD/target/release:$PATH      # so "timelake" works from any folder
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/polythings/timelake/releases/latest/download/timelake-cli-installer.sh | sh
 ```
+
+On Windows, in PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/polythings/timelake/releases/latest/download/timelake-cli-installer.ps1 | iex"
+```
+
+Or build it with Rust: `cargo install timelake-cli`. Binaries for each platform are on the [releases page](https://github.com/polythings/timelake/releases).
 
 ## 2. Make some sample data
 
@@ -168,11 +174,11 @@ The table is a folder of ordinary files: Parquet for the data, Apache Iceberg me
 
 ## 8. The same from Python
 
-Build the Python package into a virtual environment in the demo folder (it compiles the Rust engine, so it takes a few minutes), then write and read with pyarrow:
+Install the Python package into a virtual environment in the demo folder, then write and read with pyarrow:
 
 ```bash
 cd ~/timelake-demo
-uv venv && uv pip install pyarrow ~/timelake/crates/timelake-py    # path to your clone
+uv venv && uv pip install timelake pyarrow
 source .venv/bin/activate && python
 ```
 

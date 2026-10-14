@@ -23,7 +23,7 @@ Keep time series in your own bucket on S3, R2, GCS, Azure, MinIO or a local disk
 
 ### CLI
 ```bash
-cargo build --release -p timelake-cli         # → target/release/timelake
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/polythings/timelake/releases/latest/download/timelake-cli-installer.sh | sh   # or: cargo install timelake-cli
 export TIMELAKE_WAREHOUSE=./warehouse         # or s3://bucket/prefix
 
 # Create a time-series table from a file's schema and load it
@@ -45,7 +45,7 @@ timelake -w s3://lake/wh -o aws_endpoint=http://localhost:9000 -o aws_allow_http
 
 ### Python
 ```bash
-uv pip install ./crates/timelake-py       # builds the Rust extension; or `uv sync` for the dev environment
+pip install timelake                      # or `uv sync` in a clone for the dev environment
 ```
 ```python
 import datetime as dt

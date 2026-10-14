@@ -2,7 +2,11 @@ export const metadata = { title: "Python API" }
 
 # Python API
 
-The `timelake` package wraps the Rust library with PyO3. Data goes in and out as Apache Arrow, so pyarrow, polars and anything that implements the Arrow C stream interface work without copies. Calls release the GIL while they run.
+The `timelake` package wraps the Rust library with PyO3. Data goes in and out as Apache Arrow, so pyarrow, polars and anything that implements the Arrow C stream interface work without copies. Calls release the GIL while they run. It needs Python 3.10 or later; wheels cover Linux, macOS and Windows.
+
+```bash
+pip install timelake
+```
 
 ```python
 import timelake

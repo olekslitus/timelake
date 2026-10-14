@@ -28,7 +28,11 @@ hourly[0].velocity_avg                               // number | null, typed fro
 
 ## Install
 
-The package isn't published to npm yet. Inside this repository it is a bun workspace package, so other workspace packages (like the website) depend on it with `"@timelake/client": "workspace:*"`. It needs `zod` 4 as a peer dependency.
+```bash
+npm install @timelake/client zod
+```
+
+It needs `zod` 4 as a peer dependency. Inside this repository it is a bun workspace package, and the website imports its TypeScript source.
 
 ## What it reads
 
