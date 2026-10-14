@@ -353,62 +353,102 @@ async fn read_file(ctx: &SessionContext, path: &str) -> Result<DataFrame> {
     }
 }
 
-async fn load_files(mut table: timelake::Table, files: &[String], load: &LoadArgs) -> Result<()> {
+async fn load_files(table: timelake::Table, files: &[String], args: &LoadArgs) -> Result<()> {
     if files.is_empty() {
         bail!("no input files");
     }
     let ctx = SessionContext::new();
-    let t0 = Instant::now();
-    let (mut rows, mut commits) = (0usize, 0usize);
-    let mut buf: Vec<RecordBatch> = vec![];
-    let mut buffered = 0usize;
-    let flush = |table: timelake::Table, buf: Vec<RecordBatch>, n: usize| {
-        let opts = AppendOptions {
-            batch_id: load.batch_id.as_ref().map(|b| format!("{b}-{n}")),
-            maintain: load.no_maintain.then_some(false),
-            ..Default::default()
-        };
-        async move { table.append(&buf, opts).await }
-    };
+    let mut loader = Loader::new(table, args);
     for file in files {
         let mut stream = read_file(&ctx, file).await?.execute_stream().await?;
-        while let Some(b) = stream.next().await {
-            let b = b?;
-            buffered += b.num_rows();
-            buf.push(b);
-            if load.rows_per_commit > 0 && buffered >= load.rows_per_commit {
-                let (t, r) = flush(table, std::mem::take(&mut buf), commits).await?;
-                report(&r, commits, t0);
-                (table, rows, commits, buffered) = (t, rows + r.rows, commits + 1, 0);
+        while let Some(batch) = stream.next().await {
+            loader.push(batch?);
+            if args.rows_per_commit > 0 && loader.pending_rows >= args.rows_per_commit {
+                loader.flush().await?;
             }
         }
-        if load.rows_per_commit == 0 && buffered > 0 {
-            let (t, r) = flush(table, std::mem::take(&mut buf), commits).await?;
-            report(&r, commits, t0);
-            (table, rows, commits, buffered) = (t, rows + r.rows, commits + 1, 0);
+        if args.rows_per_commit == 0 {
+            loader.flush().await?;
         }
     }
-    if buffered > 0 {
-        let (t, r) = flush(table, std::mem::take(&mut buf), commits).await?;
-        report(&r, commits, t0);
-        (table, rows, commits) = (t, rows + r.rows, commits + 1);
-    }
-    let secs = t0.elapsed().as_secs_f64();
-    println!(
-        "{}: appended {rows} rows in {commits} commits, {secs:.2}s ({:.0} rows/s) → v{}",
-        table.name,
-        rows as f64 / secs,
-        table.version
-    );
+    loader.flush().await?;
+    loader.summary();
     Ok(())
 }
 
+/// Appends record batches to a table, one commit per `--rows-per-commit` rows (or per file).
+struct Loader<'a> {
+    table: timelake::Table,
+    args: &'a LoadArgs,
+    started: Instant,
+    pending: Vec<RecordBatch>,
+    pending_rows: usize,
+    /// Appends attempted so far; numbers the batch ids.
+    appends: usize,
+    commits: usize,
+    duplicates: usize,
+    rows: usize,
+}
+
+impl<'a> Loader<'a> {
+    fn new(table: timelake::Table, args: &'a LoadArgs) -> Self {
+        let started = Instant::now();
+        Self { table, args, started, pending: vec![], pending_rows: 0, appends: 0, commits: 0, duplicates: 0, rows: 0 }
+    }
+
+    fn push(&mut self, batch: RecordBatch) {
+        self.pending_rows += batch.num_rows();
+        self.pending.push(batch);
+    }
+
+    /// Appends the pending batches as one commit, if there are any.
+    async fn flush(&mut self) -> Result<()> {
+        if self.pending_rows == 0 {
+            return Ok(());
+        }
+        let opts = AppendOptions {
+            batch_id: self.args.batch_id.as_ref().map(|b| format!("{b}-{}", self.appends)),
+            maintain: self.args.no_maintain.then_some(false),
+            ..Default::default()
+        };
+        let batches = std::mem::take(&mut self.pending);
+        let (table, r) = self.table.append(&batches, opts).await?;
+        report(&r, self.appends, self.started);
+        self.table = table;
+        self.appends += 1;
+        self.pending_rows = 0;
+        if r.commit.duplicate {
+            self.duplicates += 1;
+        } else {
+            self.commits += 1;
+            self.rows += r.rows;
+        }
+        Ok(())
+    }
+
+    fn summary(&self) {
+        let secs = self.started.elapsed().as_secs_f64();
+        let skipped = match self.duplicates {
+            0 => String::new(),
+            n => format!(", skipped {n} duplicate batches"),
+        };
+        println!(
+            "{}: appended {} rows in {} commits{skipped}, {secs:.2}s ({:.0} rows/s) → v{}",
+            self.table.name,
+            self.rows,
+            self.commits,
+            self.rows as f64 / secs,
+            self.table.version
+        );
+    }
+}
+
 fn report(r: &timelake::AppendResult, n: usize, t0: Instant) {
-    let m = r
-        .maintenance
-        .as_ref()
-        .map(|m| format!(", compacted {} partitions", m.partitions_compacted))
-        .unwrap_or_default();
+    let m = match &r.maintenance {
+        Some(Ok(m)) => format!(", compacted {} partitions", m.partitions_compacted),
+        Some(Err(e)) => format!(", maintenance failed (the append is committed): {e}"),
+        None => String::new(),
+    };
     let dup = if r.commit.duplicate { " (duplicate batch, skipped)" } else { "" };
     eprintln!(
         "  commit {n}: {} rows, {} files, {:.1} MB, commit {:.0} ms{m}{dup} [{:.1}s]",

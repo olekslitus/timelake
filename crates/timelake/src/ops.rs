@@ -28,13 +28,19 @@ pub struct AppendOptions {
     pub properties: HashMap<String, String>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct AppendResult {
+    /// Rows committed by this call: 0 if the batch id was already committed (`commit.duplicate`).
     pub rows: usize,
+    /// Data files committed by this call.
     pub files: usize,
+    /// Bytes of data files committed by this call.
     pub bytes: u64,
     pub commit: CommitInfo,
-    pub maintenance: Option<MaintainReport>,
+    /// Inline maintenance after the commit: `None` if it didn't run or had nothing to do. An error
+    /// here means the append is committed but maintenance failed: don't retry the append (without
+    /// a batch id it would write the rows twice); run [`Table::maintain`] later instead.
+    pub maintenance: Option<Result<MaintainReport>>,
 }
 
 #[derive(Clone, Debug)]
@@ -127,11 +133,19 @@ impl Table {
             res?
         };
 
+        if info.duplicate {
+            let result = AppendResult { rows: 0, files: 0, bytes: 0, commit: info, maintenance: None };
+            return Ok((table, result));
+        }
         let mut result = AppendResult { rows, files: n_files, bytes, commit: info, maintenance: None };
-        if opts.maintain.unwrap_or(table.contract.auto_maintain) && !result.commit.duplicate && n_files > 0 {
-            let (t, report) = table.auto_maintain(touched).await?;
-            result.maintenance = (!report.is_noop()).then_some(report);
-            return Ok((t, result));
+        if opts.maintain.unwrap_or(table.contract.auto_maintain) && n_files > 0 {
+            match table.auto_maintain(touched).await {
+                Ok((t, report)) => {
+                    result.maintenance = (!report.is_noop()).then_some(Ok(report));
+                    return Ok((t, result));
+                }
+                Err(e) => result.maintenance = Some(Err(e)),
+            }
         }
         Ok((table, result))
     }
@@ -418,4 +432,55 @@ async fn prune_metadata_files(table: &Table) -> Result<usize> {
         }
     }
     table.lake.storage().delete_many(doomed).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::{Op, T0, batch, faulty_lake, opts, schema};
+
+    /// A failure in inline maintenance after the append committed is reported, not returned as an
+    /// error: a caller retrying the "failed" append would write the rows twice.
+    #[tokio::test]
+    async fn failed_maintenance_keeps_the_committed_append() {
+        let (lake, store) = faulty_lake();
+        let mut o = opts();
+        o.properties.insert("timelake.compact-min-files".into(), "2".into());
+        let t = lake.create_table("iot.r", &schema(), o).await.unwrap();
+        let (t, r) = t.append(&[batch(&[(T0, 1, 1.0)])], AppendOptions::default()).await.unwrap();
+        assert!(r.maintenance.is_none());
+
+        // The second small file triggers compaction, which can't read the data files.
+        store.fail(Op::Get, "/data/");
+        let (t2, r) = t.append(&[batch(&[(T0 + 1, 1, 2.0)])], AppendOptions::default()).await.unwrap();
+        assert!(matches!(r.maintenance, Some(Err(_))), "{:?}", r.maintenance);
+        assert_eq!((t2.version, r.rows), (t.version + 1, 1));
+        store.heal();
+        assert_eq!(lake.table("iot.r").await.unwrap().files().await.unwrap().len(), 2);
+
+        // Maintenance can simply run again later.
+        let (t3, report) = t2.maintain(MaintainOptions::default()).await.unwrap();
+        assert_eq!(report.files_rewritten, 2);
+        assert_eq!(t3.files().await.unwrap().len(), 1);
+    }
+
+    /// A batch id that is already committed appends nothing, and the result says so.
+    #[tokio::test]
+    async fn duplicate_batch_reports_nothing_appended() {
+        let (lake, store) = faulty_lake();
+        let t = lake.create_table("iot.r", &schema(), opts()).await.unwrap();
+        let opts = AppendOptions { batch_id: Some("b1".into()), ..Default::default() };
+        let rows = batch(&[(T0, 1, 1.0), (T0, 2, 2.0)]);
+        let (t1, first) = t.append(&[rows.clone()], opts.clone()).await.unwrap();
+        assert_eq!((first.rows, first.files, first.commit.duplicate), (2, 1, false));
+        let objects = store.paths().await;
+
+        let (t2, second) = t1.append(&[rows], opts).await.unwrap();
+        assert!(second.commit.duplicate);
+        assert_eq!((second.rows, second.files, second.bytes), (0, 0, 0));
+        assert!(second.maintenance.is_none());
+        assert_eq!(t2.version, t1.version);
+        // The data files written before the duplicate was detected are gone again.
+        assert_eq!(store.paths().await, objects);
+    }
 }

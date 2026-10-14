@@ -51,9 +51,12 @@ fn create_import_query_maintain() {
     assert_eq!(out.lines().count(), 2, "{out}");
     assert!(out.contains(r#""value":2.5"#) && out.contains(r#""value":11.0"#), "{out}");
 
-    // Append the same rows again; compaction dedups them.
+    // Appending the same batch id again is skipped and reported as such.
     let (out, _) = timelake(&warehouse, &["append", "iot.readings", csv, "--batch-id", "b1"]);
     assert!(out.contains("appended 4 rows in 1 commits"), "{out}");
+    let (out, err) = timelake(&warehouse, &["append", "iot.readings", csv, "--batch-id", "b1"]);
+    assert!(out.contains("appended 0 rows in 0 commits, skipped 1 duplicate batches"), "{out}");
+    assert!(err.contains("duplicate batch, skipped"), "{err}");
 
     let (out, _) = timelake(&warehouse, &["maintain"]);
     assert!(out.starts_with("iot.readings: compacted 2 partitions"), "{out}");
