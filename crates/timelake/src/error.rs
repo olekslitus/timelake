@@ -1,46 +1,72 @@
+use std::convert::Infallible;
+
 use thiserror::Error as ThisError;
 
+/// `Result` with Timelake's [`Error`].
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
+/// Errors from Timelake operations.
 #[derive(Debug, ThisError)]
+#[non_exhaustive]
 pub enum Error {
+    /// Bad storage or session configuration (unknown option, unsupported URL scheme, …).
     #[error("{0}")]
     Config(String),
+    /// The table (or one of its metadata files) doesn't exist.
     #[error("not found: {0}")]
     NotFound(String),
+    /// A table with this name already exists.
     #[error("already exists: {0}")]
     AlreadyExists(String),
+    /// Invalid input: a table name, schema, option, or data that doesn't fit the table.
     #[error("invalid: {0}")]
     Invalid(String),
     /// Another writer committed first and the operation could not be rebased.
     #[error("commit conflict: {0}")]
     Conflict(String),
-    #[error("{0}")]
+    /// An invalid table contract property, duration, or partition value.
+    #[error(transparent)]
     Format(#[from] timelake_format::FormatError),
+    /// From Iceberg metadata handling.
     #[error(transparent)]
     Iceberg(#[from] iceberg::Error),
+    /// From object storage.
     #[error(transparent)]
     ObjectStore(#[from] object_store::Error),
+    /// An object path that isn't valid for the store.
     #[error(transparent)]
     ObjectPath(#[from] object_store::path::Error),
+    /// From Arrow compute.
     #[error(transparent)]
     Arrow(#[from] arrow::error::ArrowError),
+    /// From reading or writing Parquet.
     #[error(transparent)]
     Parquet(#[from] parquet::errors::ParquetError),
+    /// From query planning or execution.
     #[error(transparent)]
     DataFusion(#[from] datafusion::error::DataFusionError),
+    /// From local file system access.
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    /// From (de)serializing JSON metadata.
     #[error(transparent)]
     Json(#[from] serde_json::Error),
 }
 
 impl Error {
-    pub fn config(msg: impl Into<String>) -> Self {
+    pub(crate) fn config(msg: impl Into<String>) -> Self {
         Self::Config(msg.into())
     }
-    pub fn invalid(msg: impl Into<String>) -> Self {
+
+    pub(crate) fn invalid(msg: impl Into<String>) -> Self {
         Self::Invalid(msg.into())
+    }
+}
+
+/// Lets APIs that take `impl TryInto<TableName>` also accept a `TableName`.
+impl From<Infallible> for Error {
+    fn from(e: Infallible) -> Self {
+        match e {}
     }
 }
 
@@ -48,7 +74,7 @@ impl From<Error> for datafusion::error::DataFusionError {
     fn from(e: Error) -> Self {
         match e {
             Error::DataFusion(e) => e,
-            e => datafusion::error::DataFusionError::External(Box::new(e)),
+            e => Self::External(Box::new(e)),
         }
     }
 }

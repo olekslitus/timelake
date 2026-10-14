@@ -1,5 +1,7 @@
 //! Smoke test of the `timelake` binary on a temporary local warehouse.
 
+#![allow(clippy::unwrap_used, reason = "test code")]
+
 use std::path::Path;
 use std::process::Command;
 

@@ -1,7 +1,7 @@
 //! Object storage access. One `object_store` client serves everything: Iceberg metadata (through an
 //! adapter that implements iceberg-rust's `Storage` trait), Parquet data written by Timelake, and
-//! DataFusion scans. Any `object_store` backend works: S3 and S3-compatible stores (R2, RustFS,
-//! MinIO), GCS, Azure, and local disk.
+//! DataFusion scans. Any `object_store` backend works: S3 and S3-compatible stores (R2, `RustFS`,
+//! `MinIO`), GCS, Azure, and local disk.
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use futures::StreamExt;
 use futures::stream::BoxStream;
+use futures::{StreamExt, TryStreamExt};
 use iceberg::io::{
     FileIO, FileIOBuilder, FileMetadata, FileRead, FileWrite, InputFile, OutputFile, StorageConfig, StorageFactory,
 };
@@ -37,6 +37,8 @@ pub struct Storage {
     store: Arc<dyn ObjectStore>,
     /// `scheme://authority` with no trailing slash, e.g. `s3://bucket` or `file://`.
     base: String,
+    /// `base` with a trailing slash, as DataFusion registers object stores.
+    url: Url,
     listable: bool,
 }
 
@@ -52,8 +54,7 @@ impl Storage {
     /// `<dir>` while every path recorded in metadata keeps the URL. That builds a warehouse on disk
     /// that is ready to upload to its final location, e.g. a public Vercel Blob or CDN URL that is
     /// then read over HTTPS.
-    pub fn open(url: &Url, options: &HashMap<String, String>) -> Result<Self> {
-        let mut options = options.clone();
+    pub fn open(url: &Url, mut options: HashMap<String, String>) -> Result<Self> {
         let local_root = options.remove(LOCAL_ROOT_OPTION);
         let scheme = url.scheme();
         let authority = url.host_str().unwrap_or_default();
@@ -65,7 +66,7 @@ impl Storage {
         if let Some(dir) = local_root {
             std::fs::create_dir_all(&dir)?;
             let store = LocalFileSystem::new_with_prefix(&dir)?;
-            return Ok(Self { store: Arc::new(store), base, listable: true });
+            return Self::new(Arc::new(store), base, true);
         }
         let store: Arc<dyn ObjectStore> = match scheme {
             "file" => Arc::new(LocalFileSystem::new()),
@@ -113,13 +114,18 @@ impl Storage {
             other => return Err(Error::config(format!("unsupported storage scheme {other:?}"))),
         };
         let listable = !matches!(scheme, "http" | "https");
-        Ok(Self { store, base, listable })
+        Self::new(store, base, listable)
+    }
+
+    fn new(store: Arc<dyn ObjectStore>, base: String, listable: bool) -> Result<Self> {
+        let url = Url::parse(&format!("{base}/")).map_err(|e| Error::config(format!("bad store URL {base}: {e}")))?;
+        Ok(Self { store, base, url, listable })
     }
 
     /// A listable store addressed as `base` (`scheme://authority`).
     #[cfg(test)]
     pub(crate) fn from_store(store: Arc<dyn ObjectStore>, base: &str) -> Self {
-        Self { store, base: base.to_string(), listable: true }
+        Self::new(store, base.to_string(), true).unwrap()
     }
 
     /// Whether the store supports listing (plain HTTPS does not).
@@ -127,13 +133,19 @@ impl Storage {
         self.listable
     }
 
+    /// The underlying `object_store` client.
     pub fn object_store(&self) -> Arc<dyn ObjectStore> {
         self.store.clone()
     }
 
-    /// `scheme://authority`, the key DataFusion registers this store under.
+    /// `scheme://authority`, the prefix of every URI in this store.
     pub fn base_url(&self) -> &str {
         &self.base
+    }
+
+    /// `scheme://authority/`, the URL DataFusion registers this store under.
+    pub fn url(&self) -> &Url {
+        &self.url
     }
 
     /// Store path for an absolute URI under this store.
@@ -143,6 +155,7 @@ impl Storage {
         Ok(Path::parse(rest.trim_start_matches('/'))?)
     }
 
+    /// Reads a whole object.
     pub async fn read(&self, uri: &str) -> Result<Bytes> {
         Ok(self.store.get(&self.path(uri)?).await?.bytes().await?)
     }
@@ -156,6 +169,7 @@ impl Storage {
         }
     }
 
+    /// Whether an object exists.
     pub async fn exists(&self, uri: &str) -> Result<bool> {
         match self.store.head(&self.path(uri)?).await {
             Ok(_) => Ok(true),
@@ -164,6 +178,7 @@ impl Storage {
         }
     }
 
+    /// Writes (or overwrites) an object.
     pub async fn write(&self, uri: &str, bytes: Bytes) -> Result<()> {
         self.store.put(&self.path(uri)?, PutPayload::from_bytes(bytes)).await?;
         Ok(())
@@ -175,11 +190,12 @@ impl Storage {
         let opts = PutOptions { mode: PutMode::Create, ..Default::default() };
         match self.store.put_opts(&self.path(uri)?, PutPayload::from_bytes(bytes), opts).await {
             Ok(_) => Ok(true),
-            Err(object_store::Error::AlreadyExists { .. }) | Err(object_store::Error::Precondition { .. }) => Ok(false),
+            Err(object_store::Error::AlreadyExists { .. } | object_store::Error::Precondition { .. }) => Ok(false),
             Err(e) => Err(e.into()),
         }
     }
 
+    /// Deletes an object; a missing object is not an error.
     pub async fn delete(&self, uri: &str) -> Result<()> {
         match self.store.delete(&self.path(uri)?).await {
             Ok(()) | Err(object_store::Error::NotFound { .. }) => Ok(()),
@@ -187,7 +203,8 @@ impl Storage {
         }
     }
 
-    /// Deletes many objects, using batch deletes where the backend supports them.
+    /// Deletes many objects, using batch deletes where the backend supports them. Returns how
+    /// many were requested; missing objects are not an error.
     pub async fn delete_many(&self, uris: Vec<String>) -> Result<usize> {
         let paths = uris.iter().map(|u| self.path(u)).collect::<Result<Vec<_>>>()?;
         let n = paths.len();
@@ -209,16 +226,21 @@ impl Storage {
         Ok(res.common_prefixes.iter().filter_map(|p| p.filename().map(str::to_string)).collect())
     }
 
-    /// All objects under `uri`, as absolute URIs with size and last-modified time.
-    pub async fn list(&self, uri: &str) -> Result<Vec<(String, u64, chrono::DateTime<chrono::Utc>)>> {
+    /// All objects under `uri`.
+    pub async fn list(&self, uri: &str) -> Result<Vec<ListedObject>> {
         let prefix = self.path(uri)?;
-        let mut out = vec![];
-        let mut s = self.store.list(Some(&prefix));
-        while let Some(m) = s.next().await {
-            let m = m?;
-            out.push((format!("{}/{}", self.base, m.location), m.size, m.last_modified));
-        }
-        Ok(out)
+        self.store
+            .list(Some(&prefix))
+            .map(|m| {
+                let m = m?;
+                Ok(ListedObject {
+                    uri: format!("{}/{}", self.base, m.location),
+                    size: m.size,
+                    last_modified: m.last_modified,
+                })
+            })
+            .try_collect()
+            .await
     }
 
     /// An iceberg-rust `FileIO` backed by this store.
@@ -226,13 +248,26 @@ impl Storage {
         FileIOBuilder::new(Arc::new(IcebergStorageFactory { inner: Some(self.clone()) })).build()
     }
 
+    /// This store as an iceberg-rust `Storage`.
     pub fn iceberg_storage(&self) -> Arc<dyn iceberg::io::Storage> {
         Arc::new(IcebergStorage { inner: Some(self.clone()) })
     }
 
+    /// An iceberg-rust output file at `uri`.
     pub fn output_file(&self, uri: &str) -> OutputFile {
         OutputFile::new(self.iceberg_storage(), uri.to_string())
     }
+}
+
+/// An object found by [`Storage::list`].
+#[derive(Clone, Debug)]
+pub struct ListedObject {
+    /// Absolute URI.
+    pub uri: String,
+    /// Size in bytes.
+    pub size: u64,
+    /// Last modification time.
+    pub last_modified: chrono::DateTime<chrono::Utc>,
 }
 
 // --- iceberg-rust adapter -----------------------------------------------------------------------
@@ -241,8 +276,12 @@ impl Storage {
 // typetag so storages can cross process boundaries; Timelake never serializes them, so the store
 // handle is skipped and a deserialized instance is unusable by design.
 
-fn ice_err(e: impl std::fmt::Display) -> iceberg::Error {
-    iceberg::Error::new(iceberg::ErrorKind::Unexpected, e.to_string())
+fn ice_err(e: impl std::error::Error + Send + Sync + 'static) -> iceberg::Error {
+    iceberg::Error::new(iceberg::ErrorKind::Unexpected, "Timelake storage").with_source(e)
+}
+
+fn detached() -> iceberg::Error {
+    iceberg::Error::new(iceberg::ErrorKind::Unexpected, "detached Timelake storage")
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -254,7 +293,7 @@ struct IcebergStorageFactory {
 #[typetag::serde]
 impl StorageFactory for IcebergStorageFactory {
     fn build(&self, _config: &StorageConfig) -> iceberg::Result<Arc<dyn iceberg::io::Storage>> {
-        let inner = self.inner.clone().ok_or_else(|| ice_err("detached Timelake storage"))?;
+        let inner = self.inner.clone().ok_or_else(detached)?;
         Ok(Arc::new(IcebergStorage { inner: Some(inner) }))
     }
 }
@@ -267,7 +306,7 @@ struct IcebergStorage {
 
 impl IcebergStorage {
     fn s(&self) -> iceberg::Result<&Storage> {
-        self.inner.as_ref().ok_or_else(|| ice_err("detached Timelake storage"))
+        self.inner.as_ref().ok_or_else(detached)
     }
     fn p(&self, path: &str) -> iceberg::Result<Path> {
         self.s()?.path(path).map_err(ice_err)
@@ -308,17 +347,13 @@ impl iceberg::io::Storage for IcebergStorage {
 
     async fn delete_prefix(&self, path: &str) -> iceberg::Result<()> {
         let s = self.s()?;
-        let uris = s.list(path).await.map_err(ice_err)?.into_iter().map(|(u, _, _)| u).collect();
+        let uris = s.list(path).await.map_err(ice_err)?.into_iter().map(|o| o.uri).collect();
         s.delete_many(uris).await.map_err(ice_err)?;
         Ok(())
     }
 
-    async fn delete_stream(&self, mut paths: BoxStream<'static, String>) -> iceberg::Result<()> {
-        let mut all = vec![];
-        while let Some(p) = paths.next().await {
-            all.push(p);
-        }
-        self.s()?.delete_many(all).await.map_err(ice_err)?;
+    async fn delete_stream(&self, paths: BoxStream<'static, String>) -> iceberg::Result<()> {
+        self.s()?.delete_many(paths.collect().await).await.map_err(ice_err)?;
         Ok(())
     }
 
@@ -331,6 +366,7 @@ impl iceberg::io::Storage for IcebergStorage {
     }
 }
 
+#[derive(Debug)]
 struct ObjectRead {
     store: Arc<dyn ObjectStore>,
     path: Path,
@@ -343,6 +379,7 @@ impl FileRead for ObjectRead {
     }
 }
 
+#[derive(Debug)]
 struct ObjectWrite {
     inner: Option<BufWriter>,
 }
@@ -350,12 +387,18 @@ struct ObjectWrite {
 #[async_trait]
 impl FileWrite for ObjectWrite {
     async fn write(&mut self, bs: Bytes) -> iceberg::Result<()> {
-        let w = self.inner.as_mut().ok_or_else(|| ice_err("write after close"))?;
+        let w = self
+            .inner
+            .as_mut()
+            .ok_or_else(|| iceberg::Error::new(iceberg::ErrorKind::Unexpected, "write after close"))?;
         w.put(bs).await.map_err(ice_err)
     }
 
     async fn close(&mut self) -> iceberg::Result<()> {
-        let mut w = self.inner.take().ok_or_else(|| ice_err("file already closed"))?;
+        let mut w = self
+            .inner
+            .take()
+            .ok_or_else(|| iceberg::Error::new(iceberg::ErrorKind::Unexpected, "file already closed"))?;
         w.shutdown().await.map_err(ice_err)
     }
 }
@@ -369,7 +412,6 @@ pub fn warehouse_url(location: &str) -> Result<Url> {
     let p = std::path::Path::new(location);
     std::fs::create_dir_all(p)?;
     let abs = p.canonicalize()?;
-    Url::from_directory_path(&abs)
-        .map(|u| Url::parse(u.as_str().trim_end_matches('/')).unwrap())
-        .map_err(|_| Error::config(format!("bad local path {location}")))
+    let url = Url::from_directory_path(&abs).map_err(|()| Error::config(format!("bad local path {location}")))?;
+    Url::parse(url.as_str().trim_end_matches('/')).map_err(|e| Error::config(format!("bad local path {location}: {e}")))
 }

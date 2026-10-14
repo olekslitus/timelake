@@ -1,11 +1,19 @@
-//! Helpers shared by the integration tests: a small IoT schema, generated batches, and SQL shortcuts.
+//! Helpers shared by the integration tests: a small IoT schema, generated batches, SQL shortcuts,
+//! and plan inspection.
 
 #![allow(dead_code, reason = "each test binary uses a different subset")]
+#![allow(clippy::unwrap_used, reason = "test helpers")]
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use arrow::array::{Array, Float64Array, Int32Array, Int64Array, RecordBatch, StringArray, TimestampMicrosecondArray};
 use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+use timelake::datafusion::datasource::memory::MemorySourceConfig;
+use timelake::datafusion::datasource::physical_plan::{FileGroup, FileScanConfig};
+use timelake::datafusion::datasource::source::DataSourceExec;
+use timelake::datafusion::physical_plan::ExecutionPlan;
+use timelake::datafusion::physical_plan::empty::EmptyExec;
 use timelake::{Lake, Session, TableOptions};
 
 pub(crate) const DAY: i64 = 86_400_000_000;
@@ -22,22 +30,15 @@ pub(crate) fn schema() -> Arc<Schema> {
 
 /// `devices` devices, one point every `step` µs from `start`, `n` points each, in time order.
 pub(crate) fn batch(start: i64, n: i64, step: i64, devices: i32, value: impl Fn(i32, i64) -> f64) -> RecordBatch {
-    let (mut t, mut d, mut s, mut v) = (vec![], vec![], vec![], vec![]);
-    for i in 0..n {
-        for dev in 0..devices {
-            t.push(start + i * step);
-            d.push(dev);
-            s.push(format!("site-{}", dev % 3));
-            v.push(value(dev, i));
-        }
-    }
+    let points: Vec<(i64, i32)> = (0..n).flat_map(|i| (0..devices).map(move |d| (i, d))).collect();
+    let times = points.iter().map(|&(i, _)| start + i * step);
     RecordBatch::try_new(
         schema(),
         vec![
-            Arc::new(TimestampMicrosecondArray::from(t).with_timezone("UTC")),
-            Arc::new(Int32Array::from(d)),
-            Arc::new(StringArray::from(s)),
-            Arc::new(Float64Array::from(v)),
+            Arc::new(TimestampMicrosecondArray::from_iter_values(times).with_timezone("UTC")),
+            Arc::new(Int32Array::from_iter_values(points.iter().map(|&(_, d)| d))),
+            Arc::new(StringArray::from_iter_values(points.iter().map(|&(_, d)| format!("site-{}", d % 3)))),
+            Arc::new(Float64Array::from_iter_values(points.iter().map(|&(i, d)| value(d, i)))),
         ],
     )
     .unwrap()
@@ -51,7 +52,7 @@ pub(crate) fn opts() -> TableOptions {
 /// A lake in a fresh temporary directory (deleted when the guard drops).
 pub(crate) fn temp_lake() -> (tempfile::TempDir, Lake) {
     let dir = tempfile::tempdir().unwrap();
-    let lake = Lake::open(dir.path().to_str().unwrap(), Default::default()).unwrap();
+    let lake = Lake::open(dir.path().to_str().unwrap(), HashMap::new()).unwrap();
     (dir, lake)
 }
 
@@ -76,4 +77,52 @@ pub(crate) fn strings(batches: &[RecordBatch], column: &str) -> Vec<String> {
             (0..c.len()).map(move |i| c.value(i).to_string())
         })
         .collect()
+}
+
+/// What a scan in a physical plan reads.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Scan {
+    /// The last-value index (an in-memory batch).
+    LastValueIndex,
+    /// This many data files.
+    Files(usize),
+    /// Nothing: every file was pruned.
+    Nothing,
+}
+
+/// The scans and operator names of a query's physical plan.
+#[derive(Debug)]
+pub(crate) struct Plan {
+    pub(crate) scans: Vec<Scan>,
+    pub(crate) operators: Vec<String>,
+}
+
+impl Plan {
+    pub(crate) fn has(&self, operator: &str) -> bool {
+        self.operators.iter().any(|o| o == operator)
+    }
+}
+
+pub(crate) async fn plan(s: &Session, sql: &str) -> Plan {
+    fn walk(node: &Arc<dyn ExecutionPlan>, plan: &mut Plan) {
+        plan.operators.push(node.name().to_string());
+        if node.downcast_ref::<EmptyExec>().is_some() {
+            plan.scans.push(Scan::Nothing);
+        }
+        if let Some(exec) = node.downcast_ref::<DataSourceExec>() {
+            let source = exec.data_source();
+            if let Some(files) = source.downcast_ref::<FileScanConfig>() {
+                plan.scans.push(Scan::Files(files.file_groups.iter().map(FileGroup::len).sum()));
+            } else if source.downcast_ref::<MemorySourceConfig>().is_some() {
+                plan.scans.push(Scan::LastValueIndex);
+            }
+        }
+        for child in node.children() {
+            walk(child, plan);
+        }
+    }
+    let physical = s.sql(sql).await.unwrap().create_physical_plan().await.unwrap();
+    let mut plan = Plan { scans: vec![], operators: vec![] };
+    walk(&physical, &mut plan);
+    plan
 }

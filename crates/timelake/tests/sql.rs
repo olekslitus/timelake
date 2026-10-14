@@ -3,7 +3,7 @@
 mod common;
 
 use common::{T0, batch, opts, rows, scalar_i64, schema, strings, temp_lake};
-use timelake::{Session, TableOptions};
+use timelake::{AppendOptions, Session, TableOptions};
 
 /// `SHOW TABLES` and `information_schema` list the lake without blocking the runtime, so they
 /// work on a single-threaded runtime too.
@@ -36,7 +36,7 @@ async fn information_schema_on_current_thread_runtime() {
 async fn queries_run_on_current_thread_runtime() {
     let (_dir, lake) = temp_lake();
     let t = lake.create_table("iot.readings", &schema(), opts()).await.unwrap();
-    t.append(&[batch(T0, 10, 1_000_000, 3, |_, _| 1.0)], Default::default()).await.unwrap();
+    t.append(&[batch(T0, 10, 1_000_000, 3, |_, _| 1.0)], AppendOptions::default()).await.unwrap();
     let s = Session::new(lake);
     assert_eq!(scalar_i64(&s, "SELECT count(*) FROM iot.readings").await, 30);
 }
