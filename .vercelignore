@@ -4,6 +4,7 @@
 !/packages
 !/package.json
 !/bun.lock
+!/CHANGELOG.md
 /dashboard/node_modules
 /dashboard/.next
 /dashboard/.env*
