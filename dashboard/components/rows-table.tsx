@@ -6,7 +6,9 @@ import type { Row } from "@/lib/lake/types"
 export function RowsTable({ rows, max = 500 }: { rows: Row[]; max?: number }) {
   if (rows.length === 0) return <p className="py-6 text-center text-sm text-muted-foreground">No rows.</p>
   const columns = Object.keys(rows[0])
-  const numeric = new Set(columns.filter((c) => rows.slice(0, 50).every((r) => r[c] === null || typeof r[c] === "number")))
+  const numeric = new Set(
+    columns.filter((c) => rows.slice(0, 50).every((r) => r[c] === null || typeof r[c] === "number")),
+  )
   return (
     <div className="space-y-2">
       <Table>

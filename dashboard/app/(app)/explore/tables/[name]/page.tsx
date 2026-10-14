@@ -1,6 +1,6 @@
-import { Suspense } from "react"
-import Link from "next/link"
 import { ChevronLeft, Clock, Files, HardDrive, History, Rows3 } from "lucide-react"
+import Link from "next/link"
+import { Suspense } from "react"
 
 import { ErrorState } from "@/components/error-state"
 import { PageHeader } from "@/components/page-header"
@@ -17,7 +17,10 @@ import { attempt, loadTable } from "@/lib/lake"
 export default function TablePage({ params }: PageProps<"/explore/tables/[name]">) {
   return (
     <>
-      <Link href="/explore/tables" className="-mb-4 inline-flex w-fit items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+      <Link
+        href="/explore/tables"
+        className="-mb-4 inline-flex w-fit items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+      >
         <ChevronLeft className="size-4" /> Tables
       </Link>
       <Suspense fallback={<StatGridSkeleton count={4} />}>
@@ -35,8 +38,14 @@ async function TableView({ params }: { params: PageProps<"/explore/tables/[name]
   if (!res.ok) return <ErrorState error={res.error} />
   const { info, latestRows, now } = res.value
   const key = info.series_key[0] ?? null
-  const seriesValues = key ? [...new Set(latestRows.map((r) => String(r[key])))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })) : []
-  const numericColumns = info.schema.filter((f) => NUMERIC.test(f.type) && !info.series_key.includes(f.name)).map((f) => f.name)
+  const seriesValues = key
+    ? [...new Set(latestRows.map((r) => String(r[key])))].sort((a, b) =>
+        a.localeCompare(b, undefined, { numeric: true }),
+      )
+    : []
+  const numericColumns = info.schema
+    .filter((f) => NUMERIC.test(f.type) && !info.series_key.includes(f.name))
+    .map((f) => f.name)
 
   return (
     <>
@@ -55,9 +64,28 @@ async function TableView({ params }: { params: PageProps<"/explore/tables/[name]
 
       <StatGrid>
         <StatCard label="Rows" value={formatCompact(info.rows)} hint={`${formatNumber(info.rows)} rows`} icon={Rows3} />
-        <StatCard label="Live data" value={formatBytes(info.bytes)} hint={`${info.files} files · ${info.manifests} manifests`} icon={HardDrive} />
-        <StatCard label="Snapshots" value={info.snapshot_count} hint={info.retention_days ? `data retention ${info.retention_days} d` : "data kept forever"} icon={History} />
-        <StatCard label="Last commit" value={formatAgo(info.last_commit_ms, now)} hint={info.last_commit_ms ? new Date(info.last_commit_ms).toISOString().replace("T", " ").slice(0, 19) + " UTC" : undefined} icon={Clock} />
+        <StatCard
+          label="Live data"
+          value={formatBytes(info.bytes)}
+          hint={`${info.files} files · ${info.manifests} manifests`}
+          icon={HardDrive}
+        />
+        <StatCard
+          label="Snapshots"
+          value={info.snapshot_count}
+          hint={info.retention_days ? `data retention ${info.retention_days} d` : "data kept forever"}
+          icon={History}
+        />
+        <StatCard
+          label="Last commit"
+          value={formatAgo(info.last_commit_ms, now)}
+          hint={
+            info.last_commit_ms
+              ? new Date(info.last_commit_ms).toISOString().replace("T", " ").slice(0, 19) + " UTC"
+              : undefined
+          }
+          icon={Clock}
+        />
       </StatGrid>
 
       <Tabs defaultValue={info.time_column ? "explore" : "data"}>
@@ -80,7 +108,8 @@ async function TableView({ params }: { params: PageProps<"/explore/tables/[name]
               <CardHeader>
                 <CardTitle>Latest value per series</CardTitle>
                 <CardDescription>
-                  {formatNumber(latestRows.length)} series, read from the last-value index{info.last_value_index ? "" : " (no index; computed by scan)"}.
+                  {formatNumber(latestRows.length)} series, read from the last-value index
+                  {info.last_value_index ? "" : " (no index; computed by scan)"}.
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -166,7 +195,9 @@ async function TableView({ params }: { params: PageProps<"/explore/tables/[name]
           <Card>
             <CardHeader>
               <CardTitle>Snapshots</CardTitle>
-              <CardDescription>Most recent 50 commits. Appends add data; replace = compaction; delete = retention.</CardDescription>
+              <CardDescription>
+                Most recent 50 commits. Appends add data; replace = compaction; delete = retention.
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <Table>
@@ -183,16 +214,24 @@ async function TableView({ params }: { params: PageProps<"/explore/tables/[name]
                 <TableBody>
                   {info.snapshots.map((s) => (
                     <TableRow key={s.id}>
-                      <TableCell className="font-mono text-xs">{new Date(s.timestamp_ms).toISOString().replace("T", " ").slice(0, 19)}</TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {new Date(s.timestamp_ms).toISOString().replace("T", " ").slice(0, 19)}
+                      </TableCell>
                       <TableCell>
                         <Badge variant={s.operation === "append" ? "secondary" : "outline"}>{s.operation}</Badge>
                       </TableCell>
-                      <TableCell className="text-right font-mono tabular-nums">{formatNumber(s.added_records)}</TableCell>
-                      <TableCell className="text-right font-mono tabular-nums">{formatNumber(s.deleted_records)}</TableCell>
+                      <TableCell className="text-right font-mono tabular-nums">
+                        {formatNumber(s.added_records)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono tabular-nums">
+                        {formatNumber(s.deleted_records)}
+                      </TableCell>
                       <TableCell className="text-right font-mono tabular-nums">
                         +{s.added_files} / −{s.deleted_files}
                       </TableCell>
-                      <TableCell className="text-right font-mono tabular-nums">{formatNumber(s.total_records)}</TableCell>
+                      <TableCell className="text-right font-mono tabular-nums">
+                        {formatNumber(s.total_records)}
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

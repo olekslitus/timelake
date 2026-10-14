@@ -9,11 +9,13 @@ const ZONES = [
     art: (
       <>
         <span className="fg">python</span> --+ PyO3{"\n"}
-        <span className="fg">cli   </span> --+{"\n"}
-        <span className="fg">rust  </span> --+{"\n"}
+        <span className="fg">cli </span> --+{"\n"}
+        <span className="fg">rust </span> --+{"\n"}
         {"           v\n"}
         <span className="hi">[ timelake core ]</span>
-        {"\n  writer    sort, partition,\n            Parquet + index\n  commit    put-if-absent,\n            retry\n  maintain  inline, tiered\n  reader    DataFusion SQL,\n            pruning, index"}
+        {
+          "\n  writer    sort, partition,\n            Parquet + index\n  commit    put-if-absent,\n            retry\n  maintain  inline, tiered\n  reader    DataFusion SQL,\n            pruning, index"
+        }
       </>
     ),
     chips: ["Rust", "Apache Arrow", "Apache DataFusion", "Parquet", "object_store", "PyO3"],
@@ -50,8 +52,8 @@ const ZONES = [
     where: "the same files, no export",
     art: (
       <>
-        <span className="fg">DuckDB   </span> iceberg_scan{"\n"}
-        <span className="fg">Spark    </span> Hadoop catalog{"\n"}
+        <span className="fg">DuckDB </span> iceberg_scan{"\n"}
+        <span className="fg">Spark </span> Hadoop catalog{"\n"}
         <span className="fg">PyIceberg</span> static table
       </>
     ),
@@ -123,8 +125,9 @@ export function WhereItRuns() {
           <div className="flex max-w-xs flex-col gap-2">
             <div className="label-mono">No catalog server</div>
             <p className="text-sm text-muted-foreground">
-              A commit is one conditional write of the next <code className="font-mono text-[0.85em]">vN.metadata.json</code>.
-              Two writers can&apos;t both win, so there is no lock service and no database.
+              A commit is one conditional write of the next{" "}
+              <code className="font-mono text-[0.85em]">vN.metadata.json</code>. Two writers can&apos;t both win, so
+              there is no lock service and no database.
             </p>
           </div>
         </div>

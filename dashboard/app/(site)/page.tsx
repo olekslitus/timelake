@@ -1,11 +1,22 @@
+import {
+  ArrowRight,
+  Boxes,
+  Database,
+  FileStack,
+  GitCommitHorizontal,
+  Layers,
+  Rows3,
+  ScanSearch,
+  Timer,
+  Wrench,
+} from "lucide-react"
 import Link from "next/link"
-import { ArrowRight, Boxes, Database, FileStack, GitCommitHorizontal, Layers, Rows3, ScanSearch, Timer, Wrench } from "lucide-react"
 
 import { TimelakeMark } from "@/components/brand/timelake-mark"
 import { CodeBlock } from "@/components/code-block"
 import { GithubIcon } from "@/components/github-icon"
-import { Button } from "@/components/ui/button"
 import { StackDiagram } from "@/components/stack-diagram"
+import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { WhereItRuns } from "@/components/where-it-runs"
 import { REPO_URL } from "@/lib/site"
@@ -60,15 +71,15 @@ const PROMISES = [
       <>
         <span className="fg">STORAGE </span>
         {"  GB-month x $0.023\n"}
-        <span className="fg">GET     </span>
+        <span className="fg">GET </span>
         {"  per 1k   x $0.0004\n"}
-        <span className="fg">PUT     </span>
+        <span className="fg">PUT </span>
         {"  per 1k   x $0.005\n"}
         <span className="fg">SERVERS </span>
         {"  ............ "}
         <span className="hi">$0</span>
         {"\n"}
-        <span className="fg">JOBS    </span>
+        <span className="fg">JOBS </span>
         {"  ............ "}
         <span className="hi">$0</span>
         {"\n"}
@@ -80,7 +91,10 @@ const PROMISES = [
 
 const SUPPORT = [
   { title: "Open format", body: "Parquet files and open table metadata. DuckDB, Spark and PyIceberg read them today." },
-  { title: "Any object store", body: "S3, R2, GCS, Azure, MinIO or a disk, and read-only from any HTTPS host. Tested so far on AWS S3, RustFS and local disk." },
+  {
+    title: "Any object store",
+    body: "S3, R2, GCS, Azure, MinIO or a disk, and read-only from any HTTPS host. Tested so far on AWS S3, RustFS and local disk.",
+  },
   { title: "Apache 2.0", body: "The engine, the CLI and the clients. No closed core." },
 ]
 
@@ -136,10 +150,26 @@ const HOW = [
 ]
 
 const HIGHLIGHTS = [
-  { value: "2.1–13×", label: "faster TSBS IoT queries on S3 right after streaming ingest", detail: "1.46 s vs 3.1–18.5 s, first run" },
-  { value: "2.5 h", label: "until S3 Tables compacted on its own; Timelake compacts as it writes", detail: "then 1.25 s vs 1.5–2.4 s" },
-  { value: "18 vs 1,733", label: "requests for the latest position of every truck", detail: "S3 Tables 1,563, Lance 3,614" },
-  { value: "22 min", label: "to stream 1,728 commits to S3, compaction included", detail: "Lance 29, S3 Tables 42, PyIceberg 69" },
+  {
+    value: "2.1–13×",
+    label: "faster TSBS IoT queries on S3 right after streaming ingest",
+    detail: "1.46 s vs 3.1–18.5 s, first run",
+  },
+  {
+    value: "2.5 h",
+    label: "until S3 Tables compacted on its own; Timelake compacts as it writes",
+    detail: "then 1.25 s vs 1.5–2.4 s",
+  },
+  {
+    value: "18 vs 1,733",
+    label: "requests for the latest position of every truck",
+    detail: "S3 Tables 1,563, Lance 3,614",
+  },
+  {
+    value: "22 min",
+    label: "to stream 1,728 commits to S3, compaction included",
+    detail: "Lance 29, S3 Tables 42, PyIceberg 69",
+  },
 ]
 
 const BTN = "font-mono text-xs uppercase tracking-[0.06em]"
@@ -175,13 +205,25 @@ export default function Home() {
             <Button size="lg" className={BTN} nativeButton={false} render={<Link href="/docs/quick-start" />}>
               Quick start <ArrowRight />
             </Button>
-            <Button size="lg" variant="outline" className={BTN} nativeButton={false} render={<Link href="/benchmarks" />}>
+            <Button
+              size="lg"
+              variant="outline"
+              className={BTN}
+              nativeButton={false}
+              render={<Link href="/benchmarks" />}
+            >
               Benchmarks
             </Button>
             <Button size="lg" variant="outline" className={BTN} nativeButton={false} render={<Link href="/explore" />}>
               Explorer
             </Button>
-            <Button size="lg" variant="ghost" className={BTN} nativeButton={false} render={<a href={REPO_URL} target="_blank" rel="noreferrer" />}>
+            <Button
+              size="lg"
+              variant="ghost"
+              className={BTN}
+              nativeButton={false}
+              render={<a href={REPO_URL} target="_blank" rel="noreferrer" />}
+            >
               <GithubIcon /> GitHub
             </Button>
           </div>
@@ -232,8 +274,8 @@ export default function Home() {
           ))}
         </div>
         <p className="max-w-3xl text-xs text-muted-foreground">
-          Measured on TSBS IoT data streamed as 1,728 five-minute batches, from a laptop to AWS S3 in us-east-2, so times
-          include that trip for every system. The IIoT benchmark is next.{" "}
+          Measured on TSBS IoT data streamed as 1,728 five-minute batches, from a laptop to AWS S3 in us-east-2, so
+          times include that trip for every system. The IIoT benchmark is next.{" "}
           <Link href="/benchmarks" className="underline decoration-primary underline-offset-4 hover:text-foreground">
             All results
           </Link>
@@ -243,8 +285,8 @@ export default function Home() {
       {/* Why */}
       <section className="flex flex-col gap-6">
         <SectionHead label="Why" title="Time series on a lake today means small files and extra jobs">
-          Teams put telemetry in S3 Tables or self-managed Iceberg because it is cheap, durable and readable by every engine.
-          Then they write custom jobs to make it fast.
+          Teams put telemetry in S3 Tables or self-managed Iceberg because it is cheap, durable and readable by every
+          engine. Then they write custom jobs to make it fast.
         </SectionHead>
         <div className="cells md:grid-cols-3">
           {PROBLEMS.map((p) => (
@@ -260,8 +302,8 @@ export default function Home() {
       {/* Where it runs */}
       <section className="flex flex-col gap-6">
         <SectionHead label="Architecture" title="Where every part of Timelake runs">
-          Four places code can run, one bucket underneath, and exactly what crosses the wire. Writers, maintenance and readers
-          are stateless: everything durable is in object storage.
+          Four places code can run, one bucket underneath, and exactly what crosses the wire. Writers, maintenance and
+          readers are stateless: everything durable is in object storage.
         </SectionHead>
         <WhereItRuns />
       </section>
@@ -326,8 +368,8 @@ SELECT device_id, max(time) FROM iceberg_scan('s3://my-bucket/lake/iot/readings'
       <section className="flex flex-col gap-6">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <SectionHead label="Benchmarks" title="v0 against S3 Tables, Iceberg and Lance">
-            TSBS IoT data (23.3M rows) streamed as 1,728 five-minute batches into Timelake, Lance, naive Iceberg and AWS S3
-            Tables, then queried with the 12 TSBS IoT queries.
+            TSBS IoT data (23.3M rows) streamed as 1,728 five-minute batches into Timelake, Lance, naive Iceberg and AWS
+            S3 Tables, then queried with the 12 TSBS IoT queries.
           </SectionHead>
           <Button variant="outline" className={BTN} nativeButton={false} render={<Link href="/benchmarks" />}>
             All results <ArrowRight />
@@ -336,7 +378,7 @@ SELECT device_id, max(time) FROM iceberg_scan('s3://my-bucket/lake/iot/readings'
         <div className="cells sm:grid-cols-2 lg:grid-cols-4">
           {HIGHLIGHTS.map((h) => (
             <div key={h.label} className="flex flex-col gap-2 p-5">
-              <span className="font-mono text-2xl tabular-nums text-primary">{h.value}</span>
+              <span className="font-mono text-2xl text-primary tabular-nums">{h.value}</span>
               <span className="text-sm">{h.label}</span>
               <span className="mt-auto font-mono text-xs text-muted-foreground">{h.detail}</span>
             </div>

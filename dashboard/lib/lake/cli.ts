@@ -1,5 +1,4 @@
 import "server-only"
-
 import { execFile } from "node:child_process"
 import { access, constants } from "node:fs/promises"
 import path from "node:path"
@@ -16,11 +15,13 @@ import type { LakeBackend, Row, SeriesQuery, SeriesResult, TableInfo } from "./t
 const run = promisify(execFile)
 
 /** The `timelake` CLI binary (cargo build --release -p timelake-cli). */
-const BIN = process.env.TIMELAKE_BIN ?? path.resolve(/*turbopackIgnore: true*/ process.cwd(), "../target/release/timelake")
+const BIN =
+  process.env.TIMELAKE_BIN ?? path.resolve(/*turbopackIgnore: true*/ process.cwd(), "../target/release/timelake")
 
 /** Warehouse to browse. Defaults to the TSBS IoT tables from the v0 benchmark. */
 const WAREHOUSE =
-  process.env.TIMELAKE_WAREHOUSE ?? path.resolve(/*turbopackIgnore: true*/ process.cwd(), "../bench/data/v0/local/timelake/lake")
+  process.env.TIMELAKE_WAREHOUSE ??
+  path.resolve(/*turbopackIgnore: true*/ process.cwd(), "../bench/data/v0/local/timelake/lake")
 
 /** Storage options as "k=v,k=v" (e.g. aws_endpoint=http://localhost:9000,aws_allow_http=true). */
 const OPTIONS = (process.env.TIMELAKE_OPTIONS ?? "")

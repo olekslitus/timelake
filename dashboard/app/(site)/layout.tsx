@@ -16,8 +16,13 @@ export default function SiteLayout({ children }: { children: React.ReactNode }) 
           <div className="flex flex-col gap-1 text-xs text-muted-foreground sm:items-end">
             <span className="label-mono">
               v0 ·{" "}
-              <a href={LICENSE_URL} className="hover:text-foreground">Apache 2.0</a> ·{" "}
-              <a href={REPO_URL} className="hover:text-foreground">GitHub</a>
+              <a href={LICENSE_URL} className="hover:text-foreground">
+                Apache 2.0
+              </a>{" "}
+              ·{" "}
+              <a href={REPO_URL} className="hover:text-foreground">
+                GitHub
+              </a>
             </span>
             <span>Built on Apache Arrow, Apache DataFusion, Apache Parquet and Apache Iceberg.</span>
           </div>

@@ -10,8 +10,8 @@ export default function Page() {
     <DocPage href="/docs/quick-start">
       <h1>Quick start</h1>
       <p>
-        In about ten minutes: build the <code>timelake</code> command, load a small CSV file of sensor readings, query it,
-        fix a bad reading, and read the same table from Python and DuckDB. Every output below is real.
+        In about ten minutes: build the <code>timelake</code> command, load a small CSV file of sensor readings, query
+        it, fix a bad reading, and read the same table from Python and DuckDB. Every output below is real.
       </p>
 
       <h2>1. Install</h2>
@@ -45,15 +45,15 @@ EOF`}</pre>
 
       <h2>3. Choose where tables live</h2>
       <p>
-        A <strong>warehouse</strong> is the folder or bucket that holds your tables. Start with a local folder; later the same
-        commands work with <code>s3://bucket/prefix</code> (see <Link href="/docs/storage">Storage</Link>).
+        A <strong>warehouse</strong> is the folder or bucket that holds your tables. Start with a local folder; later
+        the same commands work with <code>s3://bucket/prefix</code> (see <Link href="/docs/storage">Storage</Link>).
       </p>
       <pre>{`export TIMELAKE_WAREHOUSE=./warehouse`}</pre>
 
       <h2>4. Load the data</h2>
       <p>
-        <code>import</code> creates a table from the file&apos;s columns, then loads the rows. Tell it which column is the
-        time and which column names the device (the <strong>series key</strong>):
+        <code>import</code> creates a table from the file&apos;s columns, then loads the rows. Tell it which column is
+        the time and which column names the device (the <strong>series key</strong>):
       </p>
       <pre>{`$ timelake import iot.readings readings.csv --time-column time --series-key device_id
 created iot.readings
@@ -69,8 +69,8 @@ $ timelake ls
 iot.devices
 iot.readings`}</pre>
       <p>
-        <code>iot</code> is the <strong>namespace</strong> (a group of tables) and <code>readings</code> the table name. Each
-        load is one <strong>commit</strong>, which creates a new version of the table (<code>v2</code>).
+        <code>iot</code> is the <strong>namespace</strong> (a group of tables) and <code>readings</code> the table name.
+        Each load is one <strong>commit</strong>, which creates a new version of the table (<code>v2</code>).
       </p>
 
       <h2>5. Query it</h2>
@@ -107,8 +107,8 @@ iot.readings`}</pre>
 
       <h2>6. Send a correction</h2>
       <p>
-        Suppose <code>pump-1</code>&apos;s 10:10 reading was wrong. Send the corrected value, plus a new reading, as another
-        file. The <code>--batch-id</code> makes the load safe to retry: running it twice loads it once.
+        Suppose <code>pump-1</code>&apos;s 10:10 reading was wrong. Send the corrected value, plus a new reading, as
+        another file. The <code>--batch-id</code> makes the load safe to retry: running it twice loads it once.
       </p>
       <pre>{`$ cat > fix.csv <<'EOF'
 time,device_id,temp,humidity
@@ -121,8 +121,8 @@ $ timelake append iot.readings fix.csv --batch-id gateway-7-000001
 $ timelake append iot.readings fix.csv --batch-id gateway-7-000001
   commit 0: 2 rows, 1 files, 0.0 MB, commit 0 ms (duplicate batch, skipped) [0.0s]`}</pre>
       <p>
-        Both readings for 10:10 are in the table for now. <code>maintain</code> tidies the table: it merges small files and
-        keeps only the last write for each pump and time.
+        Both readings for 10:10 are in the table for now. <code>maintain</code> tidies the table: it merges small files
+        and keeps only the last write for each pump and time.
       </p>
       <pre>{`$ timelake maintain iot.readings
 iot.readings: compacted 1 partitions (2 → 1 files, 8 rows, 1 duplicates removed), … → v4
@@ -137,8 +137,9 @@ $ timelake sql "SELECT * FROM iot.readings WHERE device_id = 'pump-1' ORDER BY t
 | 2026-01-05T10:15:00 | pump-1    | 64.0 | 40       |
 +---------------------+-----------+------+----------+`}</pre>
       <p>
-        You rarely need to run <code>maintain</code> yourself: every append already does the cheap part of this work. Run it
-        on a schedule (cron, a Lambda) if you want each day&apos;s data in one sorted file and duplicates gone quickly.
+        You rarely need to run <code>maintain</code> yourself: every append already does the cheap part of this work.
+        Run it on a schedule (cron, a Lambda) if you want each day&apos;s data in one sorted file and duplicates gone
+        quickly.
       </p>
 
       <h2>7. Look at the table</h2>
@@ -158,8 +159,8 @@ data       7 rows in 1 files, 0.0 MB
 
       <h2>8. The same from Python</h2>
       <p>
-        Build the Python package into a virtual environment in the demo folder (it compiles the Rust engine, so it takes a few
-        minutes), then write and read with pyarrow:
+        Build the Python package into a virtual environment in the demo folder (it compiles the Rust engine, so it takes
+        a few minutes), then write and read with pyarrow:
       </p>
       <pre>{`cd ~/timelake-demo
 uv venv && uv pip install pyarrow ~/timelake/crates/timelake-py    # path to your clone
@@ -192,8 +193,9 @@ print(lake.sql("SELECT device_id, avg(temp) AS avg_temp FROM iot.py_readings GRO
 
 print(lake.latest("iot.readings").to_pylist())   # the table loaded by the CLI above`}</pre>
       <p>
-        Results come back as <code>pyarrow.Table</code>; call <code>.to_pandas()</code> or <code>polars.from_arrow(…)</code>{" "}
-        if you prefer those. All methods are listed in the <Link href="/docs/python">Python API</Link>.
+        Results come back as <code>pyarrow.Table</code>; call <code>.to_pandas()</code> or{" "}
+        <code>polars.from_arrow(…)</code> if you prefer those. All methods are listed in the{" "}
+        <Link href="/docs/python">Python API</Link>.
       </p>
 
       <h2>9. Read it from DuckDB</h2>

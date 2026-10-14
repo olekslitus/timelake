@@ -1,12 +1,11 @@
 "use client"
 
-import { Suspense } from "react"
+import { BookOpen, Database, Gauge, House, LayoutDashboard, SquareTerminal } from "lucide-react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { BookOpen, Database, Gauge, House, LayoutDashboard, SquareTerminal } from "lucide-react"
+import { Suspense } from "react"
 
 import { TimelakeMark } from "@/components/brand/timelake-mark"
-
 import {
   Sidebar,
   SidebarContent,
@@ -100,7 +99,7 @@ export function AppSidebar({ warehouse }: { warehouse: string }) {
       <SidebarFooter className="group-data-[collapsible=icon]:hidden">
         <div className="px-2 pb-1 text-xs text-muted-foreground">
           <div className="mb-0.5 font-medium text-sidebar-foreground">Warehouse</div>
-          <div className="break-all font-mono">{warehouse}</div>
+          <div className="font-mono break-all">{warehouse}</div>
         </div>
       </SidebarFooter>
     </Sidebar>

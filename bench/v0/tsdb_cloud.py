@@ -26,7 +26,7 @@ from pathlib import Path
 import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import run  # noqa: E402
+import run
 
 BENCH = Path(__file__).resolve().parent.parent
 PARQUET = BENCH / "data" / "tsbs" / "parquet"
@@ -199,7 +199,7 @@ def raw_queries(suite: str):
     import re
 
     text = (run.QUERIES / suite / "queries.sql").read_text()
-    for block in re.split(r"^-- name: ", text, flags=re.M)[1:]:
+    for block in re.split(r"^-- name: ", text, flags=re.MULTILINE)[1:]:
         name, _, sql = block.partition("\n")
         yield name.strip(), "\n".join(l for l in sql.splitlines() if not l.startswith("--")).strip().rstrip(";")
 

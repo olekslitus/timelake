@@ -6,7 +6,7 @@ export default function DocsLayout({ children }: LayoutProps<"/docs">) {
       <aside className="sticky top-20 hidden h-[calc(100svh-6rem)] w-52 shrink-0 overflow-y-auto md:block">
         <DocsSidebar />
       </aside>
-      <div className="min-w-0 max-w-3xl flex-1">{children}</div>
+      <div className="max-w-3xl min-w-0 flex-1">{children}</div>
     </div>
   )
 }

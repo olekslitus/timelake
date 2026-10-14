@@ -8,8 +8,22 @@ import path from "node:path"
 
 // The pulse: flat, a sharp rise, a deeper fall, back to flat. v0 uses it as drawn; the parallel
 // versions use a lower pulse, because offsetting grows the spike on the outer lines.
-export const PULSE = [[-6, 0], [30, 0], [43, -14], [67, 12], [78, 0], [106, 0]]
-export const PULSE_LOW = [[-6, 0], [32, 0], [42, -10], [60, 8], [68, 0], [106, 0]]
+export const PULSE = [
+  [-6, 0],
+  [30, 0],
+  [43, -14],
+  [67, 12],
+  [78, 0],
+  [106, 0],
+]
+export const PULSE_LOW = [
+  [-6, 0],
+  [32, 0],
+  [42, -10],
+  [60, 8],
+  [68, 0],
+  [106, 0],
+]
 
 // Offsets a polyline along its normal by d (positive = down for a rightward line), with miter joins.
 // Segments that would reverse direction on the inner side of a sharp turn are dropped, the way a
@@ -18,10 +32,13 @@ export const PULSE_LOW = [[-6, 0], [32, 0], [42, -10], [60, 8], [68, 0], [106, 0
 export function offsetPolyline(pts, d, { keepAll = false } = {}) {
   let segs = []
   for (let i = 0; i + 1 < pts.length; i++) {
-    const [x1, y1] = pts[i], [x2, y2] = pts[i + 1]
+    const [x1, y1] = pts[i],
+      [x2, y2] = pts[i + 1]
     const len = Math.hypot(x2 - x1, y2 - y1)
-    const ux = (x2 - x1) / len, uy = (y2 - y1) / len
-    const nx = -uy, ny = ux
+    const ux = (x2 - x1) / len,
+      uy = (y2 - y1) / len
+    const nx = -uy,
+      ny = ux
     segs.push({ ux, uy, a: [x1 + nx * d, y1 + ny * d], b: [x2 + nx * d, y2 + ny * d] })
   }
   const meet = (s, t) => {
@@ -75,7 +92,7 @@ export function markLines(m) {
 // join ("miter" | "bevel" | "round").
 export function markSvg(m, { color = "currentColor", size, id = "tl" } = {}) {
   const lines = markLines(m)
-    .map(pts => `<polyline points="${pts.map(([x, y]) => `${+x.toFixed(2)},${+y.toFixed(2)}`).join(" ")}"/>`)
+    .map((pts) => `<polyline points="${pts.map(([x, y]) => `${+x.toFixed(2)},${+y.toFixed(2)}`).join(" ")}"/>`)
     .join("")
   const join = m.join ?? "miter"
   const strokeAttrs = `fill="none" stroke-width="${m.width}" stroke-linejoin="${join}" stroke-miterlimit="12" stroke-linecap="butt"`
@@ -84,13 +101,17 @@ export function markSvg(m, { color = "currentColor", size, id = "tl" } = {}) {
   let body
   if (m.disc) {
     const r = m.r ?? 48
-    body = `<defs><mask id="${cid}"><circle cx="50" cy="50" r="${r}" fill="#fff"/><g ${strokeAttrs} stroke="#000">${lines}</g></mask></defs>` +
+    body =
+      `<defs><mask id="${cid}"><circle cx="50" cy="50" r="${r}" fill="#fff"/><g ${strokeAttrs} stroke="#000">${lines}</g></mask></defs>` +
       `<circle cx="50" cy="50" r="${r}" fill="${color}" mask="url(#${cid})"/>`
   } else {
     const ring = m.ring ?? 0
     const r = ring > 0 ? 49 - ring - (m.ringGap ?? 4) : (m.r ?? 47)
-    body = `<defs><clipPath id="${cid}"><circle cx="50" cy="50" r="${r}"/></clipPath></defs>` +
-      (ring > 0 ? `<circle cx="50" cy="50" r="${49 - ring / 2}" fill="none" stroke="${color}" stroke-width="${ring}"/>` : "") +
+    body =
+      `<defs><clipPath id="${cid}"><circle cx="50" cy="50" r="${r}"/></clipPath></defs>` +
+      (ring > 0
+        ? `<circle cx="50" cy="50" r="${49 - ring / 2}" fill="none" stroke="${color}" stroke-width="${ring}"/>`
+        : "") +
       `<g clip-path="url(#${cid})" ${strokeAttrs} stroke="${color}">${lines}</g>`
   }
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"${dim}><title>Timelake</title>${body}</svg>\n`
@@ -100,21 +121,46 @@ export function markSvg(m, { color = "currentColor", size, id = "tl" } = {}) {
 
 export const MARKS = {
   // v0: lines are vertical copies of one pulse. Spacing tightens on the slopes.
-  "v0": { lines: 5, gap: 13, width: 4.8, mode: "translate", center: 52 },
+  v0: { lines: 5, gap: 13, width: 4.8, mode: "translate", center: 52 },
   // v0.1: true parallel lines, so the gap measured across the lines is the same on the slopes and the flats.
   "v0.1": { lines: 5, gap: 12, width: 4.8, mode: "parallel", center: 51, pulse: PULSE_LOW },
   // v0.2: three bold parallel lines.
   "v0.2": { lines: 3, gap: 20, width: 8.6, mode: "parallel", center: 51, pulse: PULSE_LOW },
   // v1 (current, chosen 2026-10-13 in the editor): three lines, v0's pulse, about halfway between
   // copies and parallel, so the bottom line keeps a clear first rise and the gaps stay even.
-  "v1": { lines: 3, gap: 17.5, width: 7.9, center: 50, pulse: PULSE, mode: "parallel", blend: 0.55 },
+  v1: { lines: 3, gap: 17.5, width: 7.9, center: 50, pulse: PULSE, mode: "parallel", blend: 0.55 },
   // Considered alternates, kept for later: a solid disc with a low, wide pulse cut out, and a ring.
-  "alt-disc": { lines: 3, gap: 17.5, width: 9, center: 64, pulse: [[-6, 0], [24.5, 0], [44.5, -5.5], [57.5, 4.5], [81, 0], [106, 0]], mode: "parallel", blend: 0.45, disc: true, r: 45.5 },
+  "alt-disc": {
+    lines: 3,
+    gap: 17.5,
+    width: 9,
+    center: 64,
+    pulse: [
+      [-6, 0],
+      [24.5, 0],
+      [44.5, -5.5],
+      [57.5, 4.5],
+      [81, 0],
+      [106, 0],
+    ],
+    mode: "parallel",
+    blend: 0.45,
+    disc: true,
+    r: 45.5,
+  },
   "alt-ring": { lines: 4, gap: 14, width: 7.4, center: 75, pulse: PULSE_LOW, mode: "parallel", ring: 4.6, ringGap: 4 },
 }
 
 // The wordmark set next to the mark (sizes relative to the mark's height).
-export const WORDMARK = { text: "timelake", font: "Geist", weight: 500, letterSpacingEm: -0.045, sizeOfMark: 0.62, gapOfMark: 0.24, layout: "row" }
+export const WORDMARK = {
+  text: "timelake",
+  font: "Geist",
+  weight: 500,
+  letterSpacingEm: -0.045,
+  sizeOfMark: 0.62,
+  gapOfMark: 0.24,
+  layout: "row",
+}
 
 if (import.meta.main) {
   const dir = path.join(import.meta.dir, "logo")

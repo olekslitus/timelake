@@ -25,10 +25,7 @@ const TERMS: [string, string][] = [
     "Catalog",
     "Whatever tells a reader where a table's current metadata is. Many systems run a catalog server (AWS Glue, a REST catalog). Timelake doesn't: the current version is a file in the table folder, and commits use conditional writes.",
   ],
-  [
-    "Chunk interval",
-    "How much time one partition covers: an hour, a day (the default) or a month.",
-  ],
+  ["Chunk interval", "How much time one partition covers: an hour, a day (the default) or a month."],
   [
     "Commit",
     "Making a change visible by writing a new version of the table's metadata. Timelake commits with a conditional write, so two writers can never both create the same version.",
@@ -85,10 +82,7 @@ const TERMS: [string, string][] = [
     "Partition",
     "The rows of one time chunk (for example, one day), kept in their own folder. Queries for a time range skip other partitions entirely.",
   ],
-  [
-    "Pruning",
-    "Skipping files, row groups or pages because their min and max values show they can't match the query.",
-  ],
+  ["Pruning", "Skipping files, row groups or pages because their min and max values show they can't match the query."],
   [
     "Retention",
     "How long data is kept. Maintenance drops whole partitions older than the retention period, for example 90d.",
@@ -105,10 +99,7 @@ const TERMS: [string, string][] = [
     "Snapshot, version",
     "The state of a table after one commit. Old snapshots are kept for a while (one hour by default) so running queries and other engines can finish, then expired.",
   ],
-  [
-    "Snapshot expiry",
-    "Removing old snapshots and deleting the files that only they used.",
-  ],
+  ["Snapshot expiry", "Removing old snapshots and deleting the files that only they used."],
   [
     "Table contract",
     "A table's time column, series key, chunk interval, dedup and retention. It is stored in the table's properties (timelake.*), so every writer follows it.",

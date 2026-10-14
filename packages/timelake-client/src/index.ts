@@ -18,8 +18,8 @@
 
 import type { z } from "zod"
 
-import { ParquetFile, Query, Table as WasmTable, initSync, version as wasmVersion } from "./wasm/timelake_wasm.js"
 import { wasmBase64 } from "./wasm/inline.js"
+import { ParquetFile, Query, Table as WasmTable, initSync, version as wasmVersion } from "./wasm/timelake_wasm.js"
 
 // --- WASM init -------------------------------------------------------------------------------------
 
@@ -57,7 +57,9 @@ export type AggKeys<A extends AggMap> = {
   [C in keyof A & string]: C extends "*" ? "count" : `${C}_${A[C][number]}`
 }[keyof A & string]
 
-export type BucketRow<A extends AggMap, By extends string = never> = { bucket: Date } & { [K in AggKeys<A>]: number | null } & {
+export type BucketRow<A extends AggMap, By extends string = never> = { bucket: Date } & {
+  [K in AggKeys<A>]: number | null
+} & {
   [K in By]: Scalar | null
 }
 
@@ -195,7 +197,14 @@ export class Lake {
   }
 }
 
-type Loaded = { wasm: WasmTable; info: Omit<TableInfo, "files" | "name" | "version" | "manifests">; files: TableInfo["files"]; version: number; manifests: number; at: number }
+type Loaded = {
+  wasm: WasmTable
+  info: Omit<TableInfo, "files" | "name" | "version" | "manifests">
+  files: TableInfo["files"]
+  version: number
+  manifests: number
+  at: number
+}
 
 export class TableHandle<T = Row> {
   private loaded: Promise<Loaded> | null = null
@@ -228,9 +237,13 @@ export class TableHandle<T = Row> {
       // The hint is updated after each commit; it may lag by one version.
       const [meta, next] = await Promise.all([
         this.lake.fetchOk(`${this.location}/metadata/v${version}.metadata.json`).then((r) => r.text()),
-        this.lake.options.fetch(this.rewrite(`${this.location}/metadata/v${version + 1}.metadata.json`), { method: "HEAD" }),
+        this.lake.options.fetch(this.rewrite(`${this.location}/metadata/v${version + 1}.metadata.json`), {
+          method: "HEAD",
+        }),
       ])
-      const metaJson = next.ok ? await (await this.lake.fetchOk(`${this.location}/metadata/v${version + 1}.metadata.json`)).text() : meta
+      const metaJson = next.ok
+        ? await (await this.lake.fetchOk(`${this.location}/metadata/v${version + 1}.metadata.json`)).text()
+        : meta
       const wasm = new WasmTable(metaJson)
       const list = wasm.manifestList
       let manifests: string[] = []
@@ -351,7 +364,11 @@ export class TableHandle<T = Row> {
     const t0 = performance.now()
     const l = await this.load()
     const stats: QueryStats = { requests: 0, bytes: 0, files: 0, ms: 0 }
-    const spec = { timeColumn: l.info.timeColumn, series: this.seriesSpec(l.info, opts.series), columns: opts.columns ?? [] }
+    const spec = {
+      timeColumn: l.info.timeColumn,
+      series: this.seriesSpec(l.info, opts.series),
+      columns: opts.columns ?? [],
+    }
     if (!l.info.lastValueIndex) throw new Error(`${this.name} has no last-value index`)
     // The index is one small Parquet file: fetch it whole and decode it in place.
     const whole = await this.bytes(l.info.lastValueIndex, undefined, stats)
@@ -450,6 +467,9 @@ export function zodSource(info: Pick<TableInfo, "name" | "schema">, exportName?:
       .pop()!
       .replace(/(^|[_-])(\w)/g, (_, __, c: string) => c.toUpperCase())
       .replace(/s$/, "")
-  const fields = info.schema.map((f) => `  ${/^[A-Za-z_]\w*$/.test(f.name) ? f.name : JSON.stringify(f.name)}: ${zodType(f.type)}${f.required ? "" : ".nullable()"},`)
+  const fields = info.schema.map(
+    (f) =>
+      `  ${/^[A-Za-z_]\w*$/.test(f.name) ? f.name : JSON.stringify(f.name)}: ${zodType(f.type)}${f.required ? "" : ".nullable()"},`,
+  )
   return `export const ${name} = z.object({\n${fields.join("\n")}\n})\nexport type ${name} = z.infer<typeof ${name}>\n`
 }

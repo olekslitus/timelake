@@ -1,13 +1,12 @@
 import "server-only"
-
-import { cacheLife } from "next/cache"
-
 import { readFile } from "node:fs/promises"
 import path from "node:path"
 
+import { cacheLife } from "next/cache"
 
 /** Benchmark results bundled with the app (bun run sync-results copies them from ../bench/results). */
-const RESULTS = process.env.TIMELAKE_BENCH_RESULTS ?? path.resolve(/*turbopackIgnore: true*/ process.cwd(), "data/results")
+const RESULTS =
+  process.env.TIMELAKE_BENCH_RESULTS ?? path.resolve(/*turbopackIgnore: true*/ process.cwd(), "data/results")
 
 export const ENGINES = [
   { id: "v0-timelake", label: "Timelake reader", timelake: true },
@@ -37,7 +36,14 @@ export const TSDB_ENGINES = [
   { id: "tsdb-tiered", label: "Tiered to S3 (tiered reads)" },
 ] as const
 
-export type BenchBar = { engine: string; label: string; timelake: boolean; first: number; best: number; requests: number | null }
+export type BenchBar = {
+  engine: string
+  label: string
+  timelake: boolean
+  first: number
+  best: number
+  requests: number | null
+}
 export type QueryRow = { query: string; times: Record<string, number | null>; rows: Record<string, number | null> }
 export type BenchPanel = { suite: string; state: string; bars: BenchBar[]; queries: number; perQuery: QueryRow[] }
 export type IngestRow = { storage: string; system: string; seconds: number; p50: number; p95: number; files: number }
@@ -133,17 +139,27 @@ export async function loadIngest(): Promise<IngestRow[]> {
   "use cache" // read at build time: results change only when benchmarks are re-run (then redeploy)
   cacheLife("max")
   const latest = new Map<string, IngestRec>()
-  for (const r of await lines<IngestRec>("v0_ingest.laptop.jsonl")) if (r.phase === "ingest") latest.set(`${r.storage}|${r.system}`, r)
+  for (const r of await lines<IngestRec>("v0_ingest.laptop.jsonl"))
+    if (r.phase === "ingest") latest.set(`${r.storage}|${r.system}`, r)
   return [...latest.values()]
     .sort((a, b) => b.storage.localeCompare(a.storage) || a.seconds - b.seconds)
-    .map((r) => ({ storage: r.storage, system: r.system, seconds: r.seconds, p50: r.commit_ms_p50, p95: r.commit_ms_p95, files: r.data_files }))
+    .map((r) => ({
+      storage: r.storage,
+      system: r.system,
+      seconds: r.seconds,
+      p50: r.commit_ms_p50,
+      p95: r.commit_ms_p95,
+      files: r.data_files,
+    }))
 }
 
 /** Hours from the end of ingest until S3 Tables' managed compaction had run, per table: [min, max]. */
 export async function loadS3TablesDelay(): Promise<[number, number] | null> {
   "use cache"
   cacheLife("max")
-  const m = (await lines<IngestRec>("v0_ingest.laptop.jsonl")).findLast((r) => r.system === "s3tables" && r.phase === "maintain")
+  const m = (await lines<IngestRec>("v0_ingest.laptop.jsonl")).findLast(
+    (r) => r.system === "s3tables" && r.phase === "maintain",
+  )
   const s = Object.values(m?.compaction_after_ingest_s ?? {})
   return s.length ? [Math.min(...s) / 3600, Math.max(...s) / 3600] : null
 }
@@ -162,7 +178,9 @@ export async function loadTsdb(): Promise<TsdbRow[] | null> {
     const okBy = new Map(inSuite.filter((r) => r.status === "ok").map((r) => [`${r.engine}|${r.query}`, r]))
     const withData = TSDB_ENGINES.filter((e) => inSuite.some((r) => r.engine === e.id && r.status === "ok"))
     // Compare like with like: geometric means over the queries every engine with data completed.
-    const common = [...new Set(inSuite.map((r) => r.query))].filter((q) => withData.every((e) => okBy.has(`${e.id}|${q}`)))
+    const common = [...new Set(inSuite.map((r) => r.query))].filter((q) =>
+      withData.every((e) => okBy.has(`${e.id}|${q}`)),
+    )
     for (const e of TSDB_ENGINES) {
       const completed = inSuite.filter((r) => r.engine === e.id && r.status === "ok").length
       const rs = withData.includes(e) ? common.map((q) => okBy.get(`${e.id}|${q}`)!) : []

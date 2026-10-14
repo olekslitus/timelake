@@ -1,4 +1,12 @@
-export function PageHeader({ title, description, children }: { title: React.ReactNode; description?: React.ReactNode; children?: React.ReactNode }) {
+export function PageHeader({
+  title,
+  description,
+  children,
+}: {
+  title: React.ReactNode
+  description?: React.ReactNode
+  children?: React.ReactNode
+}) {
   return (
     <div className="flex flex-wrap items-end justify-between gap-4">
       <div className="min-w-0 space-y-1">

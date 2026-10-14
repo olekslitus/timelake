@@ -1,5 +1,4 @@
 import "server-only"
-
 import { Lake, type TableInfo as ClientInfo } from "@timelake/client"
 import { connection } from "next/server"
 
@@ -37,7 +36,10 @@ const ARROW: Record<string, string> = {
 function partitionLabel(chunk: string | null, v: number | null): string {
   if (v === null || chunk === null) return "-"
   const iso = (ms: number) => new Date(ms).toISOString()
-  if (chunk === "hour") return iso(v * 3_600_000).slice(0, 13).replace("T", "-")
+  if (chunk === "hour")
+    return iso(v * 3_600_000)
+      .slice(0, 13)
+      .replace("T", "-")
   if (chunk === "month") return `${1970 + Math.floor(v / 12)}-${String((v % 12) + 1).padStart(2, "0")}`
   return iso(v * 86_400_000).slice(0, 10)
 }
@@ -86,7 +88,12 @@ function toInfo(c: ClientInfo): TableInfo {
   }
 }
 
-const EVERY: Record<string, "1m" | "10m" | "1h" | "1d"> = { "1 minute": "1m", "10 minutes": "10m", "1 hour": "1h", "1 day": "1d" }
+const EVERY: Record<string, "1m" | "10m" | "1h" | "1d"> = {
+  "1 minute": "1m",
+  "10 minutes": "10m",
+  "1 hour": "1h",
+  "1 day": "1d",
+}
 
 async function series({ table, column, bucket, series }: SeriesQuery): Promise<SeriesResult> {
   await connection()
@@ -114,7 +121,13 @@ async function series({ table, column, bucket, series }: SeriesQuery): Promise<S
   return {
     rows: rows.map((r) => {
       const o = r as unknown as Record<string, unknown>
-      return { t: (r.bucket as Date).toISOString(), avg: pick(o, `${column}_avg`), min: pick(o, `${column}_min`), max: pick(o, `${column}_max`), n: Number(o.count ?? 0) }
+      return {
+        t: (r.bucket as Date).toISOString(),
+        avg: pick(o, `${column}_avg`),
+        min: pick(o, `${column}_min`),
+        max: pick(o, `${column}_max`),
+        n: Number(o.count ?? 0),
+      }
     }),
     ms: t.lastStats.ms,
     query: q,
@@ -142,7 +155,9 @@ export const wasmBackend: LakeBackend = {
     return (await getLake().table(name).latest()) as Row[]
   },
   async sql() {
-    throw new LakeInputError("SQL needs the Timelake engine (CLI). The hosted explorer reads tables with the WASM client.")
+    throw new LakeInputError(
+      "SQL needs the Timelake engine (CLI). The hosted explorer reads tables with the WASM client.",
+    )
   },
   series,
 }

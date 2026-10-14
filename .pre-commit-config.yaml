@@ -1,0 +1,92 @@
+# Git hooks, run by prek (https://prek.j178.dev): `uv tool install prek && prek install --install-hooks`.
+# On commit: formatters and fast linters on the staged files. On push: clippy and the type checkers.
+# Everything: `prek run --all-files --hook-stage pre-push`. CI runs the same checks plus the tests.
+default_install_hook_types: [pre-commit, pre-push]
+exclude: ^(bench/results/|dashboard/data/|packages/timelake-client/src/wasm/|brand/explorations/)
+
+repos:
+  - repo: builtin
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: detect-private-key
+
+  - repo: local
+    hooks:
+      # Rust
+      - id: rustfmt
+        name: rustfmt
+        entry: rustfmt --edition 2024
+        language: system
+        types: [rust]
+      - id: clippy
+        name: clippy
+        entry: cargo clippy --workspace --all-targets --quiet -- -D warnings
+        language: system
+        types: [rust]
+        pass_filenames: false
+        stages: [pre-push]
+      - id: clippy-wasm
+        name: clippy (timelake-wasm)
+        entry: cargo clippy --manifest-path crates/timelake-wasm/Cargo.toml --target wasm32-unknown-unknown --quiet -- -D warnings
+        language: system
+        files: ^crates/timelake-(wasm|format)/
+        types: [rust]
+        pass_filenames: false
+        stages: [pre-push]
+
+      # Python
+      - id: ruff-format
+        name: ruff format
+        entry: uv run --no-sync ruff format
+        language: system
+        types_or: [python, pyi]
+      - id: ruff-check
+        name: ruff check
+        entry: uv run --no-sync ruff check --fix
+        language: system
+        types_or: [python, pyi]
+      - id: ty
+        name: ty
+        entry: uv run --no-sync ty check
+        language: system
+        types_or: [python, pyi]
+        pass_filenames: false
+        stages: [pre-push]
+
+      # TypeScript and JavaScript
+      - id: oxfmt
+        name: oxfmt
+        entry: bunx oxfmt --no-error-on-unmatched-pattern
+        language: system
+        types_or: [javascript, jsx, ts, tsx, json]
+      - id: oxlint
+        name: oxlint
+        entry: bunx oxlint --deny-warnings
+        language: system
+        types_or: [javascript, jsx, ts, tsx]
+      - id: tsc
+        name: tsc
+        entry: bun run typecheck
+        language: system
+        types_or: [ts, tsx]
+        pass_filenames: false
+        stages: [pre-push]
+
+      # Go
+      - id: gofmt
+        name: gofmt
+        entry: gofmt -l -w
+        language: system
+        types: [go]
+      - id: go-vet
+        name: go vet
+        entry: bash -c 'cd bench/tools/s3proxy && go vet ./...'
+        language: system
+        types: [go]
+        pass_filenames: false

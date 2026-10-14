@@ -1,0 +1,33 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "printWidth": 120,
+  "semi": false,
+  "trailingComma": "all",
+  "arrowParens": "always",
+  "sortPackageJson": false,
+  "sortImports": {
+    "internalPattern": ["@/"]
+  },
+  "sortTailwindcss": {
+    "stylesheet": "dashboard/app/globals.css",
+    "functions": ["cn", "cva"]
+  },
+  "ignorePatterns": [
+    "**/*.md",
+    "**/*.css",
+    "**/*.yaml",
+    "**/*.toml",
+    "**/*.html",
+    "**/*.yml",
+    "bun.lock",
+    "**/bun.lock",
+    "dashboard/components/ui/**",
+    "dashboard/components/brand/mark-geometry.ts",
+    "dashboard/data/**",
+    "packages/timelake-client/src/wasm/**",
+    "brand/explorations/**",
+    "brand/designs/**",
+    "bench/**",
+    "crates/**"
+  ]
+}

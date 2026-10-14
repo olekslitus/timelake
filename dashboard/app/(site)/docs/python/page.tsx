@@ -9,9 +9,9 @@ export default function Page() {
     <DocPage href="/docs/python">
       <h1>Python API</h1>
       <p>
-        The <code>timelake</code> package wraps the Rust library with PyO3. Data goes in and out as Apache Arrow, so pyarrow,
-        polars and anything that implements the Arrow C stream interface work without copies. Calls release the GIL while they
-        run.
+        The <code>timelake</code> package wraps the Rust library with PyO3. Data goes in and out as Apache Arrow, so
+        pyarrow, polars and anything that implements the Arrow C stream interface work without copies. Calls release the
+        GIL while they run.
       </p>
       <pre>{`import timelake`}</pre>
 
@@ -19,8 +19,8 @@ export default function Page() {
       <pre>{`lake = timelake.Lake(location, storage_options=None)`}</pre>
       <p>
         Opens a warehouse. <code>location</code> is a local path or an <code>s3://</code>, <code>gs://</code>,{" "}
-        <code>az://</code> or <code>file://</code> URL; <code>storage_options</code> is a dict of object store options (see{" "}
-        Storage & configuration). <code>lake.location</code> returns the normalized URL.
+        <code>az://</code> or <code>file://</code> URL; <code>storage_options</code> is a dict of object store options
+        (see Storage & configuration). <code>lake.location</code> returns the normalized URL.
       </p>
       <table>
         <thead>
@@ -32,12 +32,15 @@ export default function Page() {
         <tbody>
           <tr>
             <td>
-              <code>create_table(name, schema, time_column=None, series_key=None, chunk=None, retention=None, dedup=None, properties=None)</code>
+              <code>
+                create_table(name, schema, time_column=None, series_key=None, chunk=None, retention=None, dedup=None,
+                properties=None)
+              </code>
             </td>
             <td>
               <code>Table</code>. <code>schema</code> is a pyarrow schema or anything with a <code>.schema</code>.{" "}
-              <code>chunk</code> is &quot;hour&quot;, &quot;day&quot; or &quot;month&quot;; <code>retention</code> a duration
-              such as &quot;90d&quot;; <code>properties</code> extra table properties.
+              <code>chunk</code> is &quot;hour&quot;, &quot;day&quot; or &quot;month&quot;; <code>retention</code> a
+              duration such as &quot;90d&quot;; <code>properties</code> extra table properties.
             </td>
           </tr>
           <tr>
@@ -84,8 +87,8 @@ export default function Page() {
 
       <h2>Table</h2>
       <p>
-        Properties: <code>name</code>, <code>location</code>, <code>version</code>, <code>schema</code> (pyarrow). Methods that
-        commit advance the handle to the new version.
+        Properties: <code>name</code>, <code>location</code>, <code>version</code>, <code>schema</code> (pyarrow).
+        Methods that commit advance the handle to the new version.
       </p>
       <table>
         <thead>
@@ -100,9 +103,9 @@ export default function Page() {
               <code>append(data, batch_id=None, maintain=None)</code>
             </td>
             <td>
-              dict: <code>rows</code>, <code>files</code>, <code>bytes</code>, <code>version</code>, <code>commit_ms</code>,{" "}
-              <code>attempts</code>, <code>duplicate</code>, and <code>maintenance</code> when inline maintenance did work.{" "}
-              <code>maintain</code> overrides the table’s auto-maintain setting.
+              dict: <code>rows</code>, <code>files</code>, <code>bytes</code>, <code>version</code>,{" "}
+              <code>commit_ms</code>, <code>attempts</code>, <code>duplicate</code>, and <code>maintenance</code> when
+              inline maintenance did work. <code>maintain</code> overrides the table’s auto-maintain setting.
             </td>
           </tr>
           <tr>
@@ -121,8 +124,8 @@ export default function Page() {
             </td>
             <td>
               dict: <code>name</code>, <code>version</code>, <code>location</code>, contract (<code>time_column</code>,{" "}
-              <code>series_key</code>, <code>chunk</code>, <code>dedup</code>), size
-              (<code>rows</code>, <code>files</code>, <code>bytes</code>), <code>snapshots</code>, <code>manifests</code>,{" "}
+              <code>series_key</code>, <code>chunk</code>, <code>dedup</code>), size (<code>rows</code>,{" "}
+              <code>files</code>, <code>bytes</code>), <code>snapshots</code>, <code>manifests</code>,{" "}
               <code>last_value_index</code>.
             </td>
           </tr>
@@ -137,9 +140,10 @@ export default function Page() {
 
       <h2>Input data</h2>
       <p>
-        <code>append</code> accepts a pyarrow <code>RecordBatch</code>, <code>Table</code> or <code>RecordBatchReader</code>,
-        a polars DataFrame, or any object with <code>__arrow_c_stream__</code>. Columns are matched by name and cast to the
-        table types; missing nullable columns become nulls, and columns not in the table are an error.
+        <code>append</code> accepts a pyarrow <code>RecordBatch</code>, <code>Table</code> or{" "}
+        <code>RecordBatchReader</code>, a polars DataFrame, or any object with <code>__arrow_c_stream__</code>. Columns
+        are matched by name and cast to the table types; missing nullable columns become nulls, and columns not in the
+        table are an error.
       </p>
 
       <h2>Errors</h2>
@@ -167,16 +171,19 @@ export default function Page() {
             <td>
               <code>ValueError</code>
             </td>
-            <td>Invalid input or configuration: a column not in the table, a missing required column, an unknown storage option.</td>
+            <td>
+              Invalid input or configuration: a column not in the table, a missing required column, an unknown storage
+              option.
+            </td>
           </tr>
           <tr>
             <td>
               <code>RuntimeError</code>
             </td>
             <td>
-              Storage, query or commit failures, including a commit conflict that could not be rebased. Today a bad duration
-              (<code>retention=&quot;90 parsecs&quot;</code>), chunk name or type cast also raises <code>RuntimeError</code>;
-              these will become <code>ValueError</code>.
+              Storage, query or commit failures, including a commit conflict that could not be rebased. Today a bad
+              duration (<code>retention=&quot;90 parsecs&quot;</code>), chunk name or type cast also raises{" "}
+              <code>RuntimeError</code>; these will become <code>ValueError</code>.
             </td>
           </tr>
         </tbody>
@@ -227,8 +234,8 @@ pldf = pl.from_arrow(result)`}</pre>
 
       <h3>Retries with a batch id</h3>
       <p>
-        If a load may be retried (a queue redelivers a message, a network call times out), give each batch a stable id. A
-        repeat is skipped and reported with <code>duplicate: True</code>:
+        If a load may be retried (a queue redelivers a message, a network call times out), give each batch a stable id.
+        A repeat is skipped and reported with <code>duplicate: True</code>:
       </p>
       <pre>{`r = t.append(batch, batch_id="kinesis-shard-7-seq-1234")
 r = t.append(batch, batch_id="kinesis-shard-7-seq-1234")

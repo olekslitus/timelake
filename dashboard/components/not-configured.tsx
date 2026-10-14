@@ -1,5 +1,5 @@
-import Link from "next/link"
 import { DatabaseZap } from "lucide-react"
+import Link from "next/link"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -14,9 +14,9 @@ export function NotConfigured({ detail }: { detail?: string }) {
         </div>
         <CardTitle>The explorer is not connected to a lake here</CardTitle>
         <CardDescription>
-          The explorer reads tables through the <code className="font-mono">timelake</code> CLI. That needs the binary and a
-          warehouse on this machine, which hosted deployments don&apos;t have yet. Hosted reading through a WASM build of the
-          reader is in progress.
+          The explorer reads tables through the <code className="font-mono">timelake</code> CLI. That needs the binary
+          and a warehouse on this machine, which hosted deployments don&apos;t have yet. Hosted reading through a WASM
+          build of the reader is in progress.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4 text-sm">

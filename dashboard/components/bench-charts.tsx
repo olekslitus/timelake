@@ -1,7 +1,7 @@
 "use client"
 
-import { Bar, BarChart, Cell, LabelList, XAxis, YAxis } from "recharts"
 import { ChevronDown } from "lucide-react"
+import { Bar, BarChart, Cell, LabelList, XAxis, YAxis } from "recharts"
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { ChartContainer, ChartTooltip, type ChartConfig } from "@/components/ui/chart"
@@ -23,7 +23,10 @@ function PanelChart({ panel }: { panel: Panel }) {
   const fastest = Math.min(...panel.bars.map((b) => b.first))
   const data = [...panel.bars]
     .sort((a, b) => a.first - b.first)
-    .map((b) => ({ ...b, tag: `${fmtSeconds(b.first)}${b.first > fastest * 1.05 ? ` · ${(b.first / fastest).toFixed(1)}×` : ""}` }))
+    .map((b) => ({
+      ...b,
+      tag: `${fmtSeconds(b.first)}${b.first > fastest * 1.05 ? ` · ${(b.first / fastest).toFixed(1)}×` : ""}`,
+    }))
   const engines = panel.bars.map((b) => b.engine)
   return (
     <Card>

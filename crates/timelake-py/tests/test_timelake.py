@@ -6,7 +6,6 @@ import duckdb
 import polars as pl
 import pyarrow as pa
 import pytest
-
 import timelake
 
 

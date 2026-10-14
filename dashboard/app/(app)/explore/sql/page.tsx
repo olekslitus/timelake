@@ -3,14 +3,17 @@ import { Suspense } from "react"
 import { ErrorState } from "@/components/error-state"
 import { PageHeader } from "@/components/page-header"
 import { SqlConsole } from "@/components/sql-console"
-import { Skeleton } from "@/components/ui/skeleton"
 import { SqlUnavailable } from "@/components/sql-unavailable"
+import { Skeleton } from "@/components/ui/skeleton"
 import { attempt, ensureConfigured, SUPPORTS_SQL } from "@/lib/lake"
 
 export default function SqlPage() {
   return (
     <>
-      <PageHeader title="SQL console" description="Read-only DataFusion SQL over the warehouse, through the Timelake reader." />
+      <PageHeader
+        title="SQL console"
+        description="Read-only DataFusion SQL over the warehouse, through the Timelake reader."
+      />
       <Suspense fallback={<Skeleton className="h-64 rounded-xl" />}>
         <Console />
       </Suspense>

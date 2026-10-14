@@ -1,7 +1,7 @@
 "use client"
 
-import { useState } from "react"
 import { CircleAlert, LoaderCircle, Play } from "lucide-react"
+import { useState } from "react"
 
 import { RowsTable } from "@/components/rows-table"
 import { Alert, AlertDescription } from "@/components/ui/alert"
@@ -39,7 +39,11 @@ export function SqlConsole() {
   async function runQuery() {
     setRunning(true)
     try {
-      const r = await fetch("/api/sql", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query }) })
+      const r = await fetch("/api/sql", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ query }),
+      })
       setResult(await r.json())
     } catch (e) {
       setResult({ error: String(e) })

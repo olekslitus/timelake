@@ -1,9 +1,9 @@
 "use client"
 
-import { Suspense } from "react"
+import { Menu } from "lucide-react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { Menu } from "lucide-react"
+import { Suspense } from "react"
 
 import { TimelakeLockup } from "@/components/brand/timelake-mark"
 import { GithubIcon } from "@/components/github-icon"
@@ -28,7 +28,7 @@ function NavLinks({ pathname }: { pathname: string | null }) {
           key={l.href}
           href={l.href}
           className={cn(
-            "rounded-md px-3 py-1.5 font-mono text-xs uppercase tracking-[0.08em] text-muted-foreground transition-colors hover:text-foreground",
+            "rounded-md px-3 py-1.5 font-mono text-xs tracking-[0.08em] text-muted-foreground uppercase transition-colors hover:text-foreground",
             pathname?.startsWith(l.href) && "text-foreground",
           )}
         >
@@ -54,7 +54,13 @@ export function SiteHeader() {
           <ActiveNavLinks />
         </Suspense>
         <div className="flex-1" />
-        <Button variant="ghost" size="icon" aria-label="Timelake on GitHub" nativeButton={false} render={<a href={REPO_URL} target="_blank" rel="noreferrer" />}>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Timelake on GitHub"
+          nativeButton={false}
+          render={<a href={REPO_URL} target="_blank" rel="noreferrer" />}
+        >
           <GithubIcon className="size-4" />
         </Button>
         <ThemeToggle />
@@ -64,14 +70,24 @@ export function SiteHeader() {
           </SheetTrigger>
           <SheetContent side="left" className="w-72 overflow-y-auto">
             <SheetHeader>
-              <SheetTitle><TimelakeLockup size={22} /></SheetTitle>
+              <SheetTitle>
+                <TimelakeLockup size={22} />
+              </SheetTitle>
             </SheetHeader>
             <div className="space-y-6 px-4 pb-6">
               <div className="space-y-1">
-                <Link href="/" className="block py-1 text-sm">Home</Link>
-                <Link href="/benchmarks" className="block py-1 text-sm">Benchmarks</Link>
-                <Link href="/explore" className="block py-1 text-sm">Explorer</Link>
-                <a href={REPO_URL} className="block py-1 text-sm">GitHub</a>
+                <Link href="/" className="block py-1 text-sm">
+                  Home
+                </Link>
+                <Link href="/benchmarks" className="block py-1 text-sm">
+                  Benchmarks
+                </Link>
+                <Link href="/explore" className="block py-1 text-sm">
+                  Explorer
+                </Link>
+                <a href={REPO_URL} className="block py-1 text-sm">
+                  GitHub
+                </a>
               </div>
               {DOCS_NAV.map((g) => (
                 <div key={g.title} className="space-y-1">

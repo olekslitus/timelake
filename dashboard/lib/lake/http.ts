@@ -1,5 +1,4 @@
 import "server-only"
-
 import { isNotConfigured } from "./errors"
 
 /** Maps lake errors to API responses: 503 when not configured, 400 for bad input or failed queries. */

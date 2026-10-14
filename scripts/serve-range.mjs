@@ -23,14 +23,22 @@ createServer((req, res) => {
   } catch {
     return res.writeHead(404).end()
   }
-  const headers = { "Accept-Ranges": "bytes", "Last-Modified": st.mtime.toUTCString(), ETag: `"${st.size}-${st.mtimeMs}"` }
+  const headers = {
+    "Accept-Ranges": "bytes",
+    "Last-Modified": st.mtime.toUTCString(),
+    ETag: `"${st.size}-${st.mtimeMs}"`,
+  }
   const m = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? "")
   if (m) {
     let start = m[1] === "" ? st.size - Number(m[2]) : Number(m[1])
     let end = m[1] !== "" && m[2] !== "" ? Number(m[2]) : st.size - 1
     end = Math.min(end, st.size - 1)
     if (start > end || start < 0) return res.writeHead(416, { "Content-Range": `bytes */${st.size}` }).end()
-    res.writeHead(206, { ...headers, "Content-Range": `bytes ${start}-${end}/${st.size}`, "Content-Length": end - start + 1 })
+    res.writeHead(206, {
+      ...headers,
+      "Content-Range": `bytes ${start}-${end}/${st.size}`,
+      "Content-Length": end - start + 1,
+    })
     return req.method === "HEAD" ? res.end() : createReadStream(file, { start, end }).pipe(res)
   }
   res.writeHead(200, { ...headers, "Content-Length": st.size })

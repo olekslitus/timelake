@@ -1,5 +1,5 @@
-import Link from "next/link"
 import { Code2 } from "lucide-react"
+import Link from "next/link"
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 
@@ -20,17 +20,25 @@ export function SqlUnavailable() {
           <Code2 className="size-4" /> SQL runs with the Timelake engine
         </CardTitle>
         <CardDescription>
-          This deployment reads the lake straight from object storage with <code className="font-mono">@timelake/client</code>, a
-          WebAssembly build of the reader. It answers time-series queries (latest values, ranges, buckets) without a server-side
-          engine. Arbitrary SQL needs the engine: run the explorer locally with the <code className="font-mono">timelake</code> CLI,
-          or query the same tables from DuckDB.
+          This deployment reads the lake straight from object storage with{" "}
+          <code className="font-mono">@timelake/client</code>, a WebAssembly build of the reader. It answers time-series
+          queries (latest values, ranges, buckets) without a server-side engine. Arbitrary SQL needs the engine: run the
+          explorer locally with the <code className="font-mono">timelake</code> CLI, or query the same tables from
+          DuckDB.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
         <pre className="overflow-x-auto rounded-md bg-muted px-3 py-2 font-mono text-xs">{SNIPPET}</pre>
         <p className="text-sm text-muted-foreground">
-          See <Link className="underline underline-offset-4" href="/docs/querying">Querying</Link> and{" "}
-          <Link className="underline underline-offset-4" href="/docs/quick-start">Quick start</Link>.
+          See{" "}
+          <Link className="underline underline-offset-4" href="/docs/querying">
+            Querying
+          </Link>{" "}
+          and{" "}
+          <Link className="underline underline-offset-4" href="/docs/quick-start">
+            Quick start
+          </Link>
+          .
         </p>
       </CardContent>
     </Card>

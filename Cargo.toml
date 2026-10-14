@@ -43,3 +43,24 @@ debug = "line-tables-only"
 # Dependencies (DataFusion, Arrow, …) are huge with full debug info; keep it for our own crates only.
 [profile.dev.package."*"]
 debug = false
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unreachable_pub = "warn"
+missing_debug_implementations = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# Too noisy for this codebase.
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+similar_names = "allow"
+struct_excessive_bools = "allow"
+cast_precision_loss = "allow"
+# A few restriction lints worth having.
+allow_attributes = "warn"
+dbg_macro = "warn"
+todo = "warn"
+unwrap_used = "warn"

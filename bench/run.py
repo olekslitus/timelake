@@ -126,7 +126,7 @@ def load_queries(suite: str, engine: str) -> list[tuple[str, str]]:
         return [(f"q{i:02d}", q) for i, q in enumerate(lines)]
     text = (QUERIES / suite / "queries.sql").read_text()
     out = []
-    for block in re.split(r"^-- name: ", text, flags=re.M)[1:]:
+    for block in re.split(r"^-- name: ", text, flags=re.MULTILINE)[1:]:
         name, _, sql = block.partition("\n")
         sql = "\n".join(l for l in sql.splitlines() if not l.startswith("--")).strip().rstrip(";")
         if suite in TSBS_SUITES:

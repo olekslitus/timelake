@@ -1,5 +1,5 @@
-import { Suspense } from "react"
 import { Database, HardDrive, History, Rows3 } from "lucide-react"
+import { Suspense } from "react"
 
 import { ErrorState } from "@/components/error-state"
 import { PageHeader } from "@/components/page-header"
@@ -38,7 +38,12 @@ async function Overview() {
   return (
     <>
       <StatGrid>
-        <StatCard label="Tables" value={tables.length} hint={`${series} time series · ${tables.length - series} plain`} icon={Database} />
+        <StatCard
+          label="Tables"
+          value={tables.length}
+          hint={`${series} time series · ${tables.length - series} plain`}
+          icon={Database}
+        />
         <StatCard label="Rows" value={formatCompact(rows)} hint={`${formatNumber(rows)} rows`} icon={Rows3} />
         <StatCard label="Live data" value={formatBytes(bytes)} hint={`${files} Parquet files`} icon={HardDrive} />
         <StatCard label="Snapshots" value={snapshots} hint="retained for time travel" icon={History} />

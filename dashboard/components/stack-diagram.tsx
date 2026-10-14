@@ -1,6 +1,5 @@
 "use client"
 
-import { useLayoutEffect, useRef, useState } from "react"
 import {
   Archive,
   Bot,
@@ -13,6 +12,7 @@ import {
   Siren,
   type LucideIcon,
 } from "lucide-react"
+import { useLayoutEffect, useRef, useState } from "react"
 
 import { cn } from "@/lib/utils"
 
@@ -56,7 +56,13 @@ const BUCKET = [
 // Dim stream texture inside the ingest node.
 const STREAM = [".:~=  .,-:;= .~:", ":=.,~:  .-~:;=  ", " .-~:= .,~:;= .,", ".~;= ,-~:= .:~=."]
 
-type Edge = { from: string; to: string; label: string; kind: "in" | "bypass" | "arrow" | "event" | "out"; planned?: boolean }
+type Edge = {
+  from: string
+  to: string
+  label: string
+  kind: "in" | "bypass" | "arrow" | "event" | "out"
+  planned?: boolean
+}
 
 const EDGES: Edge[] = [
   ...PUBLISHERS.map((p) => ({ from: p.id, to: "ingest", label: p.via, kind: "in" as const, planned: true })),
@@ -108,7 +114,10 @@ function NodeCard({ node }: { node: Endpoint }) {
   return (
     <div
       data-node={node.id}
-      className={cn("relative flex min-h-14 items-stretch overflow-hidden rounded-md border bg-card", node.planned && "border-dashed")}
+      className={cn(
+        "relative flex min-h-14 items-stretch overflow-hidden rounded-md border bg-card",
+        node.planned && "border-dashed",
+      )}
     >
       <div className="grid w-12 shrink-0 place-items-center border-r bg-muted text-muted-foreground">
         <Icon className="size-4" />
@@ -123,8 +132,15 @@ function NodeCard({ node }: { node: Endpoint }) {
 
 function Row({ k, v, own }: { k: string; v: string; own?: boolean }) {
   return (
-    <div className={cn("grid grid-cols-[5.25rem_minmax(0,1fr)] items-baseline gap-3 px-4 py-2.5", own && "bg-primary/10")}>
-      <div className={cn("font-mono text-[11px] tracking-[0.1em] uppercase", own ? "text-primary" : "text-muted-foreground")}>
+    <div
+      className={cn("grid grid-cols-[5.25rem_minmax(0,1fr)] items-baseline gap-3 px-4 py-2.5", own && "bg-primary/10")}
+    >
+      <div
+        className={cn(
+          "font-mono text-[11px] tracking-[0.1em] uppercase",
+          own ? "text-primary" : "text-muted-foreground",
+        )}
+      >
         {k}
       </div>
       <div className={cn("text-sm", own ? "text-primary" : "text-foreground")}>{v}</div>
@@ -161,9 +177,21 @@ export function StackDiagram() {
       className="relative mx-auto flex w-full max-w-lg flex-col gap-3 xl:grid xl:max-w-none xl:grid-cols-[12rem_5.5rem_9.5rem_5.5rem_minmax(0,1fr)_5.5rem_13.5rem] xl:items-center xl:gap-0"
     >
       {lines ? (
-        <svg aria-hidden className="pointer-events-none absolute inset-0 text-muted-foreground/50" width={lines.w} height={lines.h}>
+        <svg
+          aria-hidden
+          className="pointer-events-none absolute inset-0 text-muted-foreground/50"
+          width={lines.w}
+          height={lines.h}
+        >
           {lines.drawn.map((l) => (
-            <path key={l.d} d={l.d} fill="none" stroke="currentColor" strokeWidth={1.25} strokeDasharray={l.planned ? "4 4" : undefined} />
+            <path
+              key={l.d}
+              d={l.d}
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={1.25}
+              strokeDasharray={l.planned ? "4 4" : undefined}
+            />
           ))}
         </svg>
       ) : null}

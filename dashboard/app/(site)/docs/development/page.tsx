@@ -26,7 +26,9 @@ export default function Page() {
         <tbody>
           <tr>
             <td>Rust (rustup)</td>
-            <td>Everything in <code>crates/</code></td>
+            <td>
+              Everything in <code>crates/</code>
+            </td>
             <td>
               <code>curl https://sh.rustup.rs -sSf | sh</code>. The version (1.94) is pinned in{" "}
               <code>rust-toolchain.toml</code>; rustup installs it on first use.
@@ -85,8 +87,8 @@ uv run pytest crates/timelake-py/tests`}</pre>
       <p>
         The root <code>pyproject.toml</code> is a uv workspace with two members: the package (
         <code>crates/timelake-py</code>) and the benchmarks (<code>bench</code>). <code>uv sync</code> and{" "}
-        <code>uv run</code> rebuild the native module with maturin whenever Rust sources change. The Python files live in{" "}
-        <code>python/timelake</code>; the native part is imported as <code>timelake._timelake</code>.
+        <code>uv run</code> rebuild the native module with maturin whenever Rust sources change. The Python files live
+        in <code>python/timelake</code>; the native part is imported as <code>timelake._timelake</code>.
       </p>
 
       <h2>WASM reader and TypeScript client</h2>
@@ -108,9 +110,9 @@ bun run lint
 bunx tsc --noEmit                 # type check
 bun run build                     # production build, as Vercel runs it`}</pre>
       <p>
-        Docs pages are plain React files in <code>dashboard/app/(site)/docs/&lt;page&gt;/page.tsx</code>; the sidebar order
-        is in <code>dashboard/lib/docs-nav.ts</code>. After re-running benchmarks, copy the results the site uses with{" "}
-        <code>bun run sync-results</code>.
+        Docs pages are plain React files in <code>dashboard/app/(site)/docs/&lt;page&gt;/page.tsx</code>; the sidebar
+        order is in <code>dashboard/lib/docs-nav.ts</code>. After re-running benchmarks, copy the results the site uses
+        with <code>bun run sync-results</code>.
       </p>
       <p>
         The Explorer runs the local CLI against <code>TIMELAKE_WAREHOUSE</code> (default: the v0 benchmark tables in{" "}
@@ -122,8 +124,9 @@ bun run build                     # production build, as Vercel runs it`}</pre>
 cd bench && (cd tools/s3proxy && go build -o ../../.bin/s3proxy .)
 uv run python run.py --suite tsbs_iot --engine duckdb --layout sorted`}</pre>
       <p>
-        Then follow <code>bench/README.md</code> (query suites and data), <code>bench/v0/README.md</code> (the v0 comparison) or{" "}
-        <code>bench/infra/README.md</code> (AWS). Benchmark data lives in <code>bench/data</code> (git-ignored, several GB).
+        Then follow <code>bench/README.md</code> (query suites and data), <code>bench/v0/README.md</code> (the v0
+        comparison) or <code>bench/infra/README.md</code> (AWS). Benchmark data lives in <code>bench/data</code>{" "}
+        (git-ignored, several GB).
       </p>
 
       <h2>Code style</h2>
@@ -139,8 +142,8 @@ uv run python run.py --suite tsbs_iot --engine duckdb --layout sorted`}</pre>
           <strong>Comments:</strong> explain why, not what. Public items get a doc comment.
         </li>
         <li>
-          <strong>Commits:</strong> short imperative subject with the area first, such as{" "}
-          <code>bench: …</code>, <code>Site: …</code> or <code>SPEC: …</code>.
+          <strong>Commits:</strong> short imperative subject with the area first, such as <code>bench: …</code>,{" "}
+          <code>Site: …</code> or <code>SPEC: …</code>.
         </li>
       </ul>
 

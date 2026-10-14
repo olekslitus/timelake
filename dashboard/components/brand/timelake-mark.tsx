@@ -47,7 +47,11 @@ export function TimelakeLockup({ size = 28, className }: { size?: number; classN
       <span
         aria-hidden
         className="font-sans leading-none"
-        style={{ fontSize: size * WORDMARK.sizeOfMark, fontWeight: WORDMARK.weight, letterSpacing: `${WORDMARK.letterSpacingEm}em` }}
+        style={{
+          fontSize: size * WORDMARK.sizeOfMark,
+          fontWeight: WORDMARK.weight,
+          letterSpacing: `${WORDMARK.letterSpacingEm}em`,
+        }}
       >
         {WORDMARK.text}
       </span>

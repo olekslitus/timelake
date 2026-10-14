@@ -4,6 +4,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test"
 import { spawn, spawnSync, type ChildProcess } from "node:child_process"
 import path from "node:path"
+
 import { z } from "zod"
 
 import { Lake, readerVersion, zodSource } from "../src/index"
@@ -15,7 +16,11 @@ const BASE = `http://127.0.0.1:${PORT}/demo`
 let server: ChildProcess
 
 beforeAll(async () => {
-  server = spawn("bun", [path.join(ROOT, "scripts/serve-range.mjs"), path.join(ROOT, "bench/data/demo-site"), String(PORT)], { stdio: "ignore" })
+  server = spawn(
+    "bun",
+    [path.join(ROOT, "scripts/serve-range.mjs"), path.join(ROOT, "bench/data/demo-site"), String(PORT)],
+    { stdio: "ignore" },
+  )
   for (let i = 0; i < 50; i++) {
     try {
       if ((await fetch(`${BASE}/timelake-tables.json`)).ok) return
@@ -30,9 +35,26 @@ afterAll(() => server?.kill())
 const lake = new Lake(BASE, { rewriteUrl: (u) => u.replace(BASE_BUILT, BASE) })
 
 function cliSql(sql: string): Record<string, unknown>[] {
-  const r = spawnSync(path.join(ROOT, "target/release/timelake"), ["-w", BASE_BUILT, "-o", `timelake_local_root=${path.join(ROOT, "bench/data/demo-site")}`, "sql", "--format", "json", sql], { encoding: "utf8" })
+  const r = spawnSync(
+    path.join(ROOT, "target/release/timelake"),
+    [
+      "-w",
+      BASE_BUILT,
+      "-o",
+      `timelake_local_root=${path.join(ROOT, "bench/data/demo-site")}`,
+      "sql",
+      "--format",
+      "json",
+      sql,
+    ],
+    { encoding: "utf8" },
+  )
   if (r.status !== 0) throw new Error(r.stderr)
-  return r.stdout.trim().split("\n").filter(Boolean).map((l) => JSON.parse(l))
+  return r.stdout
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l))
 }
 
 const Reading = z.object({
@@ -67,7 +89,9 @@ test("latest matches the engine", async () => {
   const expected = cliSql(
     "SELECT tags_id, velocity FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY tags_id ORDER BY time DESC) rn FROM tsbs.readings) WHERE rn = 1 ORDER BY tags_id",
   )
-  const got = [...rows].sort((a, b) => (a.tags_id ?? 0) - (b.tags_id ?? 0)).map((r) => ({ tags_id: r.tags_id, velocity: r.velocity }))
+  const got = [...rows]
+    .sort((a, b) => (a.tags_id ?? 0) - (b.tags_id ?? 0))
+    .map((r) => ({ tags_id: r.tags_id, velocity: r.velocity }))
   expect(got).toEqual(expected as typeof got)
   const some = await t.latest({ series: [3, 7] })
   expect(some.map((r) => r.tags_id).sort()).toEqual([3, 7])
@@ -111,5 +135,7 @@ test("zod source generation", async () => {
   const src = await lake.table("tsbs.readings").zodSource()
   expect(src).toContain("export const Reading = z.object({")
   expect(src).toContain("time: z.coerce.date(),")
-  expect(zodSource({ name: "iot.devices", schema: [{ id: 1, name: "id", type: "string", required: true }] })).toContain("export const Device")
+  expect(zodSource({ name: "iot.devices", schema: [{ id: 1, name: "id", type: "string", required: true }] })).toContain(
+    "export const Device",
+  )
 })

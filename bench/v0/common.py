@@ -85,7 +85,7 @@ def storage_stats(storage: str, system: str) -> dict:
             access_key=S3["key"],
             secret_key=S3["secret"],
             region=S3["region"],
-            endpoint_override=f"http://localhost:59000",
+            endpoint_override="http://localhost:59000",
             scheme="http",
         )
         base = f"bench/v0/{system}"

@@ -3,6 +3,7 @@
 // Each saved design is brand/designs/<id>.json (mark spec + wordmark) plus <id>.svg (black mark).
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import path from "node:path"
+
 import { buildEditor } from "./build-editor.mjs"
 import { MARKS, markSvg } from "./marks.mjs"
 
@@ -13,8 +14,8 @@ const json = (body, status = 200) => Response.json(body, { status })
 
 function list() {
   return readdirSync(designsDir)
-    .filter(f => f.endsWith(".json"))
-    .map(f => ({ id: f.slice(0, -5), ...JSON.parse(readFileSync(path.join(designsDir, f), "utf8")) }))
+    .filter((f) => f.endsWith(".json"))
+    .map((f) => ({ id: f.slice(0, -5), ...JSON.parse(readFileSync(path.join(designsDir, f), "utf8")) }))
     .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
 }
 
@@ -23,8 +24,10 @@ const server = Bun.serve({
   port: Number(process.argv[2] ?? 4321),
   async fetch(req) {
     const { pathname } = new URL(req.url)
-    if (pathname === "/") return new Response(buildEditor(), { headers: { "content-type": "text/html; charset=utf-8" } })
-    if (pathname === "/favicon.ico") return new Response(markSvg(MARKS.v1, { color: "#000" }), { headers: { "content-type": "image/svg+xml" } })
+    if (pathname === "/")
+      return new Response(buildEditor(), { headers: { "content-type": "text/html; charset=utf-8" } })
+    if (pathname === "/favicon.ico")
+      return new Response(markSvg(MARKS.v1, { color: "#000" }), { headers: { "content-type": "image/svg+xml" } })
     if (pathname === "/api/designs" && req.method === "GET") return json(list())
     const m = pathname.match(/^\/api\/designs\/([^/]+)$/)
     if (m) {
@@ -40,11 +43,14 @@ const server = Bun.serve({
       }
       if (req.method === "DELETE") {
         if (!existsSync(file)) return json({ error: "not found" }, 404)
-        rmSync(file); rmSync(path.join(designsDir, `${id}.svg`), { force: true })
+        rmSync(file)
+        rmSync(path.join(designsDir, `${id}.svg`), { force: true })
         return new Response(null, { status: 204 })
       }
     }
     return new Response("not found", { status: 404 })
   },
 })
-console.log(`Timelake mark editor: http://${server.hostname}:${server.port}  (designs in ${path.relative(process.cwd(), designsDir) || designsDir})`)
+console.log(
+  `Timelake mark editor: http://${server.hostname}:${server.port}  (designs in ${path.relative(process.cwd(), designsDir) || designsDir})`,
+)

@@ -29,7 +29,10 @@ function Flags({ rows }: { rows: [string, string][] }) {
 
 const TABLE_DEF: [string, string][] = [
   ["--from <file>", "Take the schema from this Parquet or CSV file."],
-  ["--schema <name:type,…>", "Schema inline. Types: int (int32), bigint (long, int64), double (float64), float (float32, real), string (text, varchar), bool, date, timestamp, timestamptz."],
+  [
+    "--schema <name:type,…>",
+    "Schema inline. Types: int (int32), bigint (long, int64), double (float64), float (float32, real), string (text, varchar), bool, date, timestamp, timestamptz.",
+  ],
   ["--time-column <col>", "The time column; makes this a time-series table."],
   ["--series-key <a,b>", "Columns that identify a series, comma-separated."],
   ["--chunk <hour|day|month>", "Time partition size (default day). Also accepts 1h, 1d, 24h, 1 month."],
@@ -41,7 +44,10 @@ const TABLE_DEF: [string, string][] = [
 const LOAD: [string, string][] = [
   ["--rows-per-commit <n>", "Rows per commit (default 10,000,000; 0 = one commit per input file)."],
   ["--no-maintain", "Skip inline auto-maintenance after each commit."],
-  ["--batch-id <id>", "Idempotency key; the commit number is appended (id-0, id-1, …), so re-running the same load is a no-op."],
+  [
+    "--batch-id <id>",
+    "Idempotency key; the commit number is appended (id-0, id-1, …), so re-running the same load is a no-op.",
+  ],
 ]
 
 export default function Page() {
@@ -57,13 +63,21 @@ export default function Page() {
       <h2>Global options</h2>
       <Flags
         rows={[
-          ["-w, --warehouse <url|path>", "Warehouse location: s3://bucket/prefix, gs://…, az://…, file:///… or a local path. Env: TIMELAKE_WAREHOUSE. Default ./warehouse."],
-          ["-o, --option <key=value>", "Storage option, repeatable, e.g. -o aws_endpoint=http://localhost:9000 -o aws_allow_http=true."],
+          [
+            "-w, --warehouse <url|path>",
+            "Warehouse location: s3://bucket/prefix, gs://…, az://…, file:///… or a local path. Env: TIMELAKE_WAREHOUSE. Default ./warehouse.",
+          ],
+          [
+            "-o, --option <key=value>",
+            "Storage option, repeatable, e.g. -o aws_endpoint=http://localhost:9000 -o aws_allow_http=true.",
+          ],
         ]}
       />
 
       <h2>create</h2>
-      <p>Create a table. The schema comes from a file (<code>--from</code>) or <code>--schema</code>.</p>
+      <p>
+        Create a table. The schema comes from a file (<code>--from</code>) or <code>--schema</code>.
+      </p>
       <pre>{`timelake create iot.readings --from sample.parquet --time-column time --series-key device_id
 timelake create iot.devices --schema "device_id:string,site:string,installed:date"`}</pre>
       <Flags rows={TABLE_DEF} />
@@ -75,8 +89,8 @@ timelake create iot.devices --schema "device_id:string,site:string,installed:dat
 
       <h2>import</h2>
       <p>
-        Create the table if it doesn’t exist (schema from the first file, or <code>--from</code>/<code>--schema</code>), then
-        append the files. Takes the flags of both <code>create</code> and <code>append</code>.
+        Create the table if it doesn’t exist (schema from the first file, or <code>--from</code>/<code>--schema</code>),
+        then append the files. Takes the flags of both <code>create</code> and <code>append</code>.
       </p>
       <pre>{`timelake import iot.readings readings/*.parquet --time-column time --series-key device_id --retention 365d`}</pre>
       <p>
@@ -85,12 +99,17 @@ timelake create iot.devices --schema "device_id:string,site:string,installed:dat
       </p>
 
       <h2>sql</h2>
-      <p>Run SQL given as an argument or on stdin. Several statements separated by <code>;</code> run in order.</p>
+      <p>
+        Run SQL given as an argument or on stdin. Several statements separated by <code>;</code> run in order.
+      </p>
       <pre>{`timelake sql "SELECT count(*) FROM iot.readings"
 echo "SELECT * FROM readings LIMIT 5" | timelake sql --namespace iot --format csv`}</pre>
       <Flags
         rows={[
-          ["--format <table|csv|json|none>", "Output format (default table). json writes one JSON object per line (newline-delimited), nulls included. none prints only the row count."],
+          [
+            "--format <table|csv|json|none>",
+            "Output format (default table). json writes one JSON object per line (newline-delimited), nulls included. none prints only the row count.",
+          ],
           ["--namespace <ns>", "Namespace for unqualified table names (default default)."],
           ["--set <key=value>", "DataFusion setting, e.g. --set datafusion.execution.target_partitions=32."],
         ]}
@@ -133,8 +152,8 @@ timelake info iot.readings --json`}</pre>
       <h2>index</h2>
       <p>
         Rewrite <code>timelake-tables.json</code> in the warehouse root, the list of tables that readers use when they
-        can&apos;t list objects (plain HTTPS, browsers, <code>@timelake/client</code>). Creating and dropping tables updates it
-        automatically, so run this only after copying tables in by other means.
+        can&apos;t list objects (plain HTTPS, browsers, <code>@timelake/client</code>). Creating and dropping tables
+        updates it automatically, so run this only after copying tables in by other means.
       </p>
 
       <h2>drop</h2>

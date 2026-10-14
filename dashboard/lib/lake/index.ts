@@ -1,8 +1,7 @@
 import "server-only"
-
 import { cliBackend } from "./cli"
-import { wasmBackend } from "./wasm"
 import type { LakeBackend, Row, TableInfo } from "./types"
+import { wasmBackend } from "./wasm"
 
 export { LakeInputError, LakeNotConfiguredError, isNotConfigured } from "./errors"
 export type { LakeBackend, Row, SeriesPoint, SeriesQuery, SeriesResult, TableInfo } from "./types"

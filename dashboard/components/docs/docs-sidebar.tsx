@@ -1,8 +1,8 @@
 "use client"
 
-import { Suspense } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
+import { Suspense } from "react"
 
 import { DOCS_NAV } from "@/lib/docs-nav"
 import { cn } from "@/lib/utils"

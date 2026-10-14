@@ -9,8 +9,8 @@ export default function Page() {
     <DocPage href="/docs/storage">
       <h1>Storage & configuration</h1>
       <p>
-        Timelake uses the Rust <code>object_store</code> crate for everything: Iceberg metadata, Parquet data and query scans.
-        The warehouse URL picks the backend.
+        Timelake uses the Rust <code>object_store</code> crate for everything: Iceberg metadata, Parquet data and query
+        scans. The warehouse URL picks the backend.
       </p>
       <table>
         <thead>
@@ -75,8 +75,8 @@ export default function Page() {
       <h2>Options</h2>
       <p>
         Options are <code>object_store</code> configuration keys: <code>-o key=value</code> on the CLI,{" "}
-        <code>storage_options</code> in Python. For S3, GCS and Azure, unknown keys are an error; other backends ignore options.
-        Common S3 keys:
+        <code>storage_options</code> in Python. For S3, GCS and Azure, unknown keys are an error; other backends ignore
+        options. Common S3 keys:
       </p>
       <table>
         <thead>
@@ -102,7 +102,9 @@ export default function Page() {
             <td>
               <code>aws_endpoint</code>
             </td>
-            <td>Custom endpoint for S3-compatible stores, e.g. <code>http://localhost:9000</code>.</td>
+            <td>
+              Custom endpoint for S3-compatible stores, e.g. <code>http://localhost:9000</code>.
+            </td>
           </tr>
           <tr>
             <td>
@@ -122,27 +124,27 @@ export default function Page() {
 
       <h2>Read-only HTTPS</h2>
       <p>
-        An <code>http://</code> or <code>https://</code> warehouse (Vercel Blob, a public bucket, a CDN) can be read by the CLI,
-        Python, and the TypeScript client, but not written to. Plain HTTP can&apos;t list objects, so tables are found through{" "}
-        <code>timelake-tables.json</code>. To publish a warehouse at a URL, build it on local disk with its final URL already in
-        the metadata, then upload the files with their paths unchanged:
+        An <code>http://</code> or <code>https://</code> warehouse (Vercel Blob, a public bucket, a CDN) can be read by
+        the CLI, Python, and the TypeScript client, but not written to. Plain HTTP can&apos;t list objects, so tables
+        are found through <code>timelake-tables.json</code>. To publish a warehouse at a URL, build it on local disk
+        with its final URL already in the metadata, then upload the files with their paths unchanged:
       </p>
       <pre>{`timelake -w https://<store>.public.blob.vercel-storage.com/demo \
          -o timelake_local_root=./site-files \
          import tsbs.readings readings.parquet --time-column time --series-key tags_id
 # upload ./site-files/** to the store, keeping paths (dashboard: bun run upload-demo)`}</pre>
       <p>
-        <code>timelake_local_root</code> works with any URL: objects are written under the local directory while every path
-        recorded in Iceberg metadata keeps the URL.
+        <code>timelake_local_root</code> works with any URL: objects are written under the local directory while every
+        path recorded in Iceberg metadata keeps the URL.
       </p>
 
       <h2>Conditional writes are required</h2>
       <p>
-        Commits create the next <code>vN.metadata.json</code> with put-if-absent: on S3 that is <code>If-None-Match: *</code>,
-        which AWS S3 has supported since 2024; GCS and Azure use their own preconditions. A store that ignores the condition
-        would let two concurrent writers both believe they committed. Timelake has been tested on local disk, RustFS, AWS S3
-        and S3 Express One Zone (correctness only). With a store you haven’t tested, check that creating the same table twice fails the second
-        time:
+        Commits create the next <code>vN.metadata.json</code> with put-if-absent: on S3 that is{" "}
+        <code>If-None-Match: *</code>, which AWS S3 has supported since 2024; GCS and Azure use their own preconditions.
+        A store that ignores the condition would let two concurrent writers both believe they committed. Timelake has
+        been tested on local disk, RustFS, AWS S3 and S3 Express One Zone (correctness only). With a store you haven’t
+        tested, check that creating the same table twice fails the second time:
       </p>
       <pre>{`timelake -w s3://my-bucket/test create t --schema "x:int"     # created t
 timelake -w s3://my-bucket/test create t --schema "x:int"     # must fail: already exists

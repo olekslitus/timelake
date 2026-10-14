@@ -60,7 +60,7 @@ def best(r):
 
 
 def load(path: Path) -> dict[str, dict[str, dict]]:
-    """engine -> query -> record (successful runs only)."""
+    """Engine -> query -> record (successful runs only)."""
     out: dict[str, dict[str, dict]] = defaultdict(dict)
     if path.exists():
         for line in path.read_text().splitlines():

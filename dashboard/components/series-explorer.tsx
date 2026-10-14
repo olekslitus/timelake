@@ -1,8 +1,8 @@
 "use client"
 
+import { LoaderCircle } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Area, CartesianGrid, ComposedChart, Line, XAxis, YAxis } from "recharts"
-import { LoaderCircle } from "lucide-react"
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { ChartContainer, ChartTooltip, type ChartConfig } from "@/components/ui/chart"
@@ -60,7 +60,12 @@ export function SeriesExplorer({
       : []
   const short = bucket === "1 day"
   const fmtTick = (ts: number) =>
-    new Date(ts).toLocaleString("en-US", short ? { month: "short", day: "numeric", timeZone: "UTC" } : { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC" })
+    new Date(ts).toLocaleString(
+      "en-US",
+      short
+        ? { month: "short", day: "numeric", timeZone: "UTC" }
+        : { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC" },
+    )
 
   if (columns.length === 0) {
     return <p className="py-6 text-sm text-muted-foreground">This table has no numeric columns to chart.</p>
@@ -70,7 +75,12 @@ export function SeriesExplorer({
     <Card>
       <CardHeader>
         <CardTitle>
-          {column} {seriesKey && series ? <span className="text-muted-foreground">· {seriesKey} = {series}</span> : null}
+          {column}{" "}
+          {seriesKey && series ? (
+            <span className="text-muted-foreground">
+              · {seriesKey} = {series}
+            </span>
+          ) : null}
         </CardTitle>
         <CardDescription>Average per {bucket} with the min–max band. Times in UTC.</CardDescription>
         <div className="flex flex-wrap items-center gap-2 pt-2">
@@ -130,8 +140,23 @@ export function SeriesExplorer({
           <ChartContainer config={config} className="aspect-auto h-80 w-full">
             <ComposedChart data={points} margin={{ left: 4, right: 12, top: 8 }}>
               <CartesianGrid vertical={false} />
-              <XAxis dataKey="ts" type="number" scale="time" domain={["dataMin", "dataMax"]} tickFormatter={fmtTick} tickLine={false} axisLine={false} minTickGap={48} />
-              <YAxis tickLine={false} axisLine={false} width={56} domain={["auto", "auto"]} tickFormatter={(v: number) => formatValue(Number(v.toPrecision(3)))} />
+              <XAxis
+                dataKey="ts"
+                type="number"
+                scale="time"
+                domain={["dataMin", "dataMax"]}
+                tickFormatter={fmtTick}
+                tickLine={false}
+                axisLine={false}
+                minTickGap={48}
+              />
+              <YAxis
+                tickLine={false}
+                axisLine={false}
+                width={56}
+                domain={["auto", "auto"]}
+                tickFormatter={(v: number) => formatValue(Number(v.toPrecision(3)))}
+              />
               <ChartTooltip
                 cursor={{ strokeWidth: 1 }}
                 content={({ active, payload }) => {
@@ -139,7 +164,9 @@ export function SeriesExplorer({
                   if (!p) return null
                   return (
                     <div className="rounded-lg border bg-background px-3 py-2 text-xs shadow-sm">
-                      <div className="mb-1 font-medium">{new Date(p.ts).toISOString().replace("T", " ").slice(0, 16)} UTC</div>
+                      <div className="mb-1 font-medium">
+                        {new Date(p.ts).toISOString().replace("T", " ").slice(0, 16)} UTC
+                      </div>
                       <div className="grid grid-cols-[auto_auto] gap-x-4 font-mono tabular-nums">
                         <span className="text-muted-foreground">avg</span>
                         <span className="text-right">{formatValue(p.avg)}</span>
@@ -154,13 +181,21 @@ export function SeriesExplorer({
                   )
                 }}
               />
-              <Area dataKey="range" stroke="none" fill="var(--color-range)" fillOpacity={0.15} isAnimationActive={false} />
+              <Area
+                dataKey="range"
+                stroke="none"
+                fill="var(--color-range)"
+                fillOpacity={0.15}
+                isAnimationActive={false}
+              />
               <Line dataKey="avg" stroke="var(--color-avg)" strokeWidth={2} dot={false} isAnimationActive={false} />
             </ComposedChart>
           </ChartContainer>
         )}
         {result && "query" in result && (
-          <pre className="overflow-x-auto rounded-md bg-muted px-3 py-2 font-mono text-xs text-muted-foreground">{result.query}</pre>
+          <pre className="overflow-x-auto rounded-md bg-muted px-3 py-2 font-mono text-xs text-muted-foreground">
+            {result.query}
+          </pre>
         )}
       </CardContent>
     </Card>

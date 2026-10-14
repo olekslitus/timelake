@@ -3,7 +3,17 @@ import type { LucideIcon } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 
-export function StatCard({ label, value, hint, icon: Icon }: { label: string; value: React.ReactNode; hint?: React.ReactNode; icon: LucideIcon }) {
+export function StatCard({
+  label,
+  value,
+  hint,
+  icon: Icon,
+}: {
+  label: string
+  value: React.ReactNode
+  hint?: React.ReactNode
+  icon: LucideIcon
+}) {
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between space-y-0">

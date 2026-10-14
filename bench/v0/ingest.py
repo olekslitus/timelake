@@ -17,11 +17,11 @@ Every system gets identical rows (Timelake dedup is off so TSBS's 16 duplicate r
 
 import argparse
 import os
-from datetime import datetime, timezone
 import shutil
 import statistics
 import sys
 import time
+from datetime import datetime, timezone
 
 import numpy as np
 import pyarrow as pa
@@ -38,7 +38,7 @@ from common import (
     load_state,
     local_dir,
     record,
-    root,  # noqa: E402
+    root,
     save_state,
     storage_stats,
 )
@@ -234,7 +234,6 @@ def main():
         (local_dir(a.storage, a.system) / "lake").mkdir(parents=True)
         if a.storage == "s3":
             import pyarrow.fs as pafs
-
             from common import S3
 
             fs = pafs.S3FileSystem(

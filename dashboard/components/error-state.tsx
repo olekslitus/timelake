@@ -10,7 +10,9 @@ export function ErrorState({ title = "Could not read the lake", error }: { title
     <Alert variant="destructive">
       <CircleAlert />
       <AlertTitle>{title}</AlertTitle>
-      <AlertDescription className="font-mono text-xs whitespace-pre-wrap">{error instanceof Error ? error.message : String(error)}</AlertDescription>
+      <AlertDescription className="font-mono text-xs whitespace-pre-wrap">
+        {error instanceof Error ? error.message : String(error)}
+      </AlertDescription>
     </Alert>
   )
 }
