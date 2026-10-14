@@ -30,8 +30,8 @@ def load(path):
 def ingest_tables():
     recs = load(RESULTS / "v0_ingest.jsonl")
     last = {}
-    for r in recs:  # keep the latest record per (system, storage, phase)
-        last[(r["system"], r["storage"], r["phase"])] = r
+    for r in recs:  # keep the latest record per (system, target, phase): S3 and S3 Express share storage "s3"
+        last[(r["system"], r.get("target", r["storage"]), r["phase"])] = r
     out = [
         "### Ingest: 864 five-minute windows × 2 tables = 1,728 commits, 23.3M rows",
         "",
