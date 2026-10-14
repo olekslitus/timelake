@@ -75,9 +75,10 @@ What lives where, which technologies are used and why, and how a write and a que
 | `lib.rs` | The public API: `Lake`, `Table`, `Session`, options and results, with a short example. |
 | `name.rs` | `TableName`: parses and validates `namespace.table` once, at the boundary. |
 | `storage.rs` | Opens the right object store for a URL (`s3://`, `gs://`, `az://`, `https://`, local). Read, write, `write_if_absent` (the conditional write), list and delete; `Uploads`, a queue of files a commit sends all at once; also adapts the store to iceberg-rust's file interface. |
-| `lake.rs` | The catalog. `Lake` is a warehouse: `create_table` writes `v1.metadata.json`, `table()` finds the current version (the head and the version hint, then a check for the next version), `tables()` lists them. |
+| `lake.rs` | The catalog. `Lake` is a warehouse: `create_table` writes `v1.metadata.json`, `table()` finds the current version (the head and a listing of the metadata files at once, or a check for the next version of one it already has), `tables()` lists them. |
 | `table.rs` | `Table`: one version of a table (name, metadata, contract, schema) and `files()`, the live data files (from the head, or from its manifests). |
 | `head/` | The head object: `mod.rs` builds it from a table, writes it after a commit without moving it backwards, and loads a table from it; `codec.rs` holds the format-neutral `HeadDoc`, the `HeadCodec` trait and the `arrow` and `json` codecs. |
+| `footer.rs` | Parquet footers kept apart from their files: read from the store once, encoded for the head, decoded for scans. |
 | `cache.rs` | Small bounded caches for files that never change once written (manifests, manifest lists, last-value indexes) and recently loaded table versions. |
 | `schema.rs` | Fits Arrow data to a table: types Iceberg can store on create (`normalize_schema`), columns matched by name and cast on write (`align_batch`). |
 | `sort.rs` | One sorting helper: sort by key columns keeping input order on ties, and keep the last row of each group. Used for writing, dedup and the last-value index. |
@@ -108,7 +109,7 @@ Tests live next to the code (`#[cfg(test)]` modules, with test storage in `testi
 `timelake sql "…"` or `lake.sql("…")` calls `Session::sql` (`query/session.rs`):
 
 1. Parse the SQL and find every table it mentions.
-2. `prefetch`: load all those tables in parallel. A table with a head comes from that one object (metadata, files, last-value index); the check for a newer version starts and is awaited by the scan. Others are read through the metadata chain.
+2. `prefetch`: load all those tables in parallel. A table with a head comes from that one object (metadata, files, last-value index, footers), confirmed by a listing made at the same time. A table this process already has is checked for a newer version while planning goes on; the scan waits for that check. Others are read through the metadata chain.
 3. DataFusion plans the query. It asks the lake catalog (`query/catalog.rs`) for each table and gets a `TimelakeProvider` (`query/provider.rs`).
 4. The optimizer runs the latest-row rewrite (`query/rewrite.rs`). If the query asks for the newest row per series (or the newest row for some series), the table scan is replaced with a scan of the last-value index.
 5. Otherwise the provider drops files whose min/max values (`query/stats.rs`) can't match the `WHERE` clause, spreads the remaining files over parallel scan tasks, fetches every file footer once, and hands the files to DataFusion's Parquet reader, which skips row groups and pages.

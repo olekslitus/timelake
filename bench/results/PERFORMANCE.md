@@ -3,6 +3,33 @@
 Measurements for the steps of the performance plan ([SPEC.md §19.1](../../SPEC.md)), newest first. Each step is
 measured from a laptop (M1 Pro) over the internet, against the numbers before it.
 
+## P2 + P3: footers in the head, connections opened early (2026-10-14)
+
+- **P2:** the head also carries the Parquet footers (with page indexes) of the newest files, in what the last-value
+  index leaves of the 1 MiB budget, so a cold scan doesn't read footers first.
+- **Cold load in one round trip:** on stores that list by prefix, a cold load lists `metadata/v` while it reads the
+  head. The listing says which version is newest, so a current head needs no second request. A reader that already has
+  a version checks only for `vN+1`, without downloading the head again.
+- **P3:** a cold load also sends 4 small HEAD requests, so the data reads that follow find open connections.
+
+Unit test (`cold_queries_read_the_head_first`): a cold `latest` waits for 1 round trip (P1: 2, before: 3), a cold
+filtered scan for 2 (P1: 3, before: 6).
+
+**Tigris, cold queries only** (`v0/small.py --queries-only --cold-runs 5` on warehouses written by the full runs,
+three batches alternating between setups; median of 15 first runs in a fresh `Lake`, ms):
+
+| First query | No head | Head + footers | + 4 warm-up connections |
+|---|---:|---:|---:|
+| `one-truck-latest` | 810 | 210 | 213 |
+| `last-loc` | 762 | 269 | 273 |
+| `one-truck-history` | 1,187 | 522 | 497 |
+| `fleet-avg-velocity` | 1,094 | 511 | 492 |
+
+P1 alone measured 318 / 446 / 1,052 / 714 ms on Tigris (one run each, below). Opening connections early saves about
+20 ms on the scans and nothing on point queries: less than expected, but it costs 4 HEAD requests per cold load, so it
+stays on (`timelake_warm_connections=0` turns it off). Queries-only runs read but don't write, so they are cheap to
+repeat on a free tier. S3 numbers for this step are still to be measured.
+
 ## P1: one-request table state (2026-10-14)
 
 After each commit the writer also writes `metadata/timelake-head` in the background: the table metadata, the live files

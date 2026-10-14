@@ -152,10 +152,17 @@ impl ObjectStore for FaultyStore {
     }
 
     fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-        self.inner.list(prefix)
+        let latency = *self.latency.lock().unwrap_or_else(PoisonError::into_inner);
+        let delay = futures::stream::once(async move {
+            if !latency.is_zero() {
+                tokio::time::sleep(latency).await;
+            }
+        });
+        delay.filter_map(|()| async { None }).chain(self.inner.list(prefix)).boxed()
     }
 
     async fn list_with_delimiter(&self, prefix: Option<&Path>) -> object_store::Result<ListResult> {
+        self.round_trip().await;
         self.inner.list_with_delimiter(prefix).await
     }
 

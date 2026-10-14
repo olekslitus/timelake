@@ -958,7 +958,7 @@ Open from v0:
 | Later | Computed metrics from user-defined Python functions (F4, §21.4) |
 
 ### 19.1 Performance plan (in progress)
-**Status:** P4 done (2026-10-13); P1 done (2026-10-14, §19.2); P2 and P3 next. The codebase and CI/CD cleanup it waited for is done (2026-10-13; the audit and plan are in git history at `2d66939`). Gains below are estimates until measured; measurements are in [`bench/results/PERFORMANCE.md`](bench/results/PERFORMANCE.md).
+**Status:** P4 done (2026-10-13); P1–P3 done (2026-10-14, §19.2; S3 measurement of P2–P3 pending). Next: P5–P8. The codebase and CI/CD cleanup it waited for is done (2026-10-13; the audit and plan are in git history at `2d66939`). Gains below are estimates until measured; measurements are in [`bench/results/PERFORMANCE.md`](bench/results/PERFORMANCE.md).
 
 **Where time goes today** (Timelake reader, laptop → AWS S3 us-east-2, after maintenance, [`bench/results/S3.md`](bench/results/S3.md)):
 
@@ -979,8 +979,8 @@ Open from v0:
 | # | Change | Expected effect |
 |---|---|---|
 | P1 | **Done.** **One-request table state.** Each commit also writes a small head object: version, live files with column bounds, and the last-value index (inline when small, else a pointer). Readers fetch it with one GET instead of 4 dependent ones. Iceberg metadata is still written as today for other engines. | Cold `one-truck-latest` 502 → 314 ms on S3, 868 → 318 ms on Tigris, measured from a laptop |
-| P2 | **Footers in the head object.** Store the Parquet footers and page indexes of live files next to the file list, so scans skip the footer round trip. | One fewer round trip and fewer requests per scan |
-| P3 | **Connection pre-warm.** Open the scan's connections while the head object is in flight. | Hides TLS setup on cold queries |
+| P2 | **Done.** **Footers in the head object.** Store the Parquet footers and page indexes of live files next to the file list, so scans skip the footer round trip. | Cold scans 2 round trips instead of 3; Tigris `one-truck-history` 1,187 → 522 ms (with P1) |
+| P3 | **Done.** **Connection pre-warm.** Open the scan's connections while the head object is in flight. | About 20 ms on cold scans on Tigris, nothing on point queries (measured) |
 | P4 | **Done.** **Two-step commit.** Upload data, manifest, index and manifest list in parallel (all are known locally), then make the one conditional write. Update the hint asynchronously. | Commit p50 483 ms → 243 ms measured (whole v0 ingest 1,307 s → 795 s) |
 | P5 | **Local disk cache across processes** for metadata, footers and recent data (§12.2 item 6). | Repeat queries at best-run speed |
 | P6 | **Optional staleness bound** (e.g. "at most 1 s old") to skip the per-query version check, and the head pointer on S3 Express where available. | Warm `last-loc` 68 ms → a few ms |
@@ -991,7 +991,7 @@ Open from v0:
 
 ### 19.2 One-request table state (P1–P3)
 
-**Status:** P1 built and measured (2026-10-14): cold `one-truck-latest` 502 → 314 ms on S3 and 868 → 318 ms on Tigris from a laptop ([`bench/results/PERFORMANCE.md`](bench/results/PERFORMANCE.md)). Next: P2, P3, and reading the head in the WASM reader and TypeScript client. Decisions taken on 2026-10-14 are recorded below.
+**Status:** P1–P3 built and measured (2026-10-14). From a laptop, cold `one-truck-latest` went 502 → 314 ms on S3 with P1, and 810 → 213 ms on Tigris with P1–P3 ([`bench/results/PERFORMANCE.md`](bench/results/PERFORMANCE.md)). Next: reading the head in the WASM reader and TypeScript client. Decisions taken on 2026-10-14 are recorded below.
 
 **Goal:** a cold query learns everything it needs to plan in one GET, so a small query takes two dependent round trips (table state, then data or the last-value index) instead of six or seven.
 
@@ -1002,22 +1002,27 @@ Open from v0:
 - P2: the Parquet footers and page indexes of the live files, in the same budget.
 
 **Decided:**
-1. **Validate the head on every load.** The reader checks whether `vN+1.metadata.json` exists. Queries start the check when the table is loaded and await it in the scan (overlapping planning and the footer reads); a stale head makes the scan reload the table and plan the newest version. Results are always as current as before. `Lake::table()` and writers wait for the check. Trusting the head stays P6's opt-in staleness bound.
-2. **How to check, per store:** a HEAD request by default; a LIST of the exact name (one key, `max-keys=1`) on Tigris, where a HEAD of a missing key takes 285 ms and the LIST 40 ms. Storage option `timelake_freshness_check=head|list` overrides it; `list` needs S3, GCS or Azure. Today's slow path uses the same check.
+1. **Validate the head on every load.** Results are always as current as before; trusting the head stays P6's opt-in staleness bound. How (refined while building P2):
+   - **Cold load** (the process has no version of the table): on stores that list by prefix (S3, GCS, Azure, local disk), LIST `metadata/v` together with the head GET. The listing names the newest version, so a current head is confirmed in the same round trip and an outdated one is skipped for the metadata chain. Without this, the check for `vN+1` was a second round trip on the critical path, and once footers came from the head (P2) nothing overlapped it. A LIST costs like a PUT on S3 ($0.005 per 1,000), once per table per process.
+   - **Warm load** (the process has version N): check whether `vN+1.metadata.json` exists, with no head download. Queries start the check and the scan awaits it; a stale version makes the scan reload the table and plan the newest one. `Lake::table()` and writers wait for it.
+   - **Plain HTTPS** (no listing): GET the version hint with the head, then the deferred check.
+2. **How to check for `vN+1`, per store:** a HEAD request by default; a LIST of the exact name (one key, `max-keys=1`) on Tigris, where a HEAD of a missing key takes 285 ms and the LIST 40 ms. Storage option `timelake_freshness_check=head|list` overrides it; `list` needs S3, GCS or Azure. The metadata chain uses the same check.
 3. **One inline budget** for optional sections, `timelake.head-inline-bytes`, default 1 MiB: the last-value index first, then (P2) footers. The files and metadata are always in the head.
 4. **Format: pluggable, Arrow IPC by default.** The head's content is format-neutral: string properties plus named Arrow tables (`metadata`, `files`, `columns`, `last_values`). A `HeadCodec` encodes it, and the head's header (`TLHD`, header version, table version, codec name) names the codec, so readers decode any head whose codec they have. Built in: `arrow` (Arrow IPC streams, zstd) and `json` (Arrow's JSON rows plus serde schemas). Avro, Vortex, BSON or Parquet are one more codec each (all have Arrow bridges), registered with `Lake::register_head_codec`. Tables choose with `timelake.head-format` (`none`: no head; a writer without the chosen codec deletes the head rather than leave a stale one).
 
 **Writing it.** Iceberg metadata is written exactly as before and `vN+1.metadata.json` stays the commit point, so DuckDB, Spark and PyIceberg see no change. The head is a cache of that commit, written in the background like the version hint (P4), so commits don't get slower. The writer reads the first bytes of the stored head (version and ETag) and replaces it only with a conditional write on that ETag, so racing writers never move it back to an older version. Stores without conditional updates (local disk) overwrite. A commit knows its new file list from its base when the base was loaded from a head, so writing the head reads no manifests.
 
-**Reading it.** The head and `version-hint.text` are read at the same time. A table without a head (another engine, an older Timelake, a head removed by orphan-file cleanup) loads exactly as before, with no extra round trip; a hint newer than the head skips the head.
+**Reading it.** The head and the listing (or the version hint) are read at the same time. A table without a head (another engine, an older Timelake, a head removed by orphan-file cleanup) loads exactly as before, with no extra round trip; a listing or hint newer than the head skips the head.
 
-**Measured round trips** (unit test `cold_queries_read_the_head_first`): cold `latest` 3 → 2, cold filtered scan 6 → 3.
+**Measured round trips** (unit test `cold_queries_read_the_head_first`): cold `latest` 3 → 1, cold filtered scan 6 → 2.
 
-**Known limit:** if an older Timelake (which writes no heads) commits more than `write.metadata.previous-versions-max` (20) times after a newer one wrote a head, and expiry deletes `vN+1.metadata.json`, a reader can trust the old head. Fix: delete `metadata/timelake-head` after writing a table with an old version, or upgrade every writer.
+**Known limit:** on plain HTTPS (no listing), if an older Timelake (which writes no heads) commits more than `write.metadata.previous-versions-max` (20) times after a newer one wrote a head, and expiry deletes `vN+1.metadata.json`, a reader can trust the old head. Fix: delete `metadata/timelake-head` after writing a table with an old version, or upgrade every writer.
 
-**P3, warm connections.** While the head GET is in flight, the reader opens a few connections to the store (small `HEAD` requests on the head object), so the data reads that follow don't pay TCP and TLS setup. Cost: a few cheap requests per cold query.
+**P2, footers.** The head carries the Parquet footers (encoded with `ParquetMetaDataWriter`, page indexes included) of the newest files, newest partition first, in what the last-value index leaves of the budget. The writer reads each new file's footer once in the background (one GET) and keeps footers in memory, so later heads don't read them again. Scans put footers from the head straight into DataFusion's metadata cache.
 
-**Still to do:** the TypeScript client and the WASM reader read the head too (the browser's first query gains the most); P2 and P3.
+**P3, warm connections.** While the head GET and the listing are in flight, a cold load sends a few small HEAD requests (on the version hint), so the data reads that follow find open connections. Default 4; storage option `timelake_warm_connections`. Measured on Tigris: about 20 ms off cold scans, nothing on point queries.
+
+**Still to do:** the TypeScript client and the WASM reader read the head too (the browser's first query gains the most).
 
 ---
 

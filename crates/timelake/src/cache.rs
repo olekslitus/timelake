@@ -1,5 +1,5 @@
-//! In-process caches: immutable metadata files (manifest lists, manifests, last-value indexes) by
-//! path, and recently loaded table versions by name.
+//! In-process caches: immutable metadata files (manifest lists, manifests, last-value indexes,
+//! Parquet footers) by path, and recently loaded table versions by name.
 
 use std::borrow::Borrow;
 use std::collections::{HashMap, VecDeque};
@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
 use arrow::array::RecordBatch;
+use bytes::Bytes;
 use iceberg::spec::ManifestFile;
 
 use crate::name::TableName;
@@ -19,6 +20,8 @@ pub(crate) struct Caches {
     pub(crate) manifest_lists: BoundedCache<String, Arc<Vec<ManifestFile>>>,
     pub(crate) manifests: BoundedCache<String, Arc<Vec<LiveEntry>>>,
     pub(crate) last_value_indexes: BoundedCache<String, RecordBatch>,
+    /// Footers of data files by file URI, encoded (see `footer.rs`).
+    pub(crate) footers: BoundedCache<String, Bytes>,
     /// Table versions this process loaded or committed, with when (see `Lake::table_recent`).
     pub(crate) tables: BoundedCache<TableName, (Instant, Table)>,
 }
@@ -29,6 +32,7 @@ impl Default for Caches {
             manifest_lists: BoundedCache::new(1024),
             manifests: BoundedCache::new(8192),
             last_value_indexes: BoundedCache::new(64),
+            footers: BoundedCache::new(8192),
             tables: BoundedCache::new(1024),
         }
     }

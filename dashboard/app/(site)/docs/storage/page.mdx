@@ -28,7 +28,8 @@ Timelake’s own options work with every backend:
 
 | Key | Meaning |
 | --- | --- |
-| `timelake_freshness_check` | How readers check for a newer table version: `head` (a HEAD request; the default) or `list` (a LIST of the exact name; the default on Tigris, where a HEAD of a missing key takes about 285 ms). `list` needs S3, GCS or Azure. |
+| `timelake_freshness_check` | How a reader that already has a table version checks for a newer one: `head` (a HEAD request; the default) or `list` (a LIST of the exact name; the default on Tigris, where a HEAD of a missing key takes about 285 ms). `list` needs S3, GCS or Azure. |
+| `timelake_warm_connections` | Connections a cold table load opens ahead of the data reads, with small HEAD requests. Default 4 on remote stores; `0` turns it off. |
 | `timelake_local_root` | Write objects under a local directory (see below). |
 
 ```bash
@@ -54,6 +55,10 @@ timelake -w https://<store>.public.blob.vercel-storage.com/demo \
 ```
 
 `timelake_local_root` works with any URL: objects are written under the local directory while every path recorded in Iceberg metadata keeps the URL.
+
+## Requests per table load
+
+The first time a process reads a table, it lists the table’s `metadata/v…` files while it reads the head (on S3 a LIST is priced like a PUT, $0.005 per 1,000). Later loads in the same process send one HEAD (or LIST) to check for a newer version. Writing a head costs one small GET and one PUT per commit, plus a GET per new data file for its footer.
 
 ## Conditional writes are required
 

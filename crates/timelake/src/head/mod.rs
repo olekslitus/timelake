@@ -15,6 +15,7 @@
 //! - `columns`: one row per file and column with statistics: bounds (Iceberg single-value
 //!   encoding) and counts.
 //! - `last_values`: the last-value index, while it fits in `timelake.head-inline-bytes`.
+//! - `footers`: Parquet footers of the newest files, in what is left of that budget (P2).
 
 mod codec;
 
@@ -22,10 +23,10 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 use arrow::array::{
-    Array, ArrayRef, BinaryArray, Int32Array, Int64Array, RecordBatch, StringArray, UInt8Array, UInt32Array,
+    Array, ArrayRef, BinaryArray, Int32Array, Int64Array, ListArray, RecordBatch, StringArray, UInt8Array, UInt32Array,
     UInt64Array,
 };
-use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use arrow::datatypes::{DataType, Field, Int64Type, Schema, SchemaRef};
 use bytes::Bytes;
 use iceberg::spec::{DataContentType, DataFileBuilder, DataFileFormat, Datum, ManifestStatus, TableMetadata};
 
@@ -34,12 +35,12 @@ pub use self::codec::{ArrowCodec, HeadCodec, HeadDoc, JsonCodec};
 use crate::background;
 use crate::error::{Error, Result};
 use crate::lake::Lake;
-use crate::lvi;
 use crate::name::TableName;
 use crate::schema::align_batch;
 use crate::storage::{Storage, VersionedWrite};
 use crate::table::{LiveEntry, Table};
 use crate::write::{file_partition, partition_struct};
+use crate::{footer, lvi};
 
 const MAGIC: &[u8; 4] = b"TLHD";
 const HEADER_VERSION: u8 = 1;
@@ -57,6 +58,9 @@ const METADATA: &str = "metadata";
 const FILES: &str = "files";
 const COLUMNS: &str = "columns";
 const LAST_VALUES: &str = "last_values";
+const FOOTERS: &str = "footers";
+/// Footers read from the store at once while writing a head.
+const FOOTER_READS: usize = 16;
 
 /// Location of a table's head.
 pub(crate) fn uri(location: &str) -> String {
@@ -84,16 +88,57 @@ async fn write(table: &Table) -> Result<()> {
         // Turned off, or a codec this process doesn't have: leave no head behind that could go stale.
         return storage.delete(&uri).await;
     };
-    let mut doc = to_doc(table, &table.files().await?)?;
+    let files = table.files().await?;
+    let mut doc = to_doc(table, &files)?;
     let mut bytes = encode(table.version(), codec.as_ref(), &doc)?;
+    // Optional sections share one budget: the last-value index first, then footers.
+    let mut budget = contract.head_inline_bytes;
     if let Some(index) = table.last_value_index() {
         doc.sections.insert(LAST_VALUES.into(), lvi::read(table, &index).await?);
         let with_index = encode(table.version(), codec.as_ref(), &doc)?;
-        if ((with_index.len() - bytes.len()) as u64) <= contract.head_inline_bytes {
+        let cost = (with_index.len() - bytes.len()) as u64;
+        if cost <= budget {
             bytes = with_index;
+            budget -= cost;
+        } else {
+            doc.sections.remove(LAST_VALUES);
         }
     }
+    let footers = footers_within(lake, &files, budget).await?;
+    if footers.num_rows() > 0 {
+        doc.sections.insert(FOOTERS.into(), footers);
+        bytes = encode(table.version(), codec.as_ref(), &doc)?;
+    }
     write_if_newer(storage, &uri, table.version(), Bytes::from(bytes)).await
+}
+
+fn footers_schema() -> SchemaRef {
+    Arc::new(Schema::new(vec![
+        Field::new("path", DataType::Utf8, false),
+        Field::new("footer", DataType::Binary, false),
+    ]))
+}
+
+/// Footers of `files`, newest partitions first, while their encoded size fits in `budget` bytes.
+/// Footers this process doesn't have yet are read from the store (by this background task).
+async fn footers_within(lake: &Lake, files: &[LiveEntry], mut budget: u64) -> Result<RecordBatch> {
+    let mut files: Vec<&LiveEntry> = files.iter().collect();
+    files.sort_by_key(|e| std::cmp::Reverse((file_partition(&e.data_file), e.data_file.file_path())));
+    let (mut paths, mut footers) = (vec![], vec![]);
+    'chunks: for chunk in files.chunks(FOOTER_READS) {
+        let reads = chunk.iter().map(|e| footer::read(lake, e.data_file.file_path(), e.data_file.file_size_in_bytes()));
+        for (e, bytes) in chunk.iter().zip(futures::future::try_join_all(reads).await?) {
+            let Some(rest) = budget.checked_sub(bytes.len() as u64) else { break 'chunks };
+            budget = rest;
+            paths.push(e.data_file.file_path());
+            footers.push(bytes);
+        }
+    }
+    let columns: Vec<ArrayRef> = vec![
+        Arc::new(StringArray::from(paths)),
+        Arc::new(footers.iter().map(|b| Some(b.as_ref())).collect::<BinaryArray>()),
+    ];
+    Ok(RecordBatch::try_new(footers_schema(), columns)?)
 }
 
 /// Writes a head unless the stored one is for `version` or newer. The write is conditional on the
@@ -138,6 +183,14 @@ fn decode(lake: &Lake, name: &TableName, location: &str, bytes: &[u8]) -> Result
     let files = decode_files(&doc, table.metadata())?;
     if let (Some(uri), Some(index)) = (table.last_value_index(), doc.sections.get(LAST_VALUES)) {
         lake.caches().last_value_indexes.insert(uri, align_batch(index, &table.schema())?);
+    }
+    if let Some(footers) = doc.sections.get(FOOTERS) {
+        let (paths, bytes) = (column::<StringArray>(footers, "path")?, column::<BinaryArray>(footers, "footer")?);
+        for (path, bytes) in paths.iter().zip(bytes.iter()) {
+            if let (Some(path), Some(bytes)) = (path, bytes) {
+                lake.caches().footers.insert(path.to_string(), Bytes::copy_from_slice(bytes));
+            }
+        }
     }
     Ok(table.with_files(Arc::new(files)))
 }
@@ -184,6 +237,7 @@ fn files_schema() -> SchemaRef {
         Field::new("records", DataType::UInt64, false),
         Field::new("partition", DataType::Int32, true),
         Field::new("sort_order_id", DataType::Int32, true),
+        Field::new("split_offsets", DataType::List(Arc::new(Field::new("item", DataType::Int64, true))), true),
         // 1 if the file was added by the snapshot of `snapshot_id`'s manifest, else 0.
         Field::new("added", DataType::UInt8, false),
         Field::new("snapshot_id", DataType::Int64, false),
@@ -229,6 +283,9 @@ fn encode_files(files: &[LiveEntry]) -> Result<RecordBatch> {
         Arc::new(UInt64Array::from_iter_values(df().map(|f| f.record_count()))),
         Arc::new(df().map(|f| file_partition(f)).collect::<Int32Array>()),
         Arc::new(df().map(|f| f.sort_order_id()).collect::<Int32Array>()),
+        Arc::new(ListArray::from_iter_primitive::<Int64Type, _, _>(
+            df().map(|f| f.split_offsets().map(|o| o.iter().copied().map(Some).collect::<Vec<_>>())),
+        )),
         Arc::new(UInt8Array::from_iter_values(files.iter().map(|e| u8::from(e.status == ManifestStatus::Added)))),
         Arc::new(Int64Array::from_iter_values(files.iter().map(|e| e.snapshot_id))),
         Arc::new(Int64Array::from_iter_values(files.iter().map(|e| e.sequence_number))),
@@ -326,6 +383,9 @@ fn decode_files(doc: &HeadDoc, metadata: &TableMetadata) -> Result<Vec<LiveEntry
     let records = column::<UInt64Array>(files, "records")?;
     let partition = column::<Int32Array>(files, "partition")?;
     let sort_order_id = column::<Int32Array>(files, "sort_order_id")?;
+    // Absent in heads written before it was added.
+    let split_offsets =
+        files.column_by_name("split_offsets").map(|_| column::<ListArray>(files, "split_offsets")).transpose()?;
     let added = column::<UInt8Array>(files, "added")?;
     let snapshot_id = column::<Int64Array>(files, "snapshot_id")?;
     let sequence_number = column::<Int64Array>(files, "sequence_number")?;
@@ -351,6 +411,12 @@ fn decode_files(doc: &HeadDoc, metadata: &TableMetadata) -> Result<Vec<LiveEntry
                 .column_sizes(s.size);
             if sort_order_id.is_valid(i) {
                 b.sort_order_id(sort_order_id.value(i));
+            }
+            if let Some(split_offsets) = split_offsets.filter(|s| s.is_valid(i)) {
+                let offsets = split_offsets.value(i);
+                let offsets =
+                    offsets.as_any().downcast_ref::<Int64Array>().ok_or_else(|| Error::invalid("bad split offsets"))?;
+                b.split_offsets(Some(offsets.values().to_vec()));
             }
             let data_file = b.build().map_err(|e| {
                 Error::from(iceberg::Error::new(iceberg::ErrorKind::Unexpected, "building data file").with_source(e))
@@ -422,7 +488,10 @@ mod tests {
         let from_head = cold.table("iot.r").await.unwrap();
         assert_eq!(from_head.version(), 3);
         let files = from_head.known_files().expect("files from the head").to_vec();
-        let mut expected = t.refresh().await.unwrap().files().await.unwrap();
+        // The same version read through its manifests.
+        let metadata = t.metadata().clone();
+        let manifests = Table::new(lake.clone(), t.name().clone(), t.location().to_string(), 3, metadata).unwrap();
+        let mut expected = manifests.files().await.unwrap();
         expected.sort_by(|a, b| a.data_file.file_path().cmp(b.data_file.file_path()));
         let mut got = files.clone();
         got.sort_by(|a, b| a.data_file.file_path().cmp(b.data_file.file_path()));
@@ -462,8 +531,8 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn cold_queries_read_the_head_first() {
         let scan = Some("SELECT value FROM iot.r WHERE device = 2");
-        assert_eq!(cold_round_trips("arrow", None).await, 2);
-        assert_eq!(cold_round_trips("arrow", scan).await, 3);
+        assert_eq!(cold_round_trips("arrow", None).await, 1);
+        assert_eq!(cold_round_trips("arrow", scan).await, 2);
         assert_eq!(cold_round_trips("none", None).await, 3);
         assert_eq!(cold_round_trips("none", scan).await, 6);
     }
@@ -492,6 +561,35 @@ mod tests {
         }
         let latest = session.latest("iot.r").await.unwrap().collect().await.unwrap();
         assert_eq!(latest.iter().map(RecordBatch::num_rows).sum::<usize>(), 2);
+    }
+
+    /// A reader that already has a version confirms it with one request (no head download), and
+    /// sees a commit made by another process.
+    #[tokio::test(start_paused = true)]
+    async fn warm_queries_check_for_newer_versions() {
+        const RTT: Duration = Duration::from_millis(100);
+        let (lake, store) = faulty_lake();
+        let t = lake.create_table("iot.r", &schema(), opts()).await.unwrap();
+        let (t, _) = t.append(&[batch(&[(T0, 1, 1.0)])], no_maintenance()).await.unwrap();
+        crate::flush().await;
+        let session = Session::new(reopen(&store));
+        let count = || async {
+            let rows = session.sql("SELECT count(*) FROM iot.r").await.unwrap().collect().await.unwrap();
+            rows[0].column(0).as_any().downcast_ref::<Int64Array>().unwrap().value(0)
+        };
+        assert_eq!(count().await, 1);
+
+        // Past the planning cache's second (wall-clock time).
+        std::thread::sleep(Duration::from_millis(1100));
+        store.set_latency(RTT);
+        let started = tokio::time::Instant::now();
+        session.latest("iot.r").await.unwrap().collect().await.unwrap();
+        assert_eq!(started.elapsed().as_millis() / RTT.as_millis(), 1);
+
+        store.set_latency(Duration::ZERO);
+        t.append(&[batch(&[(T0 + 1, 2, 2.0)])], no_maintenance()).await.unwrap();
+        std::thread::sleep(Duration::from_millis(1100));
+        assert_eq!(count().await, 2);
     }
 
     /// Writers that finish out of order never move the head back.
@@ -565,16 +663,28 @@ mod tests {
         assert_eq!((without.version(), without.known_files().is_some()), (2, false));
     }
 
-    /// The last-value index is inline only while it fits the table's budget.
+    /// The last-value index and footers are inline only while they fit the table's budget.
     #[tokio::test]
-    async fn index_is_inline_within_the_budget() {
+    async fn optional_sections_fit_the_budget() {
         let (lake, store) = faulty_lake();
         let o = with_properties(&[(property::HEAD_INLINE_BYTES, "0")]);
         let t = lake.create_table("iot.r", &schema(), o).await.unwrap();
         t.append(&[batch(&[(T0, 1, 1.0)])], no_maintenance()).await.unwrap();
         crate::flush().await;
         let cold = reopen(&store);
-        let index = cold.table("iot.r").await.unwrap().last_value_index().unwrap();
-        assert!(cold.caches().last_value_indexes.get(&index).is_none());
+        let table = cold.table("iot.r").await.unwrap();
+        assert!(cold.caches().last_value_indexes.get(&table.last_value_index().unwrap()).is_none());
+        let file = table.files().await.unwrap()[0].data_file.file_path().to_string();
+        assert!(cold.caches().footers.get(&file).is_none());
+
+        // With the default budget, both come with the head.
+        let t = lake.create_table("iot.d", &schema(), opts()).await.unwrap();
+        t.append(&[batch(&[(T0, 1, 1.0)])], no_maintenance()).await.unwrap();
+        crate::flush().await;
+        let cold = reopen(&store);
+        let table = cold.table("iot.d").await.unwrap();
+        assert!(cold.caches().last_value_indexes.get(&table.last_value_index().unwrap()).is_some());
+        let file = table.files().await.unwrap()[0].data_file.file_path().to_string();
+        assert!(cold.caches().footers.get(&file).is_some());
     }
 }

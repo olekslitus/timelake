@@ -39,12 +39,22 @@ use crate::schema::normalize_schema;
 use crate::storage::{Storage, warehouse_url};
 use crate::table::{FreshnessCheck, LiveEntry, Table};
 
-/// Where loading a table starts.
+/// Where a cold load starts.
 enum Start {
-    /// From the head (not yet checked for newer versions).
-    Head(Box<Table>),
-    /// From this metadata version.
+    /// The head, known to be the newest version.
+    Current(Box<Table>),
+    /// The head, not yet checked for a newer version.
+    Unchecked(Box<Table>),
+    /// The metadata of this version (or a newer one).
     Version(u64),
+}
+
+/// The newest version as a cold load finds it.
+enum Newest {
+    /// From a listing of the metadata files: authoritative. `None`: there are none.
+    Listed(Option<u64>),
+    /// From the version hint, which may lag. `None`: there is no hint.
+    Hint(Option<u64>),
 }
 
 /// How many object-store requests listing runs at once.
@@ -215,30 +225,48 @@ impl Lake {
         self.load(&name.try_into()?).await
     }
 
-    /// Loads the current version: from the head when the table has one (after checking that no
-    /// newer version exists), otherwise through the version hint and the metadata chain.
+    /// Loads the current version. A version this process already has is confirmed with one
+    /// request; otherwise the table comes from its head when that is current (see
+    /// [`Lake::start_load`]), or through the metadata chain.
     pub(crate) async fn load(&self, name: &TableName) -> Result<Table> {
-        let table = match self.start_load(name).await? {
-            Start::Version(version) => return self.load_from(name, version).await,
-            Start::Head(table) => *table,
-        };
-        let next = metadata_uri(table.location(), table.version() + 1);
-        if self.storage().check_exists(&next).await? {
-            return self.load_from(name, table.version() + 1).await;
+        if let Some((_, table)) = self.caches().tables.get(name)
+            && !self.storage().check_exists(&next_metadata_uri(&table)).await?
+        {
+            return Ok(self.reuse(table));
         }
-        self.remember(&table);
-        Ok(table)
+        match self.start_load(name).await? {
+            Start::Current(table) => Ok(self.reuse(*table)),
+            Start::Unchecked(table) if !self.storage().check_exists(&next_metadata_uri(&table)).await? => {
+                Ok(self.reuse(*table))
+            }
+            Start::Unchecked(table) => self.load_from(name, table.version() + 1).await,
+            Start::Version(version) => self.load_from(name, version).await,
+        }
     }
 
-    /// Like [`Lake::load`], but returns a version loaded from the head without waiting for the
-    /// check for a newer one: the check runs while the query is planned, and the scan waits for it
-    /// (and reloads if the head was behind).
+    /// Like [`Lake::load`], but a version that still needs the check for a newer one is returned
+    /// at once: the check runs while the query is planned, and the scan waits for it (and reloads
+    /// if the version was outdated).
     async fn load_for_query(&self, name: &TableName) -> Result<Table> {
-        let table = match self.start_load(name).await? {
-            Start::Version(version) => return self.load_from(name, version).await,
-            Start::Head(table) => *table,
-        };
-        let (storage, next) = (self.storage().clone(), metadata_uri(table.location(), table.version() + 1));
+        if let Some((_, table)) = self.caches().tables.get(name) {
+            return Ok(self.reuse(self.with_freshness_check(table)));
+        }
+        match self.start_load(name).await? {
+            Start::Current(table) => Ok(self.reuse(*table)),
+            Start::Unchecked(table) => Ok(self.reuse(self.with_freshness_check(*table))),
+            Start::Version(version) => self.load_from(name, version).await,
+        }
+    }
+
+    /// Records `table` as seen now, and returns it.
+    fn reuse(&self, table: Table) -> Table {
+        self.remember(&table);
+        table
+    }
+
+    /// `table` with a check for a newer version, started now.
+    fn with_freshness_check(&self, table: Table) -> Table {
+        let (storage, next) = (self.storage().clone(), next_metadata_uri(&table));
         let check: FreshnessCheck = tokio::spawn(async move { storage.check_exists(&next).await })
             .map(|r| match r {
                 Ok(r) => r.map_err(Arc::new),
@@ -246,33 +274,42 @@ impl Lake {
             })
             .boxed()
             .shared();
-        let table = table.with_check(check);
-        self.remember(&table);
-        Ok(table)
+        table.with_check(check)
     }
 
-    /// Reads the head and the version hint at once, so a table without a head (written by
-    /// another engine or an older Timelake) loads as fast as before heads existed.
+    /// The first step of a cold load. The head and the newest version are read at once: a LIST of
+    /// `metadata/v` on stores that list by prefix (which also says whether the head is current),
+    /// otherwise the version hint. A table without a head (written by another engine or an older
+    /// Timelake) loads as fast as before heads existed. Connections for the reads that follow are
+    /// opened at the same time (P3).
     async fn start_load(&self, name: &TableName) -> Result<Start> {
         let location = self.table_location(name);
         let hint_uri = hint_uri(&location);
-        let (head, hint) = tokio::join!(head::read(self, name, &location), self.storage().read_opt(&hint_uri));
-        let hint = match hint? {
-            Some(hint) => Some(
-                std::str::from_utf8(&hint)
-                    .ok()
-                    .and_then(|s| s.trim().parse::<u64>().ok())
-                    .ok_or_else(|| Error::invalid(format!("bad version hint for {name}")))?,
-            ),
-            None => None,
-        };
-        match (head?, hint) {
+        self.storage().warm_up(&hint_uri);
+        let (head, newest) = tokio::join!(head::read(self, name, &location), self.newest_version(&location, &hint_uri));
+        match (head?, newest?) {
+            (Some(table), Newest::Listed(Some(newest))) if table.version() >= newest => {
+                Ok(Start::Current(Box::new(table)))
+            }
             // The hint is ahead: the head is outdated.
-            (Some(table), Some(hint)) if hint > table.version() => Ok(Start::Version(hint)),
-            (Some(table), _) => Ok(Start::Head(Box::new(table))),
-            (None, Some(hint)) => Ok(Start::Version(hint)),
-            (None, None) => Err(Error::NotFound(name.to_string())),
+            (Some(table), Newest::Hint(Some(hint))) if hint > table.version() => Ok(Start::Version(hint)),
+            (Some(table), Newest::Hint(_)) => Ok(Start::Unchecked(Box::new(table))),
+            (_, Newest::Listed(Some(version)) | Newest::Hint(Some(version))) => Ok(Start::Version(version)),
+            (_, Newest::Listed(None) | Newest::Hint(None)) => Err(Error::NotFound(name.to_string())),
         }
+    }
+
+    /// The newest committed version, listed, or else the version hint.
+    async fn newest_version(&self, location: &str, hint_uri: &str) -> Result<Newest> {
+        if let Some(listed) = self.storage().list_prefix(&format!("{location}/metadata/v")).await? {
+            return Ok(Newest::Listed(listed.iter().filter_map(|uri| metadata_version(uri)).max()));
+        }
+        let Some(hint) = self.storage().read_opt(hint_uri).await? else { return Ok(Newest::Hint(None)) };
+        let version = std::str::from_utf8(&hint)
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .ok_or_else(|| Error::invalid(format!("bad version hint at {hint_uri}")))?;
+        Ok(Newest::Hint(Some(version)))
     }
 
     /// Loads `version`, or a newer one if it exists.
@@ -379,6 +416,15 @@ impl fmt::Debug for Lake {
 
 pub(crate) fn metadata_uri(location: &str, version: u64) -> String {
     format!("{location}/metadata/v{version}.metadata.json")
+}
+
+fn next_metadata_uri(table: &Table) -> String {
+    metadata_uri(table.location(), table.version() + 1)
+}
+
+/// The version of a `…/v<N>.metadata.json` URI.
+fn metadata_version(uri: &str) -> Option<u64> {
+    uri.rsplit('/').next()?.strip_prefix('v')?.strip_suffix(".metadata.json")?.parse().ok()
 }
 
 pub(crate) fn hint_uri(location: &str) -> String {

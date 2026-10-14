@@ -33,13 +33,15 @@ Nothing has been released yet. This section describes what is on `main`.
 ### Changed
 
 - **Faster first queries:** after each commit the writer also writes `metadata/timelake-head`, which holds the table
-  metadata, the live files and the last-value index (while it fits in 1 MiB). A cold query reads it in one request
-  instead of following the version hint, metadata, manifest list and manifests, and checks for a newer version while it
-  plans. Measured from a laptop, the first `latest`-style query takes about 310 ms instead of 500 on S3, and 320
-  instead of 870 on Tigris. Other engines see no change. New table properties `timelake.head-format` (`arrow`, `json`,
-  a codec registered with `Lake::register_head_codec`, or `none`) and `timelake.head-inline-bytes`; new storage option
-  `timelake_freshness_check` (`head` or `list`, `list` by default on Tigris). If you write a table with an older
-  Timelake after this one, delete its `metadata/timelake-head`.
+  metadata, the live files, and (while they fit in 1 MiB) the last-value index and the Parquet footers of the newest
+  files. A cold query reads it together with a listing of the table's metadata files that confirms it is current, so a
+  first `latest` query takes one round trip to storage instead of three, and a first filtered scan two instead of six.
+  A process that already has a table only checks for a newer version. A cold load also opens a few connections early.
+  Measured from a laptop on Tigris, first queries take 210–500 ms instead of 760–1,190. Other engines see no change.
+  New table properties `timelake.head-format` (`arrow`, `json`, a codec registered with `Lake::register_head_codec`,
+  or `none`) and `timelake.head-inline-bytes`; new storage options `timelake_freshness_check` (`head` or `list`, `list`
+  by default on Tigris) and `timelake_warm_connections` (default 4). If you write a table with an older Timelake after
+  this one, delete its `metadata/timelake-head`.
 - **Faster commits:** an append uploads its data files and metadata all at once, then makes the one conditional
   write, so it waits for two round trips to storage instead of five. The version hint is now updated in the
   background; Rust programs should call `timelake::flush()` before exiting (the CLI and the Python package do).

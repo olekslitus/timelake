@@ -56,7 +56,7 @@ warehouse/
       lvi-2566…-….parquet                 last-value index: newest row per device
 ```
 
-The `metadata/` folder is standard Iceberg. Reading a table means following a chain: `version-hint.text` → `v2.metadata.json` → manifest list → manifests → data files. That is four requests before any data. Timelake also writes `timelake-head`, which holds what the chain leads to, so its readers need one request (and a quick check that no newer version exists).
+The `metadata/` folder is standard Iceberg. Reading a table means following a chain: `version-hint.text` → `v2.metadata.json` → manifest list → manifests → data files. That is four requests before any data. Timelake also writes `timelake-head`, which holds what the chain leads to, so its readers need one request, made together with a listing that confirms no newer version exists.
 
 ## 3. Two writers at the same time
 

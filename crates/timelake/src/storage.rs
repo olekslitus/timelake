@@ -41,7 +41,21 @@ pub struct Storage {
     /// `base` with a trailing slash, as DataFusion registers object stores.
     url: Url,
     listable: bool,
+    /// Lists by raw key prefix (S3, GCS, Azure).
+    lister: Option<Lister>,
     check: FreshnessCheck,
+    /// Connections opened ahead of a cold table load (P3); 0 for local stores.
+    warm_connections: usize,
+}
+
+/// A store's raw-prefix listing.
+#[derive(Clone)]
+struct Lister(Arc<dyn PaginatedListStore>);
+
+impl std::fmt::Debug for Lister {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Lister")
+    }
 }
 
 /// Storage option mapping a warehouse URL onto a local directory (see [`Storage::open`]).
@@ -51,22 +65,18 @@ pub const LOCAL_ROOT_OPTION: &str = "timelake_local_root";
 /// `head` or `list` (see [`Storage::open`]).
 pub const FRESHNESS_CHECK_OPTION: &str = "timelake_freshness_check";
 
+/// Storage option setting how many connections a cold table load opens ahead of the data reads
+/// (default 4 on remote stores; 0 turns it off).
+pub const WARM_CONNECTIONS_OPTION: &str = "timelake_warm_connections";
+const DEFAULT_WARM_CONNECTIONS: usize = 4;
+
 /// How [`Storage::check_exists`] asks whether an object exists. A HEAD request is the cheapest
 /// on most stores; on some (Tigris) a HEAD of a missing key is slow while a LIST of its exact
 /// name is fast (SPEC §17.4).
-#[derive(Clone)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FreshnessCheck {
     Head,
-    List(Arc<dyn PaginatedListStore>),
-}
-
-impl std::fmt::Debug for FreshnessCheck {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Head => "head",
-            Self::List(_) => "list",
-        })
-    }
+    List,
 }
 
 /// What [`Storage::write_versioned`] did.
@@ -99,6 +109,12 @@ impl Storage {
             Some(other) => {
                 return Err(Error::config(format!("{FRESHNESS_CHECK_OPTION} must be head or list, got {other:?}")));
             }
+        };
+        let warm_connections = match options.remove(WARM_CONNECTIONS_OPTION) {
+            Some(n) => n.trim().parse().map_err(|_| {
+                Error::config(format!("{WARM_CONNECTIONS_OPTION} must be a non-negative integer, got {n:?}"))
+            })?,
+            None => DEFAULT_WARM_CONNECTIONS,
         };
         let scheme = url.scheme();
         let authority = url.host_str().unwrap_or_default();
@@ -169,19 +185,23 @@ impl Storage {
         };
         let listable = !matches!(scheme, "http" | "https");
         let mut storage = Self::new(store, base, listable)?;
-        storage.check = match (lister, check) {
-            (Some((lister, _)), Some(true)) | (Some((lister, true)), None) => FreshnessCheck::List(lister),
+        storage.check = match (&lister, check) {
+            (Some(_), Some(true)) | (Some((_, true)), None) => FreshnessCheck::List,
             (None, Some(true)) => {
                 return Err(Error::config(format!("{FRESHNESS_CHECK_OPTION}=list needs S3, GCS or Azure")));
             }
             _ => FreshnessCheck::Head,
         };
+        storage.lister = lister.map(|(l, _)| Lister(l));
+        if scheme != "file" && scheme != "memory" {
+            storage.warm_connections = warm_connections;
+        }
         Ok(storage)
     }
 
     fn new(store: Arc<dyn ObjectStore>, base: String, listable: bool) -> Result<Self> {
         let url = Url::parse(&format!("{base}/")).map_err(|e| Error::config(format!("bad store URL {base}: {e}")))?;
-        Ok(Self { store, base, url, listable, check: FreshnessCheck::Head })
+        Ok(Self { store, base, url, listable, lister: None, check: FreshnessCheck::Head, warm_connections: 0 })
     }
 
     /// A listable store addressed as `base` (`scheme://authority`).
@@ -243,12 +263,53 @@ impl Storage {
     /// Whether an object exists, asked the way this store answers fastest (see
     /// [`FRESHNESS_CHECK_OPTION`]). Readers use it to check for a newer table version.
     pub async fn check_exists(&self, uri: &str) -> Result<bool> {
-        let FreshnessCheck::List(lister) = &self.check else { return self.exists(uri).await };
+        let (FreshnessCheck::List, Some(Lister(lister))) = (self.check, &self.lister) else {
+            return self.exists(uri).await;
+        };
         let path = self.path(uri)?;
         // The exact name sorts before any longer name it prefixes, so one key answers.
         let opts = PaginatedListOptions { max_keys: Some(1), ..Default::default() };
         let listed = lister.list_paginated(Some(path.as_ref()), opts).await?;
         Ok(listed.result.objects.iter().any(|o| o.location == path))
+    }
+
+    /// URIs of the objects whose URI starts with `prefix` (which need not end at a `/`), in one
+    /// request where the store lists by raw prefix. `None` if the store can't list, or the result
+    /// doesn't fit one page.
+    pub(crate) async fn list_prefix(&self, prefix: &str) -> Result<Option<Vec<String>>> {
+        let rest = prefix
+            .strip_prefix(&self.base)
+            .ok_or_else(|| Error::config(format!("{prefix} is not under {}", self.base)))?;
+        let key_prefix = rest.trim_start_matches('/');
+        let uri = |location: &Path| format!("{}/{location}", self.base);
+        if let Some(Lister(lister)) = &self.lister {
+            let listed = lister.list_paginated(Some(key_prefix), PaginatedListOptions::default()).await?;
+            if listed.page_token.is_some() {
+                return Ok(None);
+            }
+            return Ok(Some(listed.result.objects.iter().map(|o| uri(&o.location)).collect()));
+        }
+        if !self.listable {
+            return Ok(None);
+        }
+        // Local stores list by directory: list the prefix's directory and filter.
+        let dir = key_prefix.rsplit_once('/').map_or("", |(dir, _)| dir);
+        let listed: Vec<_> = self.store.list(Some(&Path::parse(dir)?)).try_collect().await?;
+        Ok(Some(
+            listed.iter().filter(|o| o.location.as_ref().starts_with(key_prefix)).map(|o| uri(&o.location)).collect(),
+        ))
+    }
+
+    /// Opens connections ahead of the requests that will follow, by sending small HEAD requests
+    /// for `uri` in the background (SPEC §19.2, P3). Does nothing on local stores.
+    pub(crate) fn warm_up(&self, uri: &str) {
+        let Ok(path) = self.path(uri) else { return };
+        for _ in 0..self.warm_connections {
+            let (store, path) = (self.store.clone(), path.clone());
+            tokio::spawn(async move {
+                let _ = store.head(&path).await;
+            });
+        }
     }
 
     /// The first `len` bytes of an object (all of it if shorter) and its version, for a later
@@ -669,10 +730,10 @@ mod tests {
             ]);
             format!("{:?}", Storage::open(&Url::parse("s3://b").unwrap(), options).unwrap().check)
         };
-        assert_eq!(s3("https://s3.us-east-2.amazonaws.com"), "head");
-        assert_eq!(s3("https://t3.storage.dev"), "list");
-        assert_eq!(open("s3://b", "LIST").unwrap(), "list");
-        assert_eq!(open("memory://", "head").unwrap(), "head");
+        assert_eq!(s3("https://s3.us-east-2.amazonaws.com"), "Head");
+        assert_eq!(s3("https://t3.storage.dev"), "List");
+        assert_eq!(open("s3://b", "LIST").unwrap(), "List");
+        assert_eq!(open("memory://", "head").unwrap(), "Head");
         assert!(open("memory://", "list").is_err(), "memory can't list a name");
         assert!(open("s3://b", "maybe").is_err());
     }

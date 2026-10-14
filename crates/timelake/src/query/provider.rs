@@ -13,9 +13,10 @@ use datafusion::datasource::file_format::FileFormat;
 use datafusion::datasource::file_format::parquet::ParquetFormat;
 use datafusion::datasource::listing::PartitionedFile;
 use datafusion::datasource::memory::MemorySourceConfig;
-use datafusion::datasource::physical_plan::parquet::metadata::DFParquetMetadata;
+use datafusion::datasource::physical_plan::parquet::metadata::{CachedParquetMetaData, DFParquetMetadata};
 use datafusion::datasource::physical_plan::{FileGroup, FileScanConfigBuilder, ParquetSource};
 use datafusion::error::{DataFusionError, Result as DfResult};
+use datafusion::execution::cache::cache_manager::CachedFileMetadataEntry;
 use datafusion::execution::object_store::ObjectStoreUrl;
 use datafusion::logical_expr::utils::conjunction;
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown, TableType};
@@ -119,7 +120,7 @@ async fn scan_data(
     let one_file_per_group = groups.iter().all(|g| g.len() == 1);
 
     let url = ObjectStoreUrl::parse(storage.url())?;
-    prefetch_footers(state, &url, &groups).await?;
+    prefetch_footers(table, state, &url, &groups).await?;
 
     let source = Arc::new(ParquetSource::new(schema.clone()));
     let mut stats = Statistics::new_unknown(&schema);
@@ -157,10 +158,12 @@ async fn prune(table: &Table, state: &dyn DfSession, filters: &[Expr]) -> DfResu
     Ok(files.into_iter().zip(keep).filter_map(|(f, k)| k.then_some(f)).collect())
 }
 
-/// Reads each file's footer (and page index) once, concurrently, into DataFusion's metadata
-/// cache. Otherwise every scan partition fetches the footer of the file range it reads, which on
-/// object storage means dozens of redundant ranged GETs per file.
+/// Puts each file's footer (and page index) into DataFusion's metadata cache once: from the head
+/// when it carried the footer (P2), otherwise read from the store, concurrently. Without this,
+/// every scan partition fetches the footer of the file range it reads, which on object storage
+/// means dozens of redundant ranged GETs per file.
 async fn prefetch_footers(
+    table: &Table,
     state: &dyn DfSession,
     url: &ObjectStoreUrl,
     groups: &[Vec<PartitionedFile>],
@@ -168,7 +171,19 @@ async fn prefetch_footers(
     let store = state.runtime_env().object_store(url)?;
     let cache = state.runtime_env().cache_manager.get_file_metadata_cache();
     let hint = state.table_options().parquet.global.metadata_size_hint;
-    let fetches = groups.iter().flatten().map(|pf| {
+    let (base, known) = (table.lake().storage().base_url(), &table.lake().caches().footers);
+    let mut fetch = vec![];
+    for pf in groups.iter().flatten() {
+        let location = &pf.object_meta.location;
+        match known.get(&format!("{base}/{location}")) {
+            Some(bytes) => {
+                let metadata = Arc::new(CachedParquetMetaData::new(crate::footer::decode(&bytes)?));
+                cache.put(location, CachedFileMetadataEntry::new(pf.object_meta.clone(), metadata));
+            }
+            None => fetch.push(pf),
+        }
+    }
+    let fetches = fetch.into_iter().map(|pf| {
         let (store, cache) = (store.clone(), cache.clone());
         async move {
             DFParquetMetadata::new(store.as_ref(), &pf.object_meta)
