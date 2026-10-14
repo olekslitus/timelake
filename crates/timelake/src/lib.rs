@@ -1,40 +1,56 @@
-//! Timelake: the open time-series lakehouse.
+//! Timelake: the open time-series lakehouse. Tables are Apache Iceberg tables on any object
+//! store, laid out for time series (partitioned by time, sorted by series and time), kept
+//! compact by the writer itself, and queried with DataFusion.
 //!
 //! ```no_run
 //! # async fn demo(batch: arrow::array::RecordBatch) -> timelake::Result<()> {
-//! use timelake::{Lake, TableOptions};
+//! use timelake::{Lake, Session, TableOptions};
+//!
 //! let lake = Lake::open("s3://bucket/warehouse", Default::default())?;
-//! let table = lake
-//!     .create_table("iot.readings", &batch.schema(), TableOptions {
-//!         time_column: Some("time".into()),
-//!         series_key: vec!["device_id".into()],
-//!         ..Default::default()
-//!     })
-//!     .await?;
-//! table.append(&[batch], Default::default()).await?;
-//! let session = timelake::Session::new(lake);
+//! let opts = TableOptions {
+//!     time_column: Some("time".into()),
+//!     series_key: vec!["device_id".into()],
+//!     ..Default::default()
+//! };
+//! let table = lake.create_table("iot.readings", &batch.schema(), opts).await?;
+//! let (table, result) = table.append(&[batch], Default::default()).await?;
+//!
+//! let session = Session::new(lake);
 //! let rows = session.sql("SELECT * FROM iot.readings WHERE device_id = 7").await?.collect().await?;
+//! let latest = session.latest("iot.readings").await?.collect().await?;
 //! # Ok(()) }
 //! ```
 
+#![warn(missing_docs)]
+
+mod append;
+mod cache;
 mod commit;
-pub use timelake_format::{bounds, contract};
 mod error;
 mod lake;
 mod lvi;
-mod ops;
-pub mod query;
+mod maintain;
+mod name;
+mod query;
+mod schema;
+mod sort;
 pub mod storage;
+mod table;
+#[cfg(test)]
+mod testing;
 mod write;
 
+pub use append::{AppendOptions, AppendResult};
 pub use commit::CommitInfo;
-pub use contract::{Chunk, Contract, TableOptions};
 pub use error::{Error, Result};
-pub use lake::{DEFAULT_NAMESPACE, Lake, LiveEntry, Table, TableName};
+pub use lake::Lake;
 pub use lvi::latest_per_series;
-pub use ops::{AppendOptions, AppendResult, MaintainOptions, MaintainReport};
+pub use maintain::{MaintainOptions, MaintainReport};
+pub use name::{DEFAULT_NAMESPACE, TableName};
 pub use query::Session;
-pub use write::{align_batch, file_partition};
-
-pub use arrow;
-pub use datafusion;
+pub use schema::align_batch;
+pub use table::{LiveEntry, Table};
+pub use timelake_format::contract::{Chunk, Contract, TableOptions};
+pub use timelake_format::{bounds, contract, format_duration, parse_duration, property, summary};
+pub use write::file_partition;
+pub use {arrow, datafusion};

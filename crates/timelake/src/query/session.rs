@@ -1,0 +1,239 @@
+use std::fmt;
+use std::sync::Arc;
+
+use datafusion::execution::SessionStateBuilder;
+use datafusion::functions_window::expr_fn::row_number;
+use datafusion::logical_expr::ExprFunctionExt;
+use datafusion::prelude::{DataFrame, SessionConfig, SessionContext, ident, lit};
+use datafusion::sql::TableReference;
+use datafusion::sql::parser::{DFParserBuilder, Statement};
+use datafusion::sql::sqlparser::dialect::dialect_from_str;
+
+use super::catalog::{INFORMATION_SCHEMA, LakeCatalog};
+use super::provider::TimelakeProvider;
+use super::rewrite::LatestRewrite;
+use super::{CATALOG, PLAN_CACHE_TTL};
+use crate::error::{Error, Result};
+use crate::lake::Lake;
+use crate::name::{DEFAULT_NAMESPACE, TableName};
+
+/// Name of the helper column of [`Session::latest`]'s fallback query.
+const ROW_NUMBER: &str = "__timelake_row_number";
+/// Scan partitions per core on remote object storage, where scans wait on requests, not CPU.
+const REMOTE_PARTITIONS_PER_CORE: usize = 4;
+const MIN_REMOTE_PARTITIONS: usize = 32;
+
+/// A SQL session over a lake. Tables are addressed as `namespace.table` (or just `table` in the
+/// `default` namespace) and always read at their latest committed version.
+///
+/// ```no_run
+/// # async fn demo(lake: timelake::Lake) -> timelake::Result<()> {
+/// let session = timelake::Session::new(lake);
+/// let batches = session.sql("SELECT count(*) FROM iot.readings").await?.collect().await?;
+/// # Ok(()) }
+/// ```
+#[derive(Clone)]
+pub struct Session {
+    lake: Lake,
+    ctx: SessionContext,
+    catalog: Arc<LakeCatalog>,
+}
+
+impl Session {
+    /// A session with DataFusion's default configuration.
+    pub fn new(lake: Lake) -> Self {
+        Self::with_config(lake, SessionConfig::new())
+    }
+
+    /// A session with a custom DataFusion configuration. Its default schema, if set, is the
+    /// namespace unqualified table names resolve in.
+    pub fn with_config(lake: Lake, config: SessionConfig) -> Self {
+        let namespace = match config.options().catalog.default_schema.as_str() {
+            "public" => DEFAULT_NAMESPACE.to_string(),
+            s => s.to_string(),
+        };
+        // Raise the default (one partition per core) on remote storage, unless the caller changed it.
+        let cores = std::thread::available_parallelism().map_or(8, std::num::NonZero::get);
+        let remote = !matches!(lake.storage().url().scheme(), "file" | "memory");
+        let config = if remote && config.target_partitions() == cores {
+            config.with_target_partitions((cores * REMOTE_PARTITIONS_PER_CORE).max(MIN_REMOTE_PARTITIONS))
+        } else {
+            config
+        };
+        let config = config
+            .with_information_schema(true)
+            .with_default_catalog_and_schema(CATALOG, namespace)
+            .set_bool("datafusion.execution.parquet.pushdown_filters", false);
+        let state = SessionStateBuilder::new()
+            .with_config(config)
+            .with_default_features()
+            .with_optimizer_rule(Arc::new(LatestRewrite))
+            .build();
+        let ctx = SessionContext::new_with_state(state);
+        ctx.register_object_store(lake.storage().url(), lake.storage().object_store());
+        let catalog = Arc::new(LakeCatalog::new(lake.clone()));
+        ctx.register_catalog(CATALOG, catalog.clone());
+        // TimescaleDB's time_bucket(width, ts [, origin]) has date_bin's semantics for fixed widths.
+        let time_bucket = datafusion::functions::datetime::date_bin().as_ref().clone().with_aliases(["time_bucket"]);
+        ctx.register_udf(time_bucket);
+        Self { lake, ctx, catalog }
+    }
+
+    /// The lake this session reads.
+    pub fn lake(&self) -> &Lake {
+        &self.lake
+    }
+
+    /// The underlying DataFusion context, for registering more tables or functions.
+    pub fn context(&self) -> &SessionContext {
+        &self.ctx
+    }
+
+    /// Plans one SQL statement.
+    pub async fn sql(&self, sql: &str) -> Result<DataFrame> {
+        let state = self.ctx.state();
+        let dialect = state.config().options().sql_parser.dialect;
+        self.execute(state.sql_to_statement(sql, &dialect)?).await
+    }
+
+    /// Splits SQL text into statements with DataFusion's parser (so a `;` inside a string literal
+    /// or comment doesn't split), for running a script one statement at a time with [`Self::execute`].
+    pub fn parse(&self, sql: &str) -> Result<Vec<Statement>> {
+        let state = self.ctx.state();
+        let options = &state.config().options().sql_parser;
+        let dialect = dialect_from_str(options.dialect)
+            .ok_or_else(|| Error::config(format!("unsupported SQL dialect {}", options.dialect)))?;
+        let statements = DFParserBuilder::new(sql)
+            .with_dialect(dialect.as_ref())
+            .with_recursion_limit(options.recursion_limit)
+            .build()?
+            .parse_statements()?;
+        Ok(statements.into())
+    }
+
+    /// Plans one parsed statement.
+    pub async fn execute(&self, statement: Statement) -> Result<DataFrame> {
+        let state = self.ctx.state();
+        // DataFusion resolves tables one after another; on object storage each costs several
+        // round trips (version hint, metadata, manifest list, manifests). Load every table the
+        // query references concurrently first, so planning finds them all in cache.
+        if let Ok(references) = state.resolve_table_references(&statement) {
+            // DataFusion lists namespaces and tables synchronously; list them up front instead.
+            if references.iter().any(|r| r.schema() == Some(INFORMATION_SCHEMA)) {
+                self.catalog.refresh_listing().await?;
+            }
+            let default_namespace = &state.config().options().catalog.default_schema;
+            let names: Vec<TableName> = references
+                .iter()
+                .filter(|r| r.catalog().is_none_or(|c| c == CATALOG))
+                .filter_map(|r| TableName::new(r.schema().unwrap_or(default_namespace), r.table()).ok())
+                .collect();
+            futures::future::join_all(names.iter().map(|n| self.prefetch(n))).await;
+        }
+        let plan = state.statement_to_plan(statement).await?;
+        Ok(self.ctx.execute_logical_plan(plan).await?)
+    }
+
+    /// Loads a table's metadata, file list and last-value index into the lake's caches. Errors
+    /// are left for planning to report.
+    async fn prefetch(&self, name: &TableName) {
+        let Ok(table) = self.lake.table_recent(name, PLAN_CACHE_TTL).await else { return };
+        let index = table.last_value_index();
+        let read_index = async {
+            if let Some(uri) = index {
+                let _ = crate::lvi::read(&table, &uri).await;
+            }
+        };
+        let (_, ()) = tokio::join!(table.files(), read_index);
+    }
+
+    /// The newest row of every series (from the last-value index when available).
+    pub async fn latest<N>(&self, table: N) -> Result<DataFrame>
+    where
+        N: TryInto<TableName>,
+        Error: From<N::Error>,
+    {
+        let table = self.lake.table(table).await?;
+        let Some(time_column) = table.contract().time_column.clone() else {
+            return Err(Error::invalid(format!("{} has no time column", table.name())));
+        };
+        if table.last_value_index().is_some() {
+            return Ok(self.ctx.read_table(Arc::new(TimelakeProvider::latest(table)))?);
+        }
+        // Fallback for tables without an index: the newest row per series with a window function.
+        let keys = table.contract().series_key.iter().map(ident).collect();
+        let rn = row_number().partition_by(keys).order_by(vec![ident(time_column).sort(false, true)]).build()?;
+        let name = table.name();
+        let df = self
+            .ctx
+            .table(TableReference::full(CATALOG, name.namespace(), name.name()))
+            .await?
+            .window(vec![rn.alias(ROW_NUMBER)])?
+            .filter(ident(ROW_NUMBER).eq(lit(1u64)))?
+            .drop_columns(&[ROW_NUMBER])?;
+        Ok(df)
+    }
+}
+
+impl fmt::Debug for Session {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Session").field("lake", &self.lake).finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use arrow::array::{Float64Array, Int32Array, RecordBatch, TimestampMicrosecondArray};
+    use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+
+    use super::*;
+    use crate::TableOptions;
+    use crate::testing::{T0, append_without_index, faulty_lake};
+
+    /// Without a last-value index, `latest` runs a window query; odd column and table names must
+    /// not break it.
+    #[tokio::test]
+    async fn latest_without_index_quotes_names() {
+        let (lake, _store) = faulty_lake();
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("the time", DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())), false),
+            Field::new("dev\"ice", DataType::Int32, true),
+            Field::new("value", DataType::Float64, true),
+        ]));
+        let opts = TableOptions {
+            time_column: Some("the time".into()),
+            series_key: vec!["dev\"ice".into()],
+            ..Default::default()
+        };
+        let t = lake.create_table("iot.my-readings", &schema, opts).await.unwrap();
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(TimestampMicrosecondArray::from(vec![T0, T0 + 1, T0, T0 + 2]).with_timezone("UTC")),
+                Arc::new(Int32Array::from(vec![1, 1, 2, 2])),
+                Arc::new(Float64Array::from(vec![1.0, 2.0, 3.0, 4.0])),
+            ],
+        )
+        .unwrap();
+        let t = append_without_index(&t, &[batch]).await;
+        assert!(t.last_value_index().is_none());
+
+        let df = Session::new(lake).latest("iot.my-readings").await.unwrap();
+        let batches = df.sort(vec![ident("dev\"ice").sort(true, true)]).unwrap().collect().await.unwrap();
+        let batch = arrow::compute::concat_batches(&batches[0].schema(), &batches).unwrap();
+        assert_eq!(batch.num_columns(), 3);
+        let values = batch.column(2).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_eq!(values.values(), &[2.0, 4.0]);
+    }
+
+    #[tokio::test]
+    async fn parse_splits_statements_outside_literals() {
+        let (lake, _store) = faulty_lake();
+        let s = Session::new(lake);
+        let statements = s.parse("SELECT 'a;b'; -- c;d\nSELECT 2;;").unwrap();
+        assert_eq!(statements.len(), 2);
+        assert!(s.parse("SELECT 'unterminated").is_err());
+    }
+}

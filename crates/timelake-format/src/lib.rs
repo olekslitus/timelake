@@ -1,29 +1,113 @@
 //! Timelake's on-disk conventions, with no I/O and no heavy dependencies, so the engine
 //! (`timelake`) and the WebAssembly reader (`timelake-wasm`) share one definition: the table
 //! contract stored in `timelake.*` properties, time partition math, and Iceberg bound decoding.
+//!
+//! ```
+//! use std::collections::HashMap;
+//! use timelake_format::{Chunk, Contract, property};
+//!
+//! let properties = HashMap::from([
+//!     (property::TIME_COLUMN.to_string(), "time".to_string()),
+//!     (property::CHUNK.to_string(), "day".to_string()),
+//! ]);
+//! let contract = Contract::from_properties(&properties)?;
+//! assert_eq!(contract.chunk, Some(Chunk::Day));
+//!
+//! let day = Chunk::Day.value(1_767_225_600_000_000)?; // 2026-01-01T00:00:00Z in µs
+//! assert_eq!(Chunk::Day.label(day), "2026-01-01");
+//! # Ok::<(), timelake_format::FormatError>(())
+//! ```
+
+#![warn(missing_docs)]
+
+use std::fmt;
 
 pub mod bounds;
 pub mod contract;
 
-pub use contract::{Chunk, Contract, TableOptions, parse_duration};
+pub use contract::{Chunk, Contract, TableOptions, format_duration, parse_duration};
 
-/// Errors from parsing Timelake conventions.
+/// Table property keys holding the [`Contract`].
+pub mod property {
+    /// The timestamp column.
+    pub const TIME_COLUMN: &str = "timelake.time-column";
+    /// Comma-separated series key columns.
+    pub const SERIES_KEY: &str = "timelake.series-key";
+    /// Time partition size: `hour`, `day` or `month`.
+    pub const CHUNK: &str = "timelake.chunk-interval";
+    /// `true` to drop duplicate `(series, time)` rows during compaction.
+    pub const DEDUP: &str = "timelake.dedup";
+    /// Data retention, e.g. `90d`.
+    pub const RETENTION: &str = "timelake.retention";
+    /// Target size of compacted files, in bytes.
+    pub const TARGET_FILE_SIZE: &str = "timelake.target-file-size-bytes";
+    /// Rows per Parquet row group.
+    pub const ROW_GROUP_ROWS: &str = "timelake.row-group-rows";
+    /// `false` to skip inline maintenance on append.
+    pub const AUTO_MAINTAIN: &str = "timelake.auto-maintain";
+    /// How long to keep old snapshots, e.g. `1h`.
+    pub const SNAPSHOT_RETENTION: &str = "timelake.snapshot-retention";
+    /// Snapshots always kept.
+    pub const MIN_SNAPSHOTS: &str = "timelake.min-snapshots";
+    /// Snapshots kept at most.
+    pub const MAX_SNAPSHOTS: &str = "timelake.max-snapshots";
+    /// Files per size tier that trigger inline compaction.
+    pub const COMPACT_MIN_FILES: &str = "timelake.compact-min-files";
+}
+
+/// Snapshot summary keys: Timelake's own, and the standard Iceberg counters Timelake maintains.
+pub mod summary {
+    /// Location of the snapshot's last-value index.
+    pub const LAST_VALUE_INDEX: &str = "timelake.last-value-index";
+    /// The writer-supplied idempotency key of an append.
+    pub const BATCH_ID: &str = "timelake.batch-id";
+
+    /// Data files added by the snapshot.
+    pub const ADDED_DATA_FILES: &str = "added-data-files";
+    /// Rows added by the snapshot.
+    pub const ADDED_RECORDS: &str = "added-records";
+    /// Bytes added by the snapshot.
+    pub const ADDED_FILES_SIZE: &str = "added-files-size";
+    /// Data files removed by the snapshot.
+    pub const DELETED_DATA_FILES: &str = "deleted-data-files";
+    /// Rows removed by the snapshot.
+    pub const DELETED_RECORDS: &str = "deleted-records";
+    /// Bytes removed by the snapshot.
+    pub const REMOVED_FILES_SIZE: &str = "removed-files-size";
+    /// Data files in the table after the snapshot.
+    pub const TOTAL_DATA_FILES: &str = "total-data-files";
+    /// Rows in the table after the snapshot.
+    pub const TOTAL_RECORDS: &str = "total-records";
+    /// Bytes in the table after the snapshot.
+    pub const TOTAL_FILES_SIZE: &str = "total-files-size";
+    /// Delete files in the table (always 0: Timelake doesn't write them).
+    pub const TOTAL_DELETE_FILES: &str = "total-delete-files";
+    /// Position deletes in the table (always 0).
+    pub const TOTAL_POSITION_DELETES: &str = "total-position-deletes";
+    /// Equality deletes in the table (always 0).
+    pub const TOTAL_EQUALITY_DELETES: &str = "total-equality-deletes";
+}
+
+/// Optional warehouse-level index of table names, for stores that cannot list (plain HTTPS).
+pub const TABLES_INDEX: &str = "timelake-tables.json";
+
+/// An invalid contract property, duration, or partition value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FormatError(pub String);
 
-impl std::fmt::Display for FormatError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl FormatError {
+    fn new(msg: impl Into<String>) -> Self {
+        Self(msg.into())
+    }
+}
+
+impl fmt::Display for FormatError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
     }
 }
 
 impl std::error::Error for FormatError {}
 
+/// `Result` with [`FormatError`].
 pub type Result<T> = std::result::Result<T, FormatError>;
-
-/// Snapshot summary key holding the last-value index location of that snapshot.
-pub const S_LVI: &str = "timelake.last-value-index";
-/// Snapshot summary key holding the writer-supplied idempotency key of an append.
-pub const S_BATCH_ID: &str = "timelake.batch-id";
-/// Optional warehouse-level index of table names, for stores that cannot list (plain HTTPS).
-pub const TABLES_INDEX: &str = "timelake-tables.json";

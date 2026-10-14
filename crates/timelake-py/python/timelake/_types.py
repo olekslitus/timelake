@@ -63,9 +63,15 @@ class _AppendResult(TypedDict):
 
 
 class AppendResult(_AppendResult, total=False):
-    """Statistics of one append. ``maintenance`` is present only when inline maintenance ran."""
+    """Statistics of one append.
+
+    ``maintenance`` is present when inline maintenance ran; ``maintenance_error`` when it failed after the append
+    committed (the data is in the table; run ``Table.maintain()`` later instead of retrying the append). A skipped
+    duplicate batch reports 0 rows, files and bytes with ``duplicate`` set.
+    """
 
     maintenance: MaintainReport
+    maintenance_error: str
 
 
 class TableInfo(TypedDict):

@@ -3,9 +3,9 @@
 
 use std::sync::Arc;
 
-use arrow::array::{Array, ArrayRef, RecordBatch, TimestampMicrosecondArray, UInt32Array, new_null_array};
-use arrow::compute::{SortColumn, SortOptions, cast, concat_batches, lexsort_to_indices, take_record_batch};
-use arrow::datatypes::{DataType, SchemaRef};
+use arrow::array::{Array, ArrayRef, Int32Array, RecordBatch, TimestampMicrosecondArray};
+use arrow::compute::{cast, concat_batches, take_record_batch};
+use arrow::datatypes::{DataType, TimeUnit};
 use iceberg::spec::{DataContentType, DataFile, Literal, PrimitiveLiteral, Struct};
 use iceberg::writer::CurrentFileStatus;
 use iceberg::writer::file_writer::{FileWriter, FileWriterBuilder, ParquetWriterBuilder};
@@ -16,59 +16,19 @@ use parquet::schema::types::ColumnPath;
 
 use crate::contract::Contract;
 use crate::error::{Error, Result};
-use crate::lake::Table;
+use crate::schema::align_batch;
+use crate::sort::{ASCENDING, columns, stable_sort_indices};
+use crate::table::Table;
 
-/// Casts and reorders a batch to the table schema by column name. Missing nullable columns are
-/// filled with nulls; extra columns are an error (add them to the schema first).
-pub fn align_batch(batch: &RecordBatch, schema: &SchemaRef) -> Result<RecordBatch> {
-    let input = batch.schema();
-    for f in input.fields() {
-        if schema.field_with_name(f.name()).is_err() {
-            return Err(Error::invalid(format!("column {:?} is not in the table schema", f.name())));
-        }
-    }
-    let columns = schema
-        .fields()
-        .iter()
-        .map(|f| match input.index_of(f.name()) {
-            Ok(i) => {
-                let col = batch.column(i);
-                if col.data_type() == f.data_type() { Ok(col.clone()) } else { Ok(cast(col, f.data_type())?) }
-            }
-            Err(_) if f.is_nullable() => Ok(new_null_array(f.data_type(), batch.num_rows())),
-            Err(_) => Err(Error::invalid(format!("required column {:?} is missing", f.name()))),
-        })
-        .collect::<Result<Vec<ArrayRef>>>()?;
-    RecordBatch::try_new(schema.clone(), columns)
-        .map_err(|e| Error::invalid(format!("batch does not fit the table schema: {e}")))
-}
+/// ZSTD level for data files and last-value indexes: fast to write, close to the best ratio.
+pub(crate) const ZSTD_LEVEL: i32 = 3;
 
-/// Sort options for the series key and time columns.
-fn sort_columns(batch: &RecordBatch, cols: &[String]) -> Result<Vec<SortColumn>> {
-    cols.iter()
-        .map(|c| {
-            Ok(SortColumn {
-                values: batch.column(batch.schema().index_of(c)?).clone(),
-                options: Some(SortOptions { descending: false, nulls_first: true }),
-            })
-        })
-        .collect()
-}
+/// Rows of one time partition (`None` for unpartitioned tables), sorted by the table's sort key.
+pub(crate) type PartitionRows = (Option<i32>, RecordBatch);
 
-/// Partition value of every row (None for unpartitioned tables).
-fn partition_values(batch: &RecordBatch, contract: &Contract) -> Result<Option<Vec<i32>>> {
-    let (Some(tc), Some(chunk)) = (&contract.time_column, contract.chunk) else { return Ok(None) };
-    let col = batch.column(batch.schema().index_of(tc)?);
-    let ts = cast(col, &DataType::Timestamp(arrow::datatypes::TimeUnit::Microsecond, None))?;
-    let ts = ts.as_any().downcast_ref::<TimestampMicrosecondArray>().unwrap();
-    if ts.null_count() > 0 {
-        return Err(Error::invalid(format!("time column {tc:?} contains nulls")));
-    }
-    Ok(Some(ts.values().iter().map(|&t| chunk.value(t)).collect()))
-}
-
-/// Concatenates, sorts by `(partition, series…, time)`, and splits by partition.
-pub(crate) fn sort_and_split(table: &Table, batches: &[RecordBatch]) -> Result<Vec<(Option<i32>, RecordBatch)>> {
+/// Concatenates, sorts by `(partition, series…, time)` with input order as the tiebreak, and splits
+/// by partition.
+pub(crate) fn sort_and_split(table: &Table, batches: &[RecordBatch]) -> Result<Vec<PartitionRows>> {
     let schema = table.schema();
     let aligned =
         batches.iter().filter(|b| b.num_rows() > 0).map(|b| align_batch(b, &schema)).collect::<Result<Vec<_>>>()?;
@@ -76,34 +36,41 @@ pub(crate) fn sort_and_split(table: &Table, batches: &[RecordBatch]) -> Result<V
         return Ok(vec![]);
     }
     let all = concat_batches(&schema, &aligned)?;
-    let parts = partition_values(&all, &table.contract)?;
-    let mut keys = vec![];
-    if let Some(p) = &parts {
-        keys.push(SortColumn { values: Arc::new(arrow::array::Int32Array::from(p.clone())), options: None });
+    let partitions = partition_values(&all, table.contract())?;
+    let mut keys: Vec<ArrayRef> =
+        partitions.iter().map(|p| Arc::new(Int32Array::from(p.clone())) as ArrayRef).collect();
+    keys.extend(columns(&all, &table.contract().sort_columns())?);
+    if keys.is_empty() {
+        return Ok(vec![(None, all)]);
     }
-    keys.extend(sort_columns(&all, &table.contract.sort_columns())?);
-    let sorted = if keys.is_empty() {
-        all
-    } else {
-        // Stable tiebreak on input order, so later rows of the same (series, time) stay later.
-        keys.push(SortColumn {
-            values: Arc::new(UInt32Array::from_iter_values(0..all.num_rows() as u32)),
-            options: None,
-        });
-        take_record_batch(&all, &lexsort_to_indices(&keys, None)?)?
-    };
-    let Some(parts) = parts else { return Ok(vec![(None, sorted)]) };
-    let mut sorted_parts = parts;
-    sorted_parts.sort_unstable();
+    let order = stable_sort_indices(&keys, all.num_rows())?;
+    let sorted = take_record_batch(&all, &order)?;
+    let Some(partitions) = partitions else { return Ok(vec![(None, sorted)]) };
+
+    // Rows are now grouped by partition: slice out each run.
+    let sorted_partitions: Vec<i32> = order.values().iter().map(|&i| partitions[i as usize]).collect();
     let mut out = vec![];
-    let mut start = 0;
-    while start < sorted_parts.len() {
-        let v = sorted_parts[start];
-        let end = start + sorted_parts[start..].partition_point(|&x| x == v);
-        out.push((Some(v), sorted.slice(start, end - start)));
-        start = end;
+    let mut offset = 0;
+    for run in sorted_partitions.chunk_by(|a, b| a == b) {
+        out.push((Some(run[0]), sorted.slice(offset, run.len())));
+        offset += run.len();
     }
     Ok(out)
+}
+
+/// Partition value of every row (`None` for unpartitioned tables).
+fn partition_values(batch: &RecordBatch, contract: &Contract) -> Result<Option<Vec<i32>>> {
+    let (Some(time_column), Some(chunk)) = (&contract.time_column, contract.chunk) else { return Ok(None) };
+    let times =
+        cast(batch.column(batch.schema().index_of(time_column)?), &DataType::Timestamp(TimeUnit::Microsecond, None))?;
+    let Some(times) = times.as_any().downcast_ref::<TimestampMicrosecondArray>() else {
+        return Err(Error::invalid(format!("time column {time_column:?} is not a timestamp")));
+    };
+    if times.null_count() > 0 {
+        return Err(Error::invalid(format!("time column {time_column:?} contains nulls")));
+    }
+    let values = times.values().iter().map(|&t| chunk.value(t)).collect::<timelake_format::Result<_>>()?;
+    Ok(Some(values))
 }
 
 /// Parquet settings for time-series data: ZSTD, page-level statistics and page index (for
@@ -111,9 +78,10 @@ pub(crate) fn sort_and_split(table: &Table, batches: &[RecordBatch]) -> Result<V
 /// dictionary encoding for everything else (series keys, tags), and the sort order recorded.
 pub(crate) fn writer_properties(table: &Table) -> Result<WriterProperties> {
     let schema = table.schema();
+    let contract = table.contract();
     let mut b = WriterProperties::builder()
-        .set_compression(Compression::ZSTD(ZstdLevel::try_new(3)?))
-        .set_max_row_group_row_count(Some(table.contract.row_group_rows))
+        .set_compression(Compression::ZSTD(ZstdLevel::try_new(ZSTD_LEVEL)?))
+        .set_max_row_group_row_count(Some(contract.row_group_rows))
         .set_statistics_enabled(EnabledStatistics::Page)
         .set_created_by(format!("timelake {}", env!("CARGO_PKG_VERSION")));
     for f in schema.fields() {
@@ -124,7 +92,7 @@ pub(crate) fn writer_properties(table: &Table) -> Result<WriterProperties> {
                     .set_column_dictionary_enabled(path.clone(), false)
                     .set_column_encoding(path, Encoding::BYTE_STREAM_SPLIT);
             }
-            DataType::Timestamp(_, _) if Some(f.name()) == table.contract.time_column.as_ref() => {
+            DataType::Timestamp(_, _) if Some(f.name()) == contract.time_column.as_ref() => {
                 b = b
                     .set_column_dictionary_enabled(path.clone(), false)
                     .set_column_encoding(path, Encoding::DELTA_BINARY_PACKED);
@@ -132,11 +100,13 @@ pub(crate) fn writer_properties(table: &Table) -> Result<WriterProperties> {
             _ => {}
         }
     }
-    let sorting = table
-        .contract
+    let sorting = contract
         .sort_columns()
         .iter()
-        .map(|c| Ok(SortingColumn { column_idx: schema.index_of(c)? as i32, descending: false, nulls_first: true }))
+        .map(|c| {
+            let column_idx = i32::try_from(schema.index_of(c)?).map_err(|_| Error::invalid("too many columns"))?;
+            Ok(SortingColumn { column_idx, descending: ASCENDING.descending, nulls_first: ASCENDING.nulls_first })
+        })
         .collect::<Result<Vec<_>>>()?;
     if !sorting.is_empty() {
         b = b.set_sorting_columns(Some(sorting));
@@ -144,14 +114,7 @@ pub(crate) fn writer_properties(table: &Table) -> Result<WriterProperties> {
     Ok(b.build())
 }
 
-fn partition_struct(v: Option<i32>) -> Struct {
-    match v {
-        Some(v) => Struct::from_iter([Some(Literal::int(v))]),
-        None => Struct::empty(),
-    }
-}
-
-/// Partition value of a data file written by Timelake (None if unpartitioned).
+/// Partition value of a data file written by Timelake (`None` if unpartitioned).
 pub fn file_partition(df: &DataFile) -> Option<i32> {
     match df.partition().fields().first() {
         Some(Some(Literal::Primitive(PrimitiveLiteral::Int(v)))) => Some(*v),
@@ -166,50 +129,71 @@ pub(crate) async fn write_partition(
     batches: impl IntoIterator<Item = RecordBatch>,
     props: &WriterProperties,
 ) -> Result<Vec<DataFile>> {
-    let storage = table.lake.storage();
-    let builder = ParquetWriterBuilder::new(props.clone(), table.metadata.current_schema().clone());
-    let dir = match (partition, &table.contract.time_column, table.contract.chunk) {
-        (Some(v), Some(tc), Some(chunk)) => {
-            format!("{}/data/{tc}_{}={}", table.location, chunk.as_str(), chunk.label(v))
+    let contract = table.contract();
+    let metadata = table.metadata();
+    let builder = ParquetWriterBuilder::new(props.clone(), metadata.current_schema().clone());
+    let dir = match (partition, &contract.time_column, contract.chunk) {
+        (Some(v), Some(time_column), Some(chunk)) => {
+            format!("{}/data/{time_column}_{chunk}={}", table.location(), chunk.label(v))
         }
-        _ => format!("{}/data", table.location),
+        _ => format!("{}/data", table.location()),
     };
-    let spec_id = table.metadata.default_partition_spec().spec_id();
-    let sorted = !table.contract.sort_columns().is_empty();
-    let target = table.contract.target_file_size as usize;
+    let target = usize::try_from(contract.target_file_size).unwrap_or(usize::MAX);
 
-    let mut out = vec![];
-    let mut writer = None;
+    let mut files = vec![];
+    let mut open = None;
     for batch in batches {
         if batch.num_rows() == 0 {
             continue;
         }
-        if writer.is_none() {
-            let uri = format!("{dir}/{}.parquet", uuid::Uuid::now_v7());
-            writer = Some(builder.build(storage.output_file(&uri)).await?);
-        }
-        let w = writer.as_mut().unwrap();
-        w.write(&batch).await?;
-        if w.current_written_size() >= target {
-            out.extend(writer.take().unwrap().close().await?);
+        let mut writer = match open.take() {
+            Some(w) => w,
+            None => {
+                builder
+                    .build(table.lake().storage().output_file(&format!("{dir}/{}.parquet", uuid::Uuid::now_v7())))
+                    .await?
+            }
+        };
+        writer.write(&batch).await?;
+        if writer.current_written_size() >= target {
+            files.extend(writer.close().await?);
+        } else {
+            open = Some(writer);
         }
     }
-    if let Some(w) = writer {
-        out.extend(w.close().await?);
+    if let Some(writer) = open {
+        files.extend(writer.close().await?);
     }
-    out.into_iter()
+
+    let spec_id = metadata.default_partition_spec().spec_id();
+    let sort_order_id = (!contract.sort_columns().is_empty())
+        .then(|| i32::try_from(metadata.default_sort_order_id()))
+        .transpose()
+        .map_err(|_| Error::invalid("sort order id out of range"))?;
+    files
+        .into_iter()
         .map(|mut b| {
             b.content(DataContentType::Data).partition(partition_struct(partition)).partition_spec_id(spec_id);
-            if sorted {
-                b.sort_order_id(table.metadata.default_sort_order_id() as i32);
+            if let Some(id) = sort_order_id {
+                b.sort_order_id(id);
             }
-            b.build().map_err(|e| Error::invalid(format!("data file: {e}")))
+            b.build().map_err(|e| {
+                iceberg::Error::new(iceberg::ErrorKind::Unexpected, "building data file").with_source(e).into()
+            })
         })
         .collect()
 }
 
-/// Splits a large batch into row-group-sized slices so the Parquet writer streams them.
-pub(crate) fn chunks(batch: RecordBatch, rows: usize) -> impl Iterator<Item = RecordBatch> {
+fn partition_struct(v: Option<i32>) -> Struct {
+    match v {
+        Some(v) => Struct::from_iter([Some(Literal::int(v))]),
+        None => Struct::empty(),
+    }
+}
+
+/// Splits a large batch into slices of `rows` rows (one Parquet row group each), so the writer
+/// streams them.
+pub(crate) fn row_groups(batch: RecordBatch, rows: usize) -> impl Iterator<Item = RecordBatch> {
     let n = batch.num_rows();
     (0..n).step_by(rows.max(1)).map(move |i| batch.slice(i, rows.min(n - i)))
 }

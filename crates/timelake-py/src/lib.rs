@@ -151,9 +151,9 @@ impl Lake {
         let options = TableOptions {
             time_column,
             series_key: series_key.unwrap_or_default(),
-            chunk: chunk.map(Chunk::parse).transpose().map_err(|err| to_py_err(err.into()))?,
+            chunk: chunk.map(str::parse::<Chunk>).transpose().map_err(|err| to_py_err(err.into()))?,
             dedup,
-            retention,
+            retention: retention.as_deref().map(timelake::parse_duration).transpose().map_err(|err| to_py_err(err.into()))?,
             properties: properties.unwrap_or_default(),
         };
         let lake = self.inner.clone();
@@ -225,19 +225,19 @@ impl Table {
     /// The full name, "namespace.table".
     #[getter]
     fn name(&self) -> String {
-        lock(&self.inner).name.to_string()
+        lock(&self.inner).name().to_string()
     }
 
     /// The table's root URL.
     #[getter]
     fn location(&self) -> String {
-        lock(&self.inner).location.clone()
+        lock(&self.inner).location().to_string()
     }
 
     /// The version this handle is at.
     #[getter]
     fn version(&self) -> u64 {
-        lock(&self.inner).version
+        lock(&self.inner).version()
     }
 
     /// The table's pyarrow schema.
@@ -264,7 +264,7 @@ impl Table {
             rows: result.rows,
             files: result.files,
             bytes: result.bytes,
-            version: table.version,
+            version: table.version(),
             commit_ms: result.commit.duration.as_secs_f64() * 1000.0,
             attempts: result.commit.attempts,
             duplicate: result.commit.duplicate,
@@ -272,8 +272,11 @@ impl Table {
         self.set(table);
         // `maintenance` is only present when inline maintenance ran.
         let dict = summary.into_pyobject(py)?;
-        if let Some(report) = &result.maintenance {
-            dict.set_item("maintenance", MaintainSummary::from(report))?;
+        // A failed inline maintenance doesn't undo the committed append; report it instead of raising.
+        match &result.maintenance {
+            Some(Ok(report)) => dict.set_item("maintenance", MaintainSummary::from(report))?,
+            Some(Err(err)) => dict.set_item("maintenance_error", err.to_string())?,
+            None => {}
         }
         Ok(dict)
     }
@@ -303,11 +306,11 @@ impl Table {
             let table = table.clone();
             async move { Ok((table.files().await?, table.manifests().await?.len())) }
         })?;
-        let contract = &table.contract;
+        let contract = table.contract();
         Ok(TableInfo {
-            name: table.name.to_string(),
-            version: table.version,
-            location: table.location.clone(),
+            name: table.name().to_string(),
+            version: table.version(),
+            location: table.location().to_string(),
             time_column: contract.time_column.clone(),
             series_key: contract.series_key.clone(),
             chunk: contract.chunk.map(Chunk::as_str),
@@ -315,7 +318,7 @@ impl Table {
             rows: files.iter().map(|f| f.data_file.record_count()).sum(),
             files: files.len(),
             bytes: files.iter().map(|f| f.data_file.file_size_in_bytes()).sum(),
-            snapshots: table.metadata.snapshots().len(),
+            snapshots: table.metadata().snapshots().len(),
             manifests,
             last_value_index: table.last_value_index(),
         })
@@ -323,7 +326,7 @@ impl Table {
 
     fn __repr__(&self) -> String {
         let table = lock(&self.inner);
-        format!("Table({}, v{})", table.name, table.version)
+        format!("Table({}, v{})", table.name(), table.version())
     }
 }
 
