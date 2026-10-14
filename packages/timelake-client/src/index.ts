@@ -310,24 +310,25 @@ export class TableHandle<T = Row> {
 
   /** Runs a query spec over the given files. */
   private async run(files: { path: string; size: number }[], spec: object, stats: QueryStats): Promise<unknown[]> {
+    // The limit applies to single requests, never to a file's whole read: a file waiting for
+    // its byte ranges must not hold a slot those ranges need.
     const lim = new Limiter(this.lake.options.concurrency)
+    const get = (path: string, range: [number, number]) => lim.run(() => this.bytes(path, range, stats))
     const query = new Query(spec)
     try {
       // Read files concurrently, decode in order (decoding is synchronous WASM work).
       const opened = await Promise.all(
-        files.map((f) =>
-          lim.run(async () => {
-            const tailLen = Math.min(f.size, 64 * 1024)
-            let tail = await this.bytes(f.path, [f.size - tailLen, f.size], stats)
-            const need = ParquetFile.footerLength(tail)
-            if (need > tail.length) tail = await this.bytes(f.path, [f.size - need, f.size], stats)
-            const pf = new ParquetFile(f.size, tail)
-            const ranges = pf.plan(spec) as [number, number][]
-            const chunks = await Promise.all(ranges.map((r) => lim.run(() => this.bytes(f.path, r, stats))))
-            ranges.forEach((r, i) => pf.addRange(r[0], chunks[i]))
-            return pf
-          }),
-        ),
+        files.map(async (f) => {
+          const tailLen = Math.min(f.size, 64 * 1024)
+          let tail = await get(f.path, [f.size - tailLen, f.size])
+          const need = ParquetFile.footerLength(tail)
+          if (need > tail.length) tail = await get(f.path, [f.size - need, f.size])
+          const pf = new ParquetFile(f.size, tail)
+          const ranges = pf.plan(spec) as [number, number][]
+          const chunks = await Promise.all(ranges.map((r) => get(f.path, r)))
+          ranges.forEach((r, i) => pf.addRange(r[0], chunks[i]))
+          return pf
+        }),
       )
       for (const pf of opened) {
         try {
