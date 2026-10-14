@@ -8,8 +8,6 @@ const nextConfig: NextConfig = {
   cacheComponents: true,
   // Docs pages are MDX (app/(site)/docs/**/page.mdx).
   pageExtensions: ["ts", "tsx", "mdx"],
-  // The TypeScript client (with its WASM reader) is a workspace package consumed from source.
-  transpilePackages: ["@timelake/client"],
   // Files read from disk at runtime: benchmark results (when /benchmarks revalidates) and the OG image fonts.
   outputFileTracingIncludes: {
     "/benchmarks": ["./data/results/**"],
