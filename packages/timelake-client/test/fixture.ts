@@ -17,6 +17,8 @@ export const POINTS = 288 // one day: one file per hour partition, so 24 files
 export interface Fixture {
   /** Warehouse URL, as recorded in the table metadata. */
   url: string
+  /** Local directory of the URL's path (`<dir>/lake` holds the warehouse). */
+  dir: string
   /** Runs SQL through the engine and returns the rows. */
   sql(query: string): Record<string, unknown>[]
   close(): void
@@ -97,6 +99,7 @@ export function buildFixture(): Fixture {
 
   return {
     url,
+    dir: root,
     sql: (query) =>
       cli("sql", "--format", "json", query)
         .split("\n")

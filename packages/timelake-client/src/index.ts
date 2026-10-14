@@ -63,15 +63,25 @@ export type BucketRow<A extends AggMap, By extends string = never> = { bucket: D
   [K in By]: Scalar | null
 }
 
+/** The part of `fetch` the client uses. */
+export type Fetch = (url: string, init?: RequestInit) => Promise<Response>
+
 export interface LakeOptions {
   /** fetch implementation (defaults to the global fetch). */
-  fetch?: typeof fetch
+  fetch?: Fetch
   /** Maximum concurrent HTTP requests per query. Default 16. */
   concurrency?: number
   /** How long a loaded table version is reused, in ms. Default 5000. */
   cacheMs?: number
   /** Rewrite object URLs before fetching (e.g. when a warehouse was copied to a new host). */
   rewriteUrl?: (url: string) => string
+}
+
+export interface SnapshotInfo {
+  id: string
+  timestampMs: number
+  operation: string
+  summary: Record<string, string>
 }
 
 export interface TableInfo {
@@ -84,16 +94,17 @@ export interface TableInfo {
   chunk: string | null
   dedup: boolean
   properties: Record<string, string>
-  currentSnapshot: { id: string; timestampMs: number; operation: string; summary: Record<string, string> } | null
+  currentSnapshot: SnapshotInfo | null
   lastValueIndex: string | null
   snapshotCount: number
   /** Newest first, at most 50. */
-  snapshots: { id: string; timestampMs: number; operation: string; summary: Record<string, string> }[]
+  snapshots: SnapshotInfo[]
   lastUpdatedMs: number
   /** Committed version (`vN.metadata.json`). */
   version: number
   /** Number of manifests in the current snapshot. */
   manifests: number
+  /** Live data files; `partition` is the time partition (hours, days or months since the epoch). */
   files: { path: string; size: number; records: number; partition: number | null }[]
 }
 
@@ -111,6 +122,8 @@ export interface BucketOptions<A extends AggMap, By extends string> {
   from?: TimeInput
   to?: TimeInput
   every: DurationInput
+  /** A bucket boundary; buckets are aligned to it (default: the Unix epoch). */
+  origin?: TimeInput
   agg: A
   /** Also group by these columns (e.g. the series key) instead of merging series. */
   by?: readonly By[]
@@ -126,11 +139,18 @@ export interface QueryStats {
 
 // --- helpers ---------------------------------------------------------------------------------------
 
+const DEFAULT_CONCURRENCY = 16
+const DEFAULT_CACHE_MS = 5000
+/** Bytes read from the end of a data file first: holds the whole footer of typical files. */
+const FOOTER_PREFETCH = 64 * 1024
+
 function micros(t: TimeInput): number {
   const ms = t instanceof Date ? t.getTime() : typeof t === "number" ? t : Date.parse(t)
   if (!Number.isFinite(ms)) throw new Error(`invalid time: ${String(t)}`)
   return Math.round(ms * 1000)
 }
+
+const optionalMicros = (t: TimeInput | undefined) => (t === undefined ? undefined : micros(t))
 
 const UNIT_MS = { ms: 1, s: 1e3, m: 60e3, h: 3600e3, d: 86400e3, w: 604800e3 } as const
 
@@ -141,6 +161,9 @@ function durationMicros(d: DurationInput): number {
   return Math.round(Number(m[1]) * UNIT_MS[m[2] as keyof typeof UNIT_MS] * 1000)
 }
 
+const emptyStats = (): QueryStats => ({ requests: 0, bytes: 0, files: 0, ms: 0 })
+
+/** Runs at most `max` tasks at once, the rest in FIFO order. */
 class Limiter {
   private active = 0
   private queue: (() => void)[] = []
@@ -157,6 +180,52 @@ class Limiter {
   }
 }
 
+/**
+ * The requests of one load or query: at most `concurrency` in flight, counted for `lastStats`.
+ * The limit applies to single requests only: a task waiting for its own requests must never
+ * hold a slot they need.
+ */
+class Requests {
+  readonly stats = emptyStats()
+  private limiter: Limiter
+
+  constructor(private lake: Lake) {
+    this.limiter = new Limiter(lake.options.concurrency)
+  }
+
+  /** The whole object, or bytes `[start, end)` of it. */
+  bytes(url: string, range?: [number, number]): Promise<Uint8Array> {
+    return this.limiter.run(async () => {
+      const init = range ? { headers: { Range: `bytes=${range[0]}-${range[1] - 1}` } } : undefined
+      const r = await this.lake.get(url, init)
+      let b = new Uint8Array(await r.arrayBuffer())
+      // Servers that ignore Range answer 200 with the whole object.
+      if (range && r.status === 200 && b.length > range[1] - range[0]) b = b.slice(range[0], range[1])
+      this.stats.requests++
+      this.stats.bytes += b.length
+      return b
+    })
+  }
+}
+
+/** Runs a query over one Parquet file held in memory (the last-value index). */
+function queryWholeFile(bytes: Uint8Array, spec: object): unknown[] {
+  const query = new Query(spec)
+  try {
+    const file = new ParquetFile(bytes.length, bytes)
+    try {
+      file.plan(spec)
+      file.addRange(0, bytes)
+      query.push(file)
+    } finally {
+      file.free()
+    }
+    return JSON.parse(query.finish()) as unknown[]
+  } finally {
+    query.free()
+  }
+}
+
 // --- Lake ------------------------------------------------------------------------------------------
 
 /** A Timelake warehouse served over HTTP(S): Vercel Blob, S3/R2/GCS public URLs, a CDN, … */
@@ -167,17 +236,16 @@ export class Lake {
   constructor(url: string, options: LakeOptions = {}) {
     this.url = url.replace(/\/+$/, "")
     this.options = {
-      fetch: options.fetch ?? ((...a) => globalThis.fetch(...a)),
-      concurrency: options.concurrency ?? 16,
-      cacheMs: options.cacheMs ?? 5000,
+      fetch: options.fetch ?? ((target, init) => globalThis.fetch(target, init)),
+      concurrency: options.concurrency ?? DEFAULT_CONCURRENCY,
+      cacheMs: options.cacheMs ?? DEFAULT_CACHE_MS,
       rewriteUrl: options.rewriteUrl,
     }
   }
 
   /** Table names (`namespace.table`) from the warehouse's `timelake-tables.json`. */
   async tables(): Promise<string[]> {
-    const r = await this.fetchOk(`${this.url}/timelake-tables.json`)
-    return (await r.json()) as string[]
+    return (await (await this.get(`${this.url}/timelake-tables.json`)).json()) as string[]
   }
 
   /**
@@ -188,10 +256,17 @@ export class Lake {
     return new TableHandle(this, name, schema)
   }
 
-  /** @internal */
-  async fetchOk(url: string, init?: RequestInit): Promise<Response> {
-    const target = this.options.rewriteUrl ? this.options.rewriteUrl(url) : url
+  /**
+   * GETs `url` (after `rewriteUrl`). Throws on HTTP errors, except that a 404 returns `undefined`
+   * when `optional` is set.
+   * @internal
+   */
+  async get(url: string, init?: RequestInit): Promise<Response>
+  async get(url: string, init: RequestInit | undefined, optional: true): Promise<Response | undefined>
+  async get(url: string, init?: RequestInit, optional = false): Promise<Response | undefined> {
+    const target = this.options.rewriteUrl?.(url) ?? url
     const r = await this.options.fetch(target, init)
+    if (optional && r.status === 404) return undefined
     if (!r.ok) throw new Error(`GET ${target}: HTTP ${r.status}`)
     return r
   }
@@ -203,14 +278,14 @@ type Loaded = {
   files: TableInfo["files"]
   version: number
   manifests: number
-  at: number
 }
 
+/** One table of a {@link Lake}; rows are typed `T` (validated when a Zod schema was given). */
 export class TableHandle<T = Row> {
   private loaded: Promise<Loaded> | null = null
   private loadedAt = 0
   /** Statistics of the last query. */
-  lastStats: QueryStats = { requests: 0, bytes: 0, files: 0, ms: 0 }
+  lastStats: QueryStats = emptyStats()
 
   constructor(
     readonly lake: Lake,
@@ -226,70 +301,50 @@ export class TableHandle<T = Row> {
   }
 
   /** Loads (or reuses) the current table version: metadata, manifest list and manifests. */
-  private load(force = false): Promise<Loaded> {
-    if (!force && this.loaded && Date.now() - this.loadedAt < this.lake.options.cacheMs) return this.loaded
+  private load(): Promise<Loaded> {
+    if (this.loaded && Date.now() - this.loadedAt < this.lake.options.cacheMs) return this.loaded
     this.loadedAt = Date.now()
-    this.loaded = (async () => {
-      ensureWasm()
-      const hint = (await (await this.lake.fetchOk(`${this.location}/metadata/version-hint.text`)).text()).trim()
-      const version = Number(hint)
-      if (!Number.isInteger(version)) throw new Error(`${this.name}: bad version hint ${JSON.stringify(hint)}`)
-      // The hint is updated after each commit; it may lag by one version.
-      const [meta, next] = await Promise.all([
-        this.lake.fetchOk(`${this.location}/metadata/v${version}.metadata.json`).then((r) => r.text()),
-        this.lake.options.fetch(this.rewrite(`${this.location}/metadata/v${version + 1}.metadata.json`), {
-          method: "HEAD",
-        }),
-      ])
-      const metaJson = next.ok
-        ? await (await this.lake.fetchOk(`${this.location}/metadata/v${version + 1}.metadata.json`)).text()
-        : meta
-      const wasm = new WasmTable(metaJson)
-      const list = wasm.manifestList
-      let manifests: string[] = []
-      if (list) {
-        const listBytes = await this.bytes(list)
-        manifests = wasm.addManifestList(listBytes)
-        const lim = new Limiter(this.lake.options.concurrency)
-        const bodies = await Promise.all(manifests.map((m) => lim.run(() => this.bytes(m))))
-        for (const b of bodies) wasm.addManifest(b)
-      }
-      return {
-        wasm,
-        info: wasm.info() as Loaded["info"],
-        files: wasm.files() as TableInfo["files"],
-        version: next.ok ? version + 1 : version,
-        manifests: manifests.length,
-        at: Date.now(),
-      }
-    })()
-    this.loaded.catch(() => {
-      this.loaded = null
+    const loaded = this.fetchVersion()
+    loaded.catch(() => {
+      if (this.loaded === loaded) this.loaded = null
     })
-    return this.loaded
+    this.loaded = loaded
+    return loaded
+  }
+
+  private async fetchVersion(): Promise<Loaded> {
+    ensureWasm()
+    const metadata = `${this.location}/metadata`
+    const hint = (await (await this.lake.get(`${metadata}/version-hint.text`)).text()).trim()
+    const hinted = Number(hint)
+    if (!Number.isInteger(hinted)) throw new Error(`${this.name}: bad version hint ${JSON.stringify(hint)}`)
+    // The hint is written after each commit, so it may lag one version behind.
+    const [current, next] = await Promise.all([
+      this.lake.get(`${metadata}/v${hinted}.metadata.json`),
+      this.lake.get(`${metadata}/v${hinted + 1}.metadata.json`, undefined, true),
+    ])
+    if (next) void current.body?.cancel()
+    const version = next ? hinted + 1 : hinted
+    const wasm = new WasmTable(await (next ?? current).text())
+    const requests = new Requests(this.lake)
+    let manifests: string[] = []
+    if (wasm.manifestList) {
+      manifests = wasm.addManifestList(await requests.bytes(wasm.manifestList))
+      for (const bytes of await Promise.all(manifests.map((path) => requests.bytes(path)))) wasm.addManifest(bytes)
+    }
+    return {
+      wasm,
+      info: wasm.info() as Loaded["info"],
+      files: wasm.files() as TableInfo["files"],
+      version,
+      manifests: manifests.length,
+    }
   }
 
   /** Drops the cached table version; the next call loads the latest commit. */
   refresh(): this {
     this.loaded = null
     return this
-  }
-
-  private rewrite(url: string) {
-    return this.lake.options.rewriteUrl ? this.lake.options.rewriteUrl(url) : url
-  }
-
-  private async bytes(url: string, range?: [number, number], stats?: QueryStats): Promise<Uint8Array> {
-    const headers = range ? { Range: `bytes=${range[0]}-${range[1] - 1}` } : undefined
-    const r = await this.lake.fetchOk(url, headers ? { headers } : undefined)
-    let b = new Uint8Array(await r.arrayBuffer())
-    // Servers that ignore Range answer 200 with the whole object.
-    if (range && r.status === 200 && b.length > range[1] - range[0]) b = b.slice(range[0], range[1])
-    if (stats) {
-      stats.requests++
-      stats.bytes += b.length
-    }
-    return b
   }
 
   /** Contract, schema, snapshot and live files of the current version. */
@@ -308,36 +363,41 @@ export class TableHandle<T = Row> {
     return { [key]: Array.isArray(series) ? series : [series] }
   }
 
-  /** Runs a query spec over the given files. */
-  private async run(files: { path: string; size: number }[], spec: object, stats: QueryStats): Promise<unknown[]> {
-    // The limit applies to single requests, never to a file's whole read: a file waiting for
-    // its byte ranges must not hold a slot those ranges need.
-    const lim = new Limiter(this.lake.options.concurrency)
-    const get = (path: string, range: [number, number]) => lim.run(() => this.bytes(path, range, stats))
+  /** Runs `query` with fresh request statistics, which become `lastStats` when it succeeds. */
+  private async measure<R>(query: (requests: Requests) => Promise<R>): Promise<R> {
+    const t0 = performance.now()
+    const requests = new Requests(this.lake)
+    const result = await query(requests)
+    this.lastStats = { ...requests.stats, ms: performance.now() - t0 }
+    return result
+  }
+
+  /** Runs a query spec over the files that may match it. */
+  private async scan(wasm: WasmTable, spec: object, requests: Requests): Promise<unknown[]> {
+    const files = wasm.planFiles(spec) as TableInfo["files"]
     const query = new Query(spec)
     try {
-      // Read files concurrently, decode in order (decoding is synchronous WASM work).
+      // Fetch files concurrently, decode in order (decoding is synchronous WASM work).
       const opened = await Promise.all(
-        files.map(async (f) => {
-          const tailLen = Math.min(f.size, 64 * 1024)
-          let tail = await get(f.path, [f.size - tailLen, f.size])
-          const need = ParquetFile.footerLength(tail)
-          if (need > tail.length) tail = await get(f.path, [f.size - need, f.size])
-          const pf = new ParquetFile(f.size, tail)
-          const ranges = pf.plan(spec) as [number, number][]
-          const chunks = await Promise.all(ranges.map((r) => get(f.path, r)))
-          ranges.forEach((r, i) => pf.addRange(r[0], chunks[i]))
-          return pf
+        files.map(async ({ path, size }) => {
+          let tail = await requests.bytes(path, [Math.max(0, size - FOOTER_PREFETCH), size])
+          const footer = ParquetFile.footerLength(tail)
+          if (footer > tail.length) tail = await requests.bytes(path, [size - footer, size])
+          const file = new ParquetFile(size, tail)
+          const ranges = file.plan(spec) as [number, number][]
+          const chunks = await Promise.all(ranges.map((r) => requests.bytes(path, r)))
+          ranges.forEach(([start], i) => file.addRange(start, chunks[i] as Uint8Array))
+          return file
         }),
       )
-      for (const pf of opened) {
+      for (const file of opened) {
         try {
-          query.push(pf)
+          query.push(file)
         } finally {
-          pf.free()
+          file.free()
         }
       }
-      stats.files = files.length
+      requests.stats.files = files.length
       return JSON.parse(query.finish()) as unknown[]
     } finally {
       query.free()
@@ -362,40 +422,19 @@ export class TableHandle<T = Row> {
   async latest<C extends keyof T & string>(opts: { series?: SeriesFilter; columns: C[] }): Promise<Pick<T, C>[]>
   async latest(opts?: { series?: SeriesFilter; columns?: string[] }): Promise<T[]>
   async latest(opts: { series?: SeriesFilter; columns?: string[] } = {}): Promise<T[]> {
-    const t0 = performance.now()
-    const l = await this.load()
-    const stats: QueryStats = { requests: 0, bytes: 0, files: 0, ms: 0 }
+    const { wasm, info } = await this.load()
+    if (!info.timeColumn) throw new Error(`${this.name} has no time column, so no latest rows`)
     const spec = {
-      timeColumn: l.info.timeColumn,
-      series: this.seriesSpec(l.info, opts.series),
+      timeColumn: info.timeColumn,
+      series: this.seriesSpec(info, opts.series),
       columns: opts.columns ?? [],
     }
-    if (!l.info.lastValueIndex) {
-      if (!l.info.timeColumn) throw new Error(`${this.name} has no time column, so no latest rows`)
-      const files = l.wasm.planFiles(spec) as { path: string; size: number }[]
-      const rows = await this.run(files, { ...spec, latestBy: l.info.seriesKey }, stats)
-      this.lastStats = { ...stats, ms: performance.now() - t0 }
-      return this.validate(rows, opts.columns)
-    }
-    // The index is one small Parquet file: fetch it whole and decode it in place.
-    const whole = await this.bytes(l.info.lastValueIndex, undefined, stats)
-    const query = new Query(spec)
-    let rows: unknown[]
-    try {
-      const pf = new ParquetFile(whole.length, whole)
-      try {
-        pf.plan(spec)
-        pf.addRange(0, whole)
-        query.push(pf)
-      } finally {
-        pf.free()
-      }
-      rows = JSON.parse(query.finish()) as unknown[]
-    } finally {
-      query.free()
-    }
-    stats.files = 1
-    this.lastStats = { ...stats, ms: performance.now() - t0 }
+    const index = info.lastValueIndex
+    const rows = await this.measure(async (requests) => {
+      if (!index) return this.scan(wasm, { ...spec, latestBy: info.seriesKey }, requests)
+      requests.stats.files = 1
+      return queryWholeFile(await requests.bytes(index), spec)
+    })
     return this.validate(rows, opts.columns)
   }
 
@@ -403,41 +442,38 @@ export class TableHandle<T = Row> {
   async range<C extends keyof T & string>(opts: RangeOptions & { columns: C[] }): Promise<Pick<T, C>[]>
   async range(opts?: RangeOptions): Promise<T[]>
   async range(opts: RangeOptions = {}): Promise<T[]> {
-    const t0 = performance.now()
-    const l = await this.load()
-    const stats: QueryStats = { requests: 0, bytes: 0, files: 0, ms: 0 }
+    const { wasm, info } = await this.load()
     const spec = {
-      timeColumn: l.info.timeColumn,
-      series: this.seriesSpec(l.info, opts.series),
-      from: opts.from !== undefined ? micros(opts.from) : undefined,
-      to: opts.to !== undefined ? micros(opts.to) : undefined,
+      timeColumn: info.timeColumn,
+      series: this.seriesSpec(info, opts.series),
+      from: optionalMicros(opts.from),
+      to: optionalMicros(opts.to),
       columns: opts.columns ?? [],
       limit: opts.limit,
       descending: opts.order === "desc",
     }
-    const files = l.wasm.planFiles(spec) as { path: string; size: number }[]
-    const rows = await this.run(files, spec, stats)
-    this.lastStats = { ...stats, ms: performance.now() - t0 }
+    const rows = await this.measure((requests) => this.scan(wasm, spec, requests))
     return this.validate(rows, opts.columns)
   }
 
   /** Time-bucketed aggregates, e.g. `{ every: "1h", agg: { velocity: ["avg", "max"] } }`. */
   async bucket<A extends AggMap, By extends string = never>(opts: BucketOptions<A, By>): Promise<BucketRow<A, By>[]> {
-    const t0 = performance.now()
-    const l = await this.load()
-    if (!l.info.timeColumn) throw new Error(`${this.name} has no time column`)
-    const stats: QueryStats = { requests: 0, bytes: 0, files: 0, ms: 0 }
+    const { wasm, info } = await this.load()
+    if (!info.timeColumn) throw new Error(`${this.name} has no time column`)
     const aggs = Object.entries(opts.agg).flatMap(([column, ops]) => ops.map((op) => ({ column, op })))
     const spec = {
-      timeColumn: l.info.timeColumn,
-      series: this.seriesSpec(l.info, opts.series),
-      from: opts.from !== undefined ? micros(opts.from) : undefined,
-      to: opts.to !== undefined ? micros(opts.to) : undefined,
-      bucket: { every: durationMicros(opts.every), by: [...(opts.by ?? [])], aggs },
+      timeColumn: info.timeColumn,
+      series: this.seriesSpec(info, opts.series),
+      from: optionalMicros(opts.from),
+      to: optionalMicros(opts.to),
+      bucket: {
+        every: durationMicros(opts.every),
+        origin: optionalMicros(opts.origin),
+        by: [...(opts.by ?? [])],
+        aggs,
+      },
     }
-    const files = l.wasm.planFiles(spec) as { path: string; size: number }[]
-    const rows = (await this.run(files, spec, stats)) as (Record<string, unknown> & { bucket: string })[]
-    this.lastStats = { ...stats, ms: performance.now() - t0 }
+    const rows = (await this.measure((requests) => this.scan(wasm, spec, requests))) as (Row & { bucket: string })[]
     return rows.map((r) => ({ ...r, bucket: new Date(r.bucket) })) as unknown as BucketRow<A, By>[]
   }
 
@@ -467,13 +503,8 @@ function zodType(icebergType: string): string {
 
 /** Zod schema source for a table's rows (time columns coerce ISO strings to `Date`). */
 export function zodSource(info: Pick<TableInfo, "name" | "schema">, exportName?: string): string {
-  const name =
-    exportName ??
-    info.name
-      .split(".")
-      .pop()!
-      .replace(/(^|[_-])(\w)/g, (_, __, c: string) => c.toUpperCase())
-      .replace(/s$/, "")
+  const table = info.name.split(".").at(-1) ?? info.name
+  const name = exportName ?? table.replace(/(^|[_-])(\w)/g, (_, __, c: string) => c.toUpperCase()).replace(/s$/, "")
   const fields = info.schema.map(
     (f) =>
       `  ${/^[A-Za-z_]\w*$/.test(f.name) ? f.name : JSON.stringify(f.name)}: ${zodType(f.type)}${f.required ? "" : ".nullable()"},`,

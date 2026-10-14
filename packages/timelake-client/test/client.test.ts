@@ -1,11 +1,13 @@
 // Reads a generated warehouse over HTTP and checks the results against the Rust engine.
 // Needs the CLI: `cargo build -p timelake-cli` at the repo root (or set TIMELAKE_CLI).
 import { afterAll, beforeAll, expect, test } from "bun:test"
+import { readFileSync, writeFileSync } from "node:fs"
+import path from "node:path"
 
 import { z } from "zod"
 
-import { Lake, readerVersion, zodSource } from "../src/index"
-import { buildFixture, POINTS, SERIES, type Fixture } from "./fixture"
+import { Lake, readerVersion, zodSource, type AggOp } from "../src/index"
+import { buildFixture, POINTS, SERIES, START, type Fixture } from "./fixture"
 
 let fx: Fixture
 let lake: Lake
@@ -37,6 +39,20 @@ test("lists tables and reads info", async () => {
   expect(info.chunk).toBe("hour")
   expect(info.files.length).toBe(24)
   expect(info.files.reduce((s, f) => s + f.records, 0)).toBe(SERIES * POINTS)
+  // Hour partitions, as hours since the epoch.
+  const first = START / 3_600_000
+  expect(info.files.map((f) => f.partition).toSorted()).toEqual(Array.from({ length: 24 }, (_, i) => first + i))
+})
+
+test("finds a commit the version hint doesn't mention yet", async () => {
+  const hint = path.join(fx.dir, "lake/iot/readings/metadata/version-hint.text")
+  const version = Number(readFileSync(hint, "utf8"))
+  writeFileSync(hint, String(version - 1))
+  try {
+    expect((await new Lake(fx.url).table("iot.readings").info()).version).toBe(version)
+  } finally {
+    writeFileSync(hint, String(version))
+  }
 })
 
 test("latest matches the engine", async () => {
@@ -88,6 +104,13 @@ test("range matches the engine and prunes files", async () => {
   expect(desc[0]?.time.toISOString()).toBe("2026-01-01T23:55:00.000Z")
 })
 
+test("series values an int column can't hold match nothing (B3)", async () => {
+  const t = lake.table("iot.readings")
+  expect(await t.range({ series: 2 ** 32 + 7 })).toEqual([])
+  expect(await t.range({ series: 7.5 })).toEqual([])
+  expect(await t.range({ series: "7", limit: 1 })).toHaveLength(1)
+})
+
 test("queries over more files than the concurrency limit finish (B1)", async () => {
   const [{ n }] = fx.sql("SELECT count(*) AS n FROM iot.readings") as [{ n: number }]
   for (const concurrency of [1, 2, 16]) {
@@ -114,6 +137,27 @@ test("bucket aggregates match the engine", async () => {
   })
   const bySeries = await t.bucket({ series: [1, 2], every: "1d", agg: { velocity: ["avg"] }, by: ["tags_id"] })
   expect(bySeries.map((r) => r.tags_id)).toEqual([1, 2])
+})
+
+test("bucket origin and grouping match the engine", async () => {
+  const t = lake.table("iot.readings")
+  const rows = await t.bucket({
+    every: "6h",
+    origin: "2026-01-01T02:00:00Z",
+    agg: { velocity: ["min", "first", "last"] },
+    by: ["tags_id"],
+  })
+  const expected = fx.sql(
+    "SELECT date_bin(INTERVAL '6 hours', time, TIMESTAMP '2026-01-01 02:00:00') AS bucket, tags_id, min(velocity) AS velocity_min, first_value(velocity ORDER BY time) FILTER (WHERE velocity IS NOT NULL) AS velocity_first, last_value(velocity ORDER BY time) FILTER (WHERE velocity IS NOT NULL) AS velocity_last FROM iot.readings GROUP BY 1, 2 ORDER BY 1, 2",
+  )
+  expect(rows.length).toBe(5 * SERIES)
+  const got = rows.map((r) => ({ ...r, bucket: r.bucket.toISOString().replace(".000Z", "Z") }))
+  expect(got).toEqual(expected as typeof got)
+})
+
+test("unknown aggregates are errors", async () => {
+  const agg = { velocity: ["median" as AggOp] }
+  await expect(lake.table("iot.readings").bucket({ every: "1h", agg })).rejects.toThrow("unknown variant")
 })
 
 test("zod source generation", async () => {
