@@ -6,11 +6,16 @@
   "arrowParens": "always",
   "sortPackageJson": false,
   "sortImports": {
-    "internalPattern": ["@/"]
+    "internalPattern": [
+      "@/"
+    ]
   },
   "sortTailwindcss": {
     "stylesheet": "dashboard/app/globals.css",
-    "functions": ["cn", "cva"]
+    "functions": [
+      "cn",
+      "cva"
+    ]
   },
   "ignorePatterns": [
     "**/*.md",
@@ -29,6 +34,7 @@
     "brand/explorations/**",
     "brand/designs/**",
     "bench/**",
-    "crates/**"
+    "crates/**",
+    ".claude/**"
   ]
 }

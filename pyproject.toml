@@ -9,7 +9,7 @@ dev = ["ruff>=0.17", "ty>=0.0.87", "pytest>=8", "duckdb>=1.5", "polars>=1.30"]
 [tool.ruff]
 line-length = 120
 target-version = "py310"                              # the package supports Python 3.10+
-extend-exclude = ["bench/data", "**/target", "*.md"]
+extend-exclude = ["bench/data", "**/target", "*.md", ".claude"]
 
 [tool.ruff.lint]
 select = [
@@ -41,4 +41,4 @@ python-version = "3.13"
 extra-paths = ["bench/v0"]                            # bench/tests import the v0 scripts (as pytest does)
 
 [tool.ty.src]
-exclude = ["bench/data", "**/target"]
+exclude = ["bench/data", "**/target", ".claude"]

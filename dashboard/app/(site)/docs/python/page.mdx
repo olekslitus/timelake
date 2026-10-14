@@ -23,7 +23,7 @@ Opens a warehouse. `location` is a local path or an `s3://`, `gs://`, `az://` or
 | `tables()` | `list[str]` of `namespace.table`. |
 | `sql(query, namespace="default")` | `pyarrow.Table`. Unqualified names resolve in `namespace`. |
 | `latest(table)` | `pyarrow.Table` with the newest row per series, from the last-value index (or a scan when the table has none). `table` is a full name such as `"iot.readings"`. |
-| `drop_table(name)` | Deletes the table and its files. |
+| `drop_table(name)` | Deletes the table and its files. Does nothing if the table doesn't exist. |
 
 ## Table
 
@@ -40,14 +40,19 @@ Properties: `name`, `location`, `version`, `schema` (pyarrow). Methods that comm
 
 `append` accepts a pyarrow `RecordBatch`, `Table` or `RecordBatchReader`, a polars DataFrame, or any object with `__arrow_c_stream__`. Columns are matched by name and cast to the table types; missing nullable columns become nulls, and columns not in the table are an error.
 
+## Types
+
+The package ships type information (`py.typed` and a stub), so editors complete `Lake` and `Table` methods and type checkers (ty, mypy, pyright) check calls. The result dicts are typed as `timelake.AppendResult`, `timelake.MaintainReport` and `timelake.TableInfo`.
+
 ## Errors
 
 | Exception | When |
 | --- | --- |
 | `KeyError` | The table doesn’t exist. |
 | `FileExistsError` | Creating a table that already exists. |
-| `ValueError` | Invalid input or configuration: a column not in the table, a missing required column, an unknown storage option. |
-| `RuntimeError` | Storage, query or commit failures, including a commit conflict that could not be rebased. Today a bad duration (`retention="90 parsecs"`), chunk name or type cast also raises `RuntimeError`; these will become `ValueError`. |
+| `ValueError` | Invalid input or configuration: a column not in the table, a missing required column, a value that can't be cast to the column type, an unknown storage option, a bad duration (`retention="90 parsecs"`), chunk name or property value. |
+| `timelake.ConflictError` | Another writer kept committing first and the change could not be rebased (a subclass of `RuntimeError`). |
+| `RuntimeError` | Storage and query failures. |
 
 ## Examples
 
