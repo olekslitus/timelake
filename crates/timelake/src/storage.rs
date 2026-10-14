@@ -116,6 +116,12 @@ impl Storage {
         Ok(Self { store, base, listable })
     }
 
+    /// A listable store addressed as `base` (`scheme://authority`).
+    #[cfg(test)]
+    pub(crate) fn from_store(store: Arc<dyn ObjectStore>, base: &str) -> Self {
+        Self { store, base: base.to_string(), listable: true }
+    }
+
     /// Whether the store supports listing (plain HTTPS does not).
     pub fn can_list(&self) -> bool {
         self.listable

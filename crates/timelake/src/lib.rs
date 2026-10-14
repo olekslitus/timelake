@@ -25,6 +25,8 @@ mod lvi;
 mod ops;
 pub mod query;
 pub mod storage;
+#[cfg(test)]
+mod testing;
 mod write;
 
 pub use commit::CommitInfo;

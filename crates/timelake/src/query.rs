@@ -10,9 +10,9 @@
 //! - Namespaces as SQL schemas: `SELECT … FROM iot.readings`.
 
 use std::any::Any;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError, RwLock};
 
 use arrow::array::{ArrayRef, UInt64Array};
 use arrow::datatypes::{DataType, SchemaRef};
@@ -31,6 +31,8 @@ use datafusion::datasource::provider_as_source;
 use datafusion::error::{DataFusionError, Result as DfResult};
 use datafusion::execution::SessionStateBuilder;
 use datafusion::execution::object_store::ObjectStoreUrl;
+use datafusion::functions_window::expr_fn::row_number;
+use datafusion::logical_expr::ExprFunctionExt;
 use datafusion::logical_expr::expr::{Sort, WindowFunction};
 use datafusion::logical_expr::{
     BinaryExpr, Expr, LogicalPlan, Operator, Projection, TableProviderFilterPushDown, TableScan, TableType,
@@ -41,7 +43,10 @@ use datafusion::physical_expr::{LexOrdering, PhysicalSortExpr};
 use datafusion::physical_optimizer::pruning::{PruningPredicate, PruningStatistics};
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_plan::empty::EmptyExec;
-use datafusion::prelude::{DataFrame, SessionConfig, SessionContext};
+use datafusion::prelude::{DataFrame, SessionConfig, SessionContext, ident, lit};
+use datafusion::sql::TableReference;
+use datafusion::sql::parser::{DFParserBuilder, Statement};
+use datafusion::sql::sqlparser::dialect::dialect_from_str;
 use iceberg::spec::{Datum, PrimitiveLiteral};
 
 use crate::error::Result;
@@ -53,6 +58,7 @@ use crate::lake::{DEFAULT_NAMESPACE, Lake, LiveEntry, Table};
 pub struct Session {
     lake: Lake,
     ctx: SessionContext,
+    catalog: Arc<LakeCatalog>,
 }
 
 impl Session {
@@ -87,11 +93,12 @@ impl Session {
         let ctx = SessionContext::new_with_state(state);
         let base = lake.storage().base_url().to_string();
         ctx.register_object_store(&url::Url::parse(&format!("{base}/")).unwrap(), lake.storage().object_store());
-        ctx.register_catalog("timelake", Arc::new(LakeCatalog { lake: lake.clone() }));
+        let catalog = Arc::new(LakeCatalog { lake: lake.clone(), listing: Arc::default() });
+        ctx.register_catalog("timelake", catalog.clone());
         // TimescaleDB's time_bucket(width, ts [, origin]) has date_bin's semantics for fixed widths.
         let tb = datafusion::functions::datetime::date_bin().as_ref().clone().with_aliases(["time_bucket"]);
         ctx.register_udf(tb);
-        Self { lake, ctx }
+        Self { lake, ctx, catalog }
     }
 
     pub fn lake(&self) -> &Lake {
@@ -103,14 +110,39 @@ impl Session {
         &self.ctx
     }
 
+    /// Plans one SQL statement.
     pub async fn sql(&self, sql: &str) -> Result<DataFrame> {
         let state = self.ctx.state();
         let dialect = state.config().options().sql_parser.dialect;
-        let stmt = state.sql_to_statement(sql, &dialect)?;
+        self.execute(state.sql_to_statement(sql, &dialect)?).await
+    }
+
+    /// Splits SQL text into statements with DataFusion's parser (so a `;` inside a string literal
+    /// or comment doesn't split), for running a script one statement at a time with [`Self::execute`].
+    pub fn parse(&self, sql: &str) -> Result<Vec<Statement>> {
+        let state = self.ctx.state();
+        let options = &state.config().options().sql_parser;
+        let dialect = dialect_from_str(options.dialect.to_string())
+            .ok_or_else(|| crate::Error::config(format!("unsupported SQL dialect {}", options.dialect)))?;
+        let statements = DFParserBuilder::new(sql)
+            .with_dialect(dialect.as_ref())
+            .with_recursion_limit(options.recursion_limit)
+            .build()?
+            .parse_statements()?;
+        Ok(statements.into())
+    }
+
+    /// Plans one parsed statement.
+    pub async fn execute(&self, statement: Statement) -> Result<DataFrame> {
+        let state = self.ctx.state();
         // DataFusion resolves tables one after another; on object storage each costs several
         // round trips (version hint, metadata, manifest list, manifests). Load every table the
         // query references concurrently first, so planning finds them all in cache.
-        if let Ok(refs) = state.resolve_table_references(&stmt) {
+        if let Ok(refs) = state.resolve_table_references(&statement) {
+            // DataFusion lists namespaces and tables synchronously; list them up front instead.
+            if refs.iter().any(|r| r.schema() == Some(INFORMATION_SCHEMA)) {
+                self.catalog.refresh_listing().await?;
+            }
             let default_ns = state.config().options().catalog.default_schema.clone();
             let names: Vec<String> = refs
                 .iter()
@@ -119,7 +151,7 @@ impl Session {
                 .collect();
             futures::future::join_all(names.iter().map(|n| self.prefetch(n))).await;
         }
-        let plan = state.statement_to_plan(stmt).await?;
+        let plan = state.statement_to_plan(statement).await?;
         Ok(self.ctx.execute_logical_plan(plan).await?)
     }
 
@@ -145,33 +177,63 @@ impl Session {
         if t.last_value_index().is_some() {
             return Ok(self.ctx.read_table(Arc::new(TimelakeProvider::latest(t)))?);
         }
-        // Fallback for tables without an index: a window query.
-        let keys = t.contract.series_key.iter().map(|k| format!("\"{k}\"")).collect::<Vec<_>>().join(", ");
-        let part = if keys.is_empty() { String::new() } else { format!("PARTITION BY {keys}") };
-        let sql = format!(
-            "SELECT * EXCLUDE (__rn) FROM (SELECT *, ROW_NUMBER() OVER ({part} ORDER BY \"{tc}\" DESC) AS __rn FROM {}.{}) WHERE __rn = 1",
-            t.name.namespace, t.name.name
-        );
-        self.sql(&sql).await
+        // Fallback for tables without an index: the newest row per series with a window function.
+        let keys = t.contract.series_key.iter().map(ident).collect();
+        let rn = row_number().partition_by(keys).order_by(vec![ident(&tc).sort(false, true)]).build()?;
+        let reference = TableReference::full("timelake", t.name.namespace.as_str(), t.name.name.as_str());
+        let df = self
+            .ctx
+            .table(reference)
+            .await?
+            .window(vec![rn.alias(ROW_NUMBER)])?
+            .filter(ident(ROW_NUMBER).eq(lit(1u64)))?
+            .drop_columns(&[ROW_NUMBER])?;
+        Ok(df)
     }
 }
+
+/// Name of the helper column of [`Session::latest`]'s fallback query.
+const ROW_NUMBER: &str = "__timelake_row_number";
 
 /// How long a table version loaded for planning is reused by later planning in this process.
 /// Commits made by this process are visible immediately regardless.
 const PLAN_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(1);
 
+const INFORMATION_SCHEMA: &str = "information_schema";
+
+/// Namespace → table names, as of the last listing.
+type Listing = RwLock<BTreeMap<String, Vec<String>>>;
+
+/// The lake as a DataFusion catalog: namespaces are schemas.
+///
+/// DataFusion asks for schema and table names synchronously (for `information_schema` and `SHOW
+/// TABLES`), so listing can't do I/O there: [`Session::sql`] lists the lake asynchronously first
+/// and these callbacks answer from that snapshot.
 #[derive(Debug)]
 struct LakeCatalog {
     lake: Lake,
+    listing: Arc<Listing>,
+}
+
+impl LakeCatalog {
+    async fn refresh_listing(&self) -> Result<()> {
+        let namespaces = self.lake.namespaces().await?;
+        let tables = futures::future::try_join_all(namespaces.iter().map(|ns| self.lake.tables(ns))).await?;
+        let listing =
+            namespaces.into_iter().zip(tables).map(|(ns, ts)| (ns, ts.into_iter().map(|t| t.name).collect())).collect();
+        *self.listing.write().unwrap_or_else(PoisonError::into_inner) = listing;
+        Ok(())
+    }
 }
 
 impl CatalogProvider for LakeCatalog {
     fn schema_names(&self) -> Vec<String> {
-        block(self.lake.namespaces()).unwrap_or_default()
+        self.listing.read().unwrap_or_else(PoisonError::into_inner).keys().cloned().collect()
     }
 
     fn schema(&self, name: &str) -> Option<Arc<dyn SchemaProvider>> {
-        Some(Arc::new(NamespaceSchema { lake: self.lake.clone(), namespace: name.to_string() }))
+        let listing = self.listing.clone();
+        Some(Arc::new(NamespaceSchema { lake: self.lake.clone(), namespace: name.to_string(), listing }))
     }
 }
 
@@ -185,12 +247,14 @@ impl fmt::Debug for Lake {
 struct NamespaceSchema {
     lake: Lake,
     namespace: String,
+    listing: Arc<Listing>,
 }
 
 #[async_trait]
 impl SchemaProvider for NamespaceSchema {
     fn table_names(&self) -> Vec<String> {
-        block(self.lake.tables(&self.namespace)).map(|v| v.into_iter().map(|t| t.name).collect()).unwrap_or_default()
+        let listing = self.listing.read().unwrap_or_else(PoisonError::into_inner);
+        listing.get(&self.namespace).cloned().unwrap_or_default()
     }
 
     async fn table(&self, name: &str) -> DfResult<Option<Arc<dyn TableProvider>>> {
@@ -202,16 +266,7 @@ impl SchemaProvider for NamespaceSchema {
     }
 
     fn table_exist(&self, name: &str) -> bool {
-        block(self.lake.table(&format!("{}.{name}", self.namespace))).is_ok()
-    }
-}
-
-/// Runs a future to completion from synchronous DataFusion catalog callbacks (only used for
-/// listing, never on the query path).
-fn block<F: std::future::Future>(f: F) -> F::Output {
-    match tokio::runtime::Handle::try_current() {
-        Ok(h) => tokio::task::block_in_place(|| h.block_on(f)),
-        Err(_) => tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(f),
+        self.table_names().iter().any(|t| t == name)
     }
 }
 
@@ -535,8 +590,23 @@ fn latest_scan(scan: &TableScan, table: Table) -> LogicalPlan {
     LogicalPlan::TableScan(s)
 }
 
+/// An integer literal 1 (`rn = 1`). Other types, such as the string `'1'`, are not rewritten.
 fn is_one(e: &Expr) -> bool {
-    matches!(e, Expr::Literal(v, _) if v.to_string() == "1")
+    use ScalarValue as S;
+    matches!(
+        e,
+        Expr::Literal(
+            S::Int8(Some(1))
+                | S::Int16(Some(1))
+                | S::Int32(Some(1))
+                | S::Int64(Some(1))
+                | S::UInt8(Some(1))
+                | S::UInt16(Some(1))
+                | S::UInt32(Some(1))
+                | S::UInt64(Some(1)),
+            _
+        )
+    )
 }
 
 /// Skips pass-through projections (plain column references).
@@ -706,6 +776,63 @@ fn replace_scan(plan: &LogicalPlan, new: LogicalPlan) -> DfResult<LogicalPlan> {
             }
             let child = replace_scan(inputs[0], new)?;
             other.with_new_exprs(other.expressions(), vec![child])
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use arrow::array::{Float64Array, Int32Array, RecordBatch, TimestampMicrosecondArray};
+    use arrow::datatypes::{Field, Schema, TimeUnit};
+    use datafusion::prelude::lit;
+
+    use super::*;
+    use crate::TableOptions;
+    use crate::testing::{T0, append_without_index, faulty_lake};
+
+    /// Without a last-value index, `latest` runs a window query; odd column and table names must
+    /// not break it.
+    #[tokio::test]
+    async fn latest_without_index_quotes_names() {
+        let (lake, _store) = faulty_lake();
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("the time", DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())), false),
+            Field::new("dev\"ice", DataType::Int32, true),
+            Field::new("value", DataType::Float64, true),
+        ]));
+        let opts = TableOptions {
+            time_column: Some("the time".into()),
+            series_key: vec!["dev\"ice".into()],
+            ..Default::default()
+        };
+        let t = lake.create_table("iot.my-readings", &schema, opts).await.unwrap();
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(TimestampMicrosecondArray::from(vec![T0, T0 + 1, T0, T0 + 2]).with_timezone("UTC")),
+                Arc::new(Int32Array::from(vec![1, 1, 2, 2])),
+                Arc::new(Float64Array::from(vec![1.0, 2.0, 3.0, 4.0])),
+            ],
+        )
+        .unwrap();
+        let t = append_without_index(&t, &[batch]).await;
+        assert!(t.last_value_index().is_none());
+
+        let df = Session::new(lake).latest("iot.my-readings").await.unwrap();
+        let batches = df.sort(vec![ident("dev\"ice").sort(true, true)]).unwrap().collect().await.unwrap();
+        let batch = arrow::compute::concat_batches(&batches[0].schema(), &batches).unwrap();
+        assert_eq!(batch.num_columns(), 3);
+        let values = batch.column(2).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_eq!(values.values(), &[2.0, 4.0]);
+    }
+
+    #[test]
+    fn only_integer_one_is_one() {
+        for one in [lit(1i32), lit(1i64), lit(1u64), lit(1u8)] {
+            assert!(is_one(&one), "{one}");
+        }
+        for other in [lit("1"), lit(1.0f64), lit(2i64), lit(ScalarValue::Int64(None)), lit(true)] {
+            assert!(!is_one(&other), "{other}");
         }
     }
 }

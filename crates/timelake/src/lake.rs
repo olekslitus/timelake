@@ -92,17 +92,21 @@ impl Lake {
     pub fn open(location: &str, options: HashMap<String, String>) -> Result<Self> {
         let url = warehouse_url(location)?;
         let storage = Storage::open(&url, &options)?;
-        let root = url.as_str().trim_end_matches('/').to_string();
-        Ok(Self {
+        Ok(Self::with_storage(storage, url.as_str().trim_end_matches('/')))
+    }
+
+    /// A lake rooted at `root` on an already opened store.
+    pub(crate) fn with_storage(storage: Storage, root: &str) -> Self {
+        Self {
             inner: Arc::new(LakeInner {
                 storage,
-                root,
+                root: root.to_string(),
                 manifest_lists: Mutex::default(),
                 manifests: Mutex::default(),
                 lvis: Mutex::default(),
                 recent: Mutex::default(),
             }),
-        })
+        }
     }
 
     pub fn storage(&self) -> &Storage {
@@ -414,6 +418,12 @@ pub struct Table {
     pub metadata: Arc<TableMetadata>,
     pub contract: Contract,
     arrow_schema: SchemaRef,
+}
+
+impl std::fmt::Debug for Table {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Table").field("name", &self.name).field("version", &self.version).finish_non_exhaustive()
+    }
 }
 
 impl Table {

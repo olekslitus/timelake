@@ -211,9 +211,8 @@ async fn run(cli: Cli) -> Result<()> {
             if let Some(runs) = bench_runs {
                 return bench(&session, &sql, runs, t0.elapsed().as_secs_f64(), proxy_admin.as_deref()).await;
             }
-            for stmt in sql.split(';').map(str::trim).filter(|s| !s.is_empty()) {
-                let df = session.sql(stmt).await?;
-                print_df(df, format).await?;
+            for statement in session.parse(&sql)? {
+                print_df(session.execute(statement).await?, format).await?;
             }
         }
         Cmd::Latest { table, format } => {
