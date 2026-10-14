@@ -128,15 +128,26 @@ async fn try_commit(
 
     // Manifests and the last-value index don't depend on each other: write them concurrently.
     let base_props = base.current_snapshot().map(|s| s.summary().additional_properties.clone()).unwrap_or_default();
-    let manifests =
-        write_manifests(base, &current, added, &removed_paths, snapshot_id, seq, &manifest_uri, &new_writer);
-    let index = last_value_index(base, change, snapshot_id, &base_props);
-    let (m, (lvi_uri, new_lvi)) = futures::try_join!(manifests, index)?;
-    let ManifestsOut { new_manifests, carried, entries, found, written: w } = m;
-    written.extend(w);
-    if let Some((uri, _)) = &new_lvi {
-        written.push(uri.clone());
-    }
+    // Each side records what it writes before writing it, so that if one fails, the other's
+    // files are still cleaned up.
+    let (mut manifests_written, mut index_written) = (vec![], vec![]);
+    let manifests = write_manifests(
+        base,
+        &current,
+        added,
+        &removed_paths,
+        snapshot_id,
+        seq,
+        &manifest_uri,
+        &new_writer,
+        &mut manifests_written,
+    );
+    let index = last_value_index(base, change, snapshot_id, &base_props, &mut index_written);
+    let (manifests, index) = futures::join!(manifests, index);
+    written.extend(manifests_written);
+    written.extend(index_written);
+    let ManifestsOut { new_manifests, carried, entries, found } = manifests?;
+    let (lvi_uri, new_lvi) = index?;
     if let Some(uri) = lvi_uri {
         props.insert(S_LVI.into(), uri);
     }
@@ -240,7 +251,6 @@ struct ManifestsOut {
     entries: Vec<(String, Vec<LiveEntry>)>,
     /// How many of the files to remove were found.
     found: usize,
-    written: Vec<String>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -253,8 +263,9 @@ async fn write_manifests(
     seq: i64,
     manifest_uri: &(dyn Fn(&str) -> String + Sync),
     new_writer: &(dyn Fn(&str) -> iceberg::spec::ManifestWriter + Sync),
+    written: &mut Vec<String>,
 ) -> Result<ManifestsOut> {
-    let mut out = ManifestsOut { new_manifests: vec![], carried: vec![], entries: vec![], found: 0, written: vec![] };
+    let mut out = ManifestsOut { new_manifests: vec![], carried: vec![], entries: vec![], found: 0 };
     if !added.is_empty() {
         let uri = manifest_uri("added");
         let mut w = new_writer(&uri);
@@ -269,7 +280,7 @@ async fn write_manifests(
                 file_sequence_number: seq,
             });
         }
-        out.written.push(uri.clone());
+        written.push(uri.clone());
         out.new_manifests.push(w.write_manifest_file().await?);
         out.entries.push((uri, es));
     }
@@ -314,7 +325,7 @@ async fn write_manifests(
                     Some(e.file_sequence_number),
                 )?;
             }
-            out.written.push(uri.clone());
+            written.push(uri.clone());
             out.new_manifests.push(w.write_manifest_file().await?);
             out.entries
                 .push((uri, kept.into_iter().map(|e| LiveEntry { status: ManifestStatus::Existing, ..e }).collect()));
@@ -325,7 +336,7 @@ async fn write_manifests(
             for e in &deleted {
                 w.add_delete_file(e.data_file.clone(), e.sequence_number, Some(e.file_sequence_number))?;
             }
-            out.written.push(uri.clone());
+            written.push(uri.clone());
             out.new_manifests.push(w.write_manifest_file().await?);
             out.entries.push((
                 uri,
@@ -342,6 +353,7 @@ async fn last_value_index(
     change: &Change,
     snapshot_id: i64,
     base_props: &HashMap<String, String>,
+    written: &mut Vec<String>,
 ) -> Result<(Option<String>, Option<(String, RecordBatch)>)> {
     let base_rows: u64 = base_props.get("total-records").and_then(|v| v.parse().ok()).unwrap_or(0);
     Ok(match change {
@@ -350,7 +362,9 @@ async fn last_value_index(
             if base.last_value_index().is_some() || base_rows == 0 {
                 match lvi::merged(base, latest).await? {
                     Some(idx) => {
-                        let uri = lvi::write(base, snapshot_id, &idx).await?;
+                        let uri = lvi::new_uri(base, snapshot_id);
+                        written.push(uri.clone());
+                        lvi::write(base, &uri, &idx).await?;
                         (Some(uri.clone()), Some((uri, idx)))
                     }
                     None => (None, None),
@@ -368,7 +382,9 @@ async fn last_value_index(
                     arrow::compute::cast(idx.column(idx.schema().index_of(tc)?), &arrow::datatypes::DataType::Int64)?;
                 let keep = arrow::compute::kernels::cmp::gt_eq(&ts, &arrow::array::Int64Array::new_scalar(*cutoff))?;
                 let idx = arrow::compute::filter_record_batch(&idx, &keep)?;
-                let new = lvi::write(base, snapshot_id, &idx).await?;
+                let new = lvi::new_uri(base, snapshot_id);
+                written.push(new.clone());
+                lvi::write(base, &new, &idx).await?;
                 (Some(new.clone()), Some((new, idx)))
             }
             (uri, _, _) => (uri, None),
@@ -384,8 +400,73 @@ pub(crate) async fn publish(base: &Table, new_meta: iceberg::spec::TableMetadata
     if !storage.write_if_absent(&metadata_uri(&base.location, version), bytes).await? {
         return Ok(None);
     }
-    storage.write(&hint_uri(&base.location), Bytes::from(version.to_string())).await?;
+    // The commit is done: readers probe past a stale hint, so failing to update it must not turn
+    // a committed snapshot into an error (the caller would delete files the snapshot uses).
+    let _ = storage.write(&hint_uri(&base.location), Bytes::from(version.to_string())).await;
     let t = Table::new(base.lake.clone(), base.name.clone(), base.location.clone(), version, new_meta)?;
     base.lake.remember(&t);
     Ok(Some(t))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::testing::{Op, T0, batch, faulty_lake, opts, schema};
+    use crate::{AppendOptions, Error};
+
+    fn no_maintenance() -> AppendOptions {
+        AppendOptions { maintain: Some(false), ..Default::default() }
+    }
+
+    /// Manifests and the last-value index are written concurrently; if one fails, the files the
+    /// other wrote are removed too.
+    #[tokio::test]
+    async fn failed_index_write_leaves_no_files() {
+        let (lake, store) = faulty_lake();
+        let t = lake.create_table("iot.r", &schema(), opts()).await.unwrap();
+        let (t, _) = t.append(&[batch(&[(T0, 1, 1.0)])], no_maintenance()).await.unwrap();
+        let before = store.paths().await;
+
+        store.fail(Op::Put, "/lvi-");
+        t.append(&[batch(&[(T0 + 1, 1, 2.0)])], no_maintenance()).await.unwrap_err();
+        assert_eq!(store.paths().await, before);
+    }
+
+    #[tokio::test]
+    async fn failed_manifest_write_leaves_no_files() {
+        let (lake, store) = faulty_lake();
+        let t = lake.create_table("iot.r", &schema(), opts()).await.unwrap();
+        let (t, _) = t.append(&[batch(&[(T0, 1, 1.0)])], no_maintenance()).await.unwrap();
+        let before = store.paths().await;
+
+        store.fail(Op::Put, "-m.avro");
+        t.append(&[batch(&[(T0 + 1, 1, 2.0)])], no_maintenance()).await.unwrap_err();
+        assert_eq!(store.paths().await, before);
+    }
+
+    /// The version hint is only a shortcut for readers: failing to update it doesn't fail the commit.
+    #[tokio::test]
+    async fn commit_survives_failed_hint_update() {
+        let (lake, store) = faulty_lake();
+        let t = lake.create_table("iot.r", &schema(), opts()).await.unwrap();
+        store.fail(Op::Put, "version-hint");
+        let (t, r) = t.append(&[batch(&[(T0, 1, 1.0), (T0, 2, 2.0)])], no_maintenance()).await.unwrap();
+        assert_eq!((t.version, r.rows), (2, 2));
+        store.heal();
+        let reloaded = lake.table("iot.r").await.unwrap();
+        assert_eq!(reloaded.version, 2);
+        assert_eq!(reloaded.files().await.unwrap().len(), 1);
+    }
+
+    /// A writer that keeps losing the commit race gives up with a conflict and leaves nothing behind.
+    #[tokio::test]
+    async fn gives_up_after_max_attempts() {
+        let (lake, store) = faulty_lake();
+        let t = lake.create_table("iot.r", &schema(), opts()).await.unwrap();
+        let before = store.paths().await;
+
+        store.fail(Op::LoseCreate, ".metadata.json");
+        let err = t.append(&[batch(&[(T0, 1, 1.0)])], no_maintenance()).await.unwrap_err();
+        assert!(matches!(err, Error::Conflict(_)), "{err}");
+        assert_eq!(store.paths().await, before);
+    }
 }

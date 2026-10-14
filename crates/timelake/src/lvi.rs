@@ -72,15 +72,18 @@ pub(crate) async fn read(table: &Table, uri: &str) -> Result<RecordBatch> {
     Ok(batch)
 }
 
-pub(crate) async fn write(table: &Table, snapshot_id: i64, batch: &RecordBatch) -> Result<String> {
-    let uri = format!("{}/metadata/lvi-{snapshot_id}-{}.parquet", table.location, uuid::Uuid::new_v4());
+/// A fresh location for the index of a new snapshot.
+pub(crate) fn new_uri(table: &Table, snapshot_id: i64) -> String {
+    format!("{}/metadata/lvi-{snapshot_id}-{}.parquet", table.location, uuid::Uuid::new_v4())
+}
+
+pub(crate) async fn write(table: &Table, uri: &str, batch: &RecordBatch) -> Result<()> {
     let props = WriterProperties::builder().set_compression(Compression::ZSTD(ZstdLevel::try_new(3)?)).build();
     let mut buf = vec![];
     let mut w = ArrowWriter::try_new(&mut buf, batch.schema(), Some(props))?;
     w.write(batch)?;
     w.close()?;
-    table.lake.storage().write(&uri, Bytes::from(buf)).await?;
-    Ok(uri)
+    table.lake.storage().write(uri, Bytes::from(buf)).await
 }
 
 /// The index for a new snapshot: the base snapshot's index merged with the newest rows of the
