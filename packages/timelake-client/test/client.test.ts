@@ -55,6 +55,23 @@ test("latest matches the engine", async () => {
   expect(some.map((r) => r.tags_id).toSorted()).toEqual([3, 7])
 })
 
+test("latest scans tables without a last-value index (B12)", async () => {
+  const t = lake.table("iot.unindexed", Reading)
+  expect((await t.info()).lastValueIndex).toBeNull()
+  const rows = await t.latest()
+  expect(t.lastStats.files).toBe(24)
+  const expected = fx.sql(
+    "SELECT tags_id, time, velocity FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY tags_id ORDER BY time DESC) rn FROM iot.unindexed) WHERE rn = 1 ORDER BY tags_id",
+  )
+  const got = rows.toSorted(byTag).map((r) => ({ ...r, time: r.time.toISOString().replace(".000Z", "Z") }))
+  expect(got.map(({ tags_id, time, velocity }) => ({ tags_id, time, velocity }))).toEqual(
+    expected as { tags_id: number; time: string; velocity: number | null }[],
+  )
+  const indexed = await lake.table("iot.readings", Reading).latest({ series: [3, 7] })
+  const scanned = await t.latest({ series: [3, 7] })
+  expect(scanned.toSorted(byTag)).toEqual(indexed.toSorted(byTag))
+})
+
 test("range matches the engine and prunes files", async () => {
   const t = lake.table("iot.readings", Reading)
   const from = "2026-01-01T12:00:00Z"

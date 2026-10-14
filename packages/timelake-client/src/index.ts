@@ -356,8 +356,8 @@ export class TableHandle<T = Row> {
   }
 
   /**
-   * The newest row of each series, from the table's last-value index (one small file).
-   * Filter with `series`; falls back to scanning when the table has no index.
+   * The newest row of each series, from the table's last-value index (one small file). Tables
+   * without the index (e.g. written by another Iceberg writer) are scanned instead.
    */
   async latest<C extends keyof T & string>(opts: { series?: SeriesFilter; columns: C[] }): Promise<Pick<T, C>[]>
   async latest(opts?: { series?: SeriesFilter; columns?: string[] }): Promise<T[]>
@@ -370,7 +370,13 @@ export class TableHandle<T = Row> {
       series: this.seriesSpec(l.info, opts.series),
       columns: opts.columns ?? [],
     }
-    if (!l.info.lastValueIndex) throw new Error(`${this.name} has no last-value index`)
+    if (!l.info.lastValueIndex) {
+      if (!l.info.timeColumn) throw new Error(`${this.name} has no time column, so no latest rows`)
+      const files = l.wasm.planFiles(spec) as { path: string; size: number }[]
+      const rows = await this.run(files, { ...spec, latestBy: l.info.seriesKey }, stats)
+      this.lastStats = { ...stats, ms: performance.now() - t0 }
+      return this.validate(rows, opts.columns)
+    }
     // The index is one small Parquet file: fetch it whole and decode it in place.
     const whole = await this.bytes(l.info.lastValueIndex, undefined, stats)
     const query = new Query(spec)
