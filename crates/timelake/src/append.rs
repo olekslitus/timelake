@@ -49,6 +49,12 @@ pub struct AppendResult {
     pub maintenance: Option<Result<MaintainReport>>,
 }
 
+impl AppendResult {
+    fn nothing(commit: CommitInfo) -> Self {
+        Self { rows: 0, files: 0, bytes: 0, commit, maintenance: None }
+    }
+}
+
 impl Table {
     /// Appends Arrow data as one commit. Rows are aligned to the table schema, sorted by
     /// `(series_key…, time)`, and written to one file per time partition. Returns the new table
@@ -71,7 +77,7 @@ impl Table {
                 duration: Duration::ZERO,
                 duplicate: false,
             };
-            return Ok((self.clone(), AppendResult { rows: 0, files: 0, bytes: 0, commit, maintenance: None }));
+            return Ok((self.clone(), AppendResult::nothing(commit)));
         }
         let (n_files, bytes) = (files.len(), files.iter().map(DataFile::file_size_in_bytes).sum());
         let paths: Vec<String> = files.iter().map(|f| f.file_path().to_string()).collect();
@@ -88,7 +94,7 @@ impl Table {
         }
         let (table, info) = committed?;
         if info.duplicate {
-            return Ok((table, AppendResult { rows: 0, files: 0, bytes: 0, commit: info, maintenance: None }));
+            return Ok((table, AppendResult::nothing(info)));
         }
 
         let mut result = AppendResult { rows, files: n_files, bytes, commit: info, maintenance: None };

@@ -103,10 +103,10 @@ impl Lake {
             return Ok(self.indexed_tables().await?.into_iter().filter(|t| t.namespace() == namespace).collect());
         }
         let dirs = self.storage().list_dirs(&format!("{}/{namespace}", self.inner.root)).await?;
-        // Directories with names a table can't have are not tables.
-        let candidates: Vec<TableName> = dirs.iter().filter_map(|d| TableName::new(namespace, d).ok()).collect();
-        let checks: Vec<_> = candidates
-            .into_iter()
+        let checks: Vec<_> = dirs
+            .iter()
+            // Directories with names a table can't have are not tables.
+            .filter_map(|d| TableName::new(namespace, d).ok())
             .map(|name| async move {
                 let exists = self.storage().exists(&hint_uri(&self.table_location(&name))).await?;
                 Ok::<_, Error>(exists.then_some(name))
