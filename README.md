@@ -130,7 +130,7 @@ The [docs](https://timelake.dev/docs) cover a [quick start](https://timelake.dev
 ```bash
 cargo test --workspace                                   # Rust tests
 uv sync && uv run pytest crates/timelake-py/tests        # Python package (built by uv) and its tests
-(cd packages/timelake-client && bun test)                # TS client + WASM vs the engine (needs scripts/build-demo-warehouse.sh)
+(cd packages/timelake-client && bun test)                # TS client + WASM vs the engine (needs cargo build -p timelake-cli)
 (cd packages/timelake-client && bun run build:wasm)      # rebuild the WASM after changing crates/timelake-wasm
 ```
 

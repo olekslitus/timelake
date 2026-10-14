@@ -51,12 +51,10 @@ bun run build:wasm                                  # after changing crates/time
 bun run typecheck
 ```
 
-The client tests compare its answers with the CLI's, on a demo warehouse served locally:
+The client tests build a small warehouse with the CLI in a temporary folder, serve it locally, and compare the client's answers with the CLI's. They never touch the network:
 
 ```bash
-cargo build --release -p timelake-cli
-scripts/build-demo-warehouse.sh                     # needs the TSBS data in bench/data
-bun scripts/serve-range.mjs bench/data/demo-site 4100 &
+cargo build -p timelake-cli                         # the tests use target/debug/timelake (or $TIMELAKE_CLI)
 (cd packages/timelake-client && bun test)
 ```
 

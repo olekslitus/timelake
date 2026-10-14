@@ -68,7 +68,7 @@ Each docs page is a Markdown file with JSX allowed (MDX): `app/(site)/docs/<slug
 - **Hosted Explorer: the demo warehouse on Vercel Blob.**
   1. Create a **public** Blob store (Vercel → Storage → Blob) and note its base URL, `https://<store-id>.public.blob.vercel-storage.com`.
   2. Build the demo with that URL baked into its metadata (the first 50 TSBS truck ids over 3 days, about 22 MB): `../scripts/build-demo-warehouse.sh https://<store-id>.public.blob.vercel-storage.com/demo`
-  3. Upload it, keeping paths: `BLOB_READ_WRITE_TOKEN=… bun run upload-demo`
+  3. Upload it, keeping paths: `BLOB_READ_WRITE_TOKEN=… bun run upload-demo https://<store-id>.public.blob.vercel-storage.com/demo`
   4. Check range support. This should print `HTTP/… 206`; without it the client still works but downloads whole files: `curl -sI -H 'Range: bytes=0-99' https://<store-id>.public.blob.vercel-storage.com/demo/tsbs/tags/metadata/version-hint.text`
   5. Set `TIMELAKE_URL=https://<store-id>.public.blob.vercel-storage.com/demo` on the project, for build and runtime alike (the static shell shows it), then deploy.
 - **The Explorer is public: no login, read-only.** Each chart reads at most a few MB from Blob. Consider a Vercel Firewall rate limit on `/api/*`.
@@ -76,6 +76,6 @@ Each docs page is a Markdown file with JSX allowed (MDX): `app/(site)/docs/<slug
 ### Testing the hosted mode locally
 ```bash
 ../scripts/build-demo-warehouse.sh                     # builds for http://127.0.0.1:4100/demo
-bun ../scripts/serve-range.mjs ../bench/data/demo-site 4100 &
+bun ../scripts/serve-range.mjs ../bench/data/demo-site/127.0.0.1_4100_demo 4100 &
 TIMELAKE_URL=http://127.0.0.1:4100/demo bun run dev
 ```

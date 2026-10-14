@@ -48,8 +48,6 @@ jobs:
       - run: cargo clippy --manifest-path crates/timelake-wasm/Cargo.toml --target wasm32-unknown-unknown -- -D warnings
       - run: cargo clippy --manifest-path crates/timelake-wasm/Cargo.toml --all-targets -- -D warnings
       - run: cargo test --manifest-path crates/timelake-wasm/Cargo.toml
-      - name: Embedded WASM matches its sources
-        run: bash packages/timelake-client/scripts/build-wasm.sh --check
 
   python:
     name: Python (package and benchmarks)
@@ -64,6 +62,7 @@ jobs:
       - run: uv run --no-sync ruff check .
       - run: uv run --no-sync ty check
       - run: uv run --no-sync pytest crates/timelake-py/tests
+      - run: uv run --no-sync pytest bench/tests
 
   web:
     name: TypeScript (website and client)
@@ -77,6 +76,9 @@ jobs:
       - run: bun run lint
       - run: bun run format:check
       - run: bun run typecheck
+      - name: Embedded WASM matches its sources
+        run: bun run --cwd packages/timelake-client check:wasm
+      - run: bun test scripts
       - name: Website results match bench/results
         run: bun dashboard/scripts/sync-results.ts && git diff --exit-code dashboard/data/results
 

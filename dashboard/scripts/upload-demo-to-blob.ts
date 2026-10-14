@@ -4,14 +4,24 @@
 //   1. Create a public Blob store (Vercel dashboard → Storage → Blob), note its base URL
 //      https://<store-id>.public.blob.vercel-storage.com
 //   2. ../scripts/build-demo-warehouse.sh https://<store-id>.public.blob.vercel-storage.com/demo
-//   3. BLOB_READ_WRITE_TOKEN=... bun scripts/upload-demo-to-blob.ts
+//   3. BLOB_READ_WRITE_TOKEN=... bun run upload-demo https://<store-id>.public.blob.vercel-storage.com/demo
 //   4. Set TIMELAKE_URL=https://<store-id>.public.blob.vercel-storage.com/demo on the Vercel project.
 import { readdir, readFile } from "node:fs/promises"
 import path from "node:path"
 
 import { put } from "@vercel/blob"
 
-const DIR = path.resolve(process.cwd(), "../bench/data/demo-site") // run from dashboard/
+const url = process.argv[2]
+if (!url) {
+  console.error("Usage: bun run upload-demo <warehouse URL>, the URL the demo was built for")
+  process.exit(1)
+}
+// The folder build-demo-warehouse.sh wrote for this URL: scheme dropped, other separators replaced by "_".
+const slug = url
+  .replace(/^[a-z]+:\/\//, "")
+  .replace(/\/+$/, "")
+  .replace(/[^A-Za-z0-9.-]+/g, "_")
+const DIR = path.resolve(import.meta.dirname, "../../bench/data/demo-site", slug)
 
 async function walk(dir: string): Promise<string[]> {
   const out: string[] = []
