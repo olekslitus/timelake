@@ -64,7 +64,7 @@ fn partition_values(batch: &RecordBatch, contract: &Contract) -> Result<Option<V
     if ts.null_count() > 0 {
         return Err(Error::invalid(format!("time column {tc:?} contains nulls")));
     }
-    Ok(Some(ts.values().iter().map(|&t| chunk.value(t)).collect()))
+    Ok(Some(ts.values().iter().map(|&t| chunk.value(t)).collect::<timelake_format::Result<_>>()?))
 }
 
 /// Concatenates, sorts by `(partition, series…, time)`, and splits by partition.

@@ -184,7 +184,7 @@ async fn retention(table: &Table, report: &mut MaintainReport) -> Result<Table> 
         .files()
         .await?
         .into_iter()
-        .filter(|e| file_partition(&e.data_file).is_some_and(|p| chunk.end_micros(p) <= cutoff))
+        .filter(|e| file_partition(&e.data_file).is_some_and(|p| chunk.end_micros(p).is_ok_and(|end| end <= cutoff)))
         .collect();
     if removed.is_empty() {
         return Ok(table.clone());
