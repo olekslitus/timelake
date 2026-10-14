@@ -789,12 +789,17 @@ TSBS assumes a database. A lake also has to be judged on these, borrowing ideas 
 | Other formats | Delta Lake, Hudi, Paimon, DuckLake, Lance | delta-rs, Spark, Flink, DuckDB, lance |
 | TSDB baselines | TimescaleDB, InfluxDB 3, QuestDB | Their native TSBS loaders |
 
+PyIceberg appends are the naive baseline (what v0 compares against today). Published results must also include Iceberg written the way an expert team would (planned): a Flink or Spark streaming sink that batches commits, with scheduled `rewrite_data_files` and sorting; the Kafka Connect Iceberg sink; iceberg-rust; and DuckDB's Iceberg writer. Beating only the naive writer proves too little.
+
 ### 17.4 Methodology
 - **Same hardware and same object store** for every lake system:
   - Locally: RustFS (or SeaweedFS), with injected latency (e.g. toxiproxy) to approximate S3's per-request latency.
   - Published runs: real S3 in-region, plus S3 Express One Zone and R2. Local object stores don't reproduce S3's request latency, so they are for repeatability only. MinIO's community edition is no longer maintained.
   - **Planned: one published run per popular object store**, each with latency, request counts and $ per month at that store's prices: AWS S3 (Standard, Express One Zone), Cloudflare R2, Tigris, Wasabi, Backblaze B2, Azure Blob, Google Cloud Storage. Stores without request fees (R2, Wasabi) or with different latency (Tigris, Express) change the cost and speed picture most.
 - **Object-store compatibility matrix (CI):** S3, GCS, Azure Blob, R2, Tigris, Wasabi, Backblaze B2, RustFS, SeaweedFS, Garage. Each is tested for the features Timelake relies on, especially **conditional writes** (`If-None-Match` / `If-Match`), which the object-store-only catalog and WAL require (§5.2, §8.2).
+- **Store notes (measured 2026-10-13 from a laptop, warm connections, [bench/results/PERFORMANCE.md](bench/results/PERFORMANCE.md)):**
+  - **Tigris** answers GET, HEAD, PUT and LIST faster than S3 us-east-2 (small GET 37 vs 67 ms, PUT 80 vs 110 ms), but a request for a key that doesn't exist (HEAD or GET 404) takes about 285 ms, against 55 ms on S3. Timelake's reader asks for `vN+1.metadata.json` on every table load, so on Tigris each cold load pays it. A LIST of the `vN+1` prefix answers the same question in about 40 ms.
+  - **Tigris global buckets** are strongly consistent within a region and eventually consistent across regions; a conditional write is decided by the bucket's leader only with `X-Tigris-Consistent: true`. Writers to one table from different regions need that header or a single-region bucket. To verify in the compatibility matrix.
 - **Cold and warm runs reported separately:** cold means no local caches.
 - **Results include:** p50/p99 latency, bytes read, **object-store request counts**, and **estimated $** (per query, per GB ingested, per month of storage).
 - **Configurations:** Every system's configuration and version is committed. Each system is tuned per its own docs, and vendors are invited to review.
@@ -1001,7 +1006,7 @@ Open from v0:
 **Writing it.** Iceberg metadata is written exactly as today and `vN+1.metadata.json` stays the commit point, so DuckDB, Spark and PyIceberg see no change. The head is a cache of that commit, written in the background like the version hint (P4), so commits don't get slower. Where the store supports it (S3, GCS, Azure), it is written with a conditional update so it never moves back to an older version when two writers race.
 
 **Reading it.** `GET timelake-head`, plan, and read data. A head can be behind: right after a commit, while its background write is in flight, or until the next commit if a writer crashed in between. **Decide:**
-- **Validate (recommended):** check `HEAD vN+1.metadata.json` at the same time as the data reads. If it exists, the head was stale: redo the load the slow way. Results are always current, as today. The cost is one cheap request per query and no extra latency in the common case.
+- **Validate (recommended):** check whether `vN+1.metadata.json` exists at the same time as the data reads. If it exists, the head was stale: redo the load the slow way. Results are always current, as today. The cost is one request per query and no extra latency in the common case. **Decide** how to check: a HEAD is cheapest on S3 (55 ms, GET pricing), but a missing key takes 285 ms on Tigris, where a LIST of the `vN+1` prefix takes 40 ms (at write pricing, about 12× a HEAD on S3). A per-store default is likely; plain HTTPS can only HEAD. The same choice applies to today's table load (§17.4, store notes).
 - **Trust it:** skip the check. One request fewer, but a query can return the previous version for a short time. This is P6's opt-in staleness bound, not the default.
 
 **P3, warm connections.** While the head GET is in flight, the reader opens a few connections to the store (small `HEAD` requests on the head object), so the data reads that follow don't pay TCP and TLS setup. Cost: a few cheap requests per cold query.

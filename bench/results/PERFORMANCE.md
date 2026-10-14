@@ -32,7 +32,27 @@ and best of 2 warm runs; Tigris bucket in its global location):
 | `one-truck-history` first / warm | 1,062 / 139 ms | 1,973 / 270 ms |
 | `fleet-avg-velocity` first / warm | 1,010 / 160 ms | 1,255 / 170 ms |
 
-From this laptop, a TLS connection to Tigris is quicker (70 ms vs. 92 ms), but its time to first byte on small objects
-varied from 30 to 155 ms after the connection, against a steady 60–75 ms on S3. Cold queries make 6–7 requests one
-after another, so they add up that variance; P1 (one request for the table state) cuts most of them. One small run:
-indicative only. The run used about 1,000 writes, under 1,000 reads and 33 MB on Tigris, inside its free tier.
+Cold queries are slower on Tigris because of one request type, not the store overall: see "Why Tigris was slower
+here" below. One small run: indicative only. The run used about 1,000 writes, under 1,000 reads and 33 MB on Tigris, inside its free tier.
+
+### Why Tigris was slower here (2026-10-13)
+
+Per request on a warm connection from the same laptop (`p50 / p90` ms, 10 requests each, boto3):
+
+| Request | S3 us-east-2 | Tigris (global) |
+|---|---:|---:|
+| GET, 2-byte object | 67 / 72 | 37 / 38 |
+| HEAD, existing object | 53 / 61 | 36 / 44 |
+| **HEAD, missing object (404)** | **53 / 56** | **283 / 314** |
+| GET, missing object (404) | 61 / 70 | 285 / 311 |
+| GET, 256 KB range | 70 / 79 | 59 / 67 |
+| PUT, 1 KB | 114 / 120 | 79 / 88 |
+| PUT, `If-None-Match: *` | 107 / 110 | 82 / 88 |
+| LIST, one table's `metadata/` | 82 / 96 | 55 / 58 |
+| LIST, keys after `v9` | 51 / 56 | 38 / 42 |
+
+Tigris is faster for every request that finds its object, as it claims. Its own benchmark (1 KB objects, a client in
+San Jose next to a Tigris region, YCSB) measures exactly those. A key that doesn't exist costs about 285 ms, likely
+because a global bucket has to check beyond the nearest region. Timelake's reader looks up `vN+1.metadata.json`
+(normally missing) on every table load, so each cold query on Tigris pays it once or twice. Checking with a LIST of the
+`vN+1` prefix instead would take about 40 ms there (SPEC §17.4 and §19.2).
