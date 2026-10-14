@@ -9,7 +9,7 @@
     "start": "next start -H 127.0.0.1",
     "sync-results": "bun scripts/sync-results.ts",
     "upload-demo": "bun scripts/upload-demo-to-blob.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "next typegen && tsc --noEmit"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",
