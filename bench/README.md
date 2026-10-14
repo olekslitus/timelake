@@ -67,6 +67,6 @@ docker rm -f timelake-bench-rustfs && docker volume rm timelake-bench-rustfs    
 **Real AWS S3** (from this machine, or from an instance in the region): see [`infra/README.md`](infra/README.md).
 
 ## Results
-`results/<suite>.<tag>.jsonl` holds one record per query and engine; the `.md` files are the write-ups. The website reads a copy of some of them (`dashboard/data/results`, refreshed with `bun run sync-results`).
+`results/<suite>.<tag>.jsonl` holds one record per query and engine; the `.md` files are the write-ups. The website reads a copy of some of them (`dashboard/data/results`, refreshed with `bun dashboard/scripts/sync-results.ts`).
 
 The Phase 0 runners that produced `BASELINE.md`, `OBJECT_STORAGE.md` and `VORTEX.md` (`run_all.sh`, `run_s3.sh`, `run_vortex.sh`, `run_rust.sh`, `summarize.py`, `compare_storage.py`, `compare_formats.py`, `scripts/timescaledb.sh`) were removed after those runs. Recover them with `git checkout 2d66939 -- bench/`.

@@ -29,5 +29,9 @@ v0/run_queries.sh local maintained
 uv run python v0/summarize.py > results/V0.md
 ```
 
+`v0/small.py` is a quick version for any S3-compatible store with no proxy (100 commits and four queries, small
+enough for free tiers): see its docstring. Results of the performance plan's steps are in
+[PERFORMANCE.md](../results/PERFORMANCE.md).
+
 ## TimescaleDB (Tiger Cloud)
 `v0/tsdb_cloud.py` loads the same tables into a Tiger Cloud service and runs the same queries in up to three states: plain hypertable, columnstore, and tiered storage. Use a disposable service and set `TSDB_DSN`. Results go to `results/tsdb_cloud.jsonl`; the write-up is [results/TIMESCALE.md](../results/TIMESCALE.md). Tiered storage must be enabled in the Tiger Console first.
