@@ -134,6 +134,7 @@ impl TableMeta {
             })
             .collect();
         let contract = Contract::from_properties(&raw.properties)?;
+        contract.check_readable().map_err(|e| Error::invalid(e.0))?;
         let current = raw.current_snapshot_id.and_then(|id| raw.snapshots.iter().find(|s| s.snapshot_id == id));
         let mut snapshots: Vec<SnapshotInfo> = raw.snapshots.iter().map(RawSnapshot::info).collect();
         snapshots.sort_by_key(|s| Reverse(s.timestamp_ms));
@@ -304,4 +305,26 @@ pub fn parse_manifest(bytes: &[u8], schema: &[Field]) -> Result<Vec<DataFile>> {
         });
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn meta(format: &str) -> Result<TableMeta> {
+        let schema = r#"{"schema-id": 0, "fields": [{"id": 1, "name": "x", "type": "int", "required": false}]}"#;
+        TableMeta::parse(&format!(
+            r#"{{"format-version": 2, "location": "s3://b/t", "schemas": [{schema}],
+                "properties": {{"timelake.format-version": "{format}"}}}}"#
+        ))
+    }
+
+    #[test]
+    fn reads_only_formats_it_knows() {
+        assert!(meta("0.1.0").is_ok());
+        assert!(meta("2").is_ok());
+        assert!(meta("0.2.9").is_ok());
+        let err = meta("0.3.0").map(|_| ()).unwrap_err().to_string();
+        assert!(err.contains("upgrade Timelake"), "{err}");
+    }
 }

@@ -84,12 +84,12 @@ fn upgrade_and_rollback() {
     std::fs::write(&csv, "time,device,value\n2026-01-01T00:00:00Z,1,1.5\n").unwrap();
     let csv = csv.to_str().unwrap();
     let import = ["import", "iot.r", csv, "--time-column", "time", "--series-key", "device"];
-    // A format 1 table, as Timelake 0.2 wrote them.
-    timelake(&warehouse, &[&import[..], &["--prop", "timelake.format-version=1"]].concat());
+    // A format 0.1.0 table, as Timelake 0.2 wrote them.
+    timelake(&warehouse, &[&import[..], &["--prop", "timelake.format-version=0.1.0"]].concat());
     timelake(&warehouse, &["append", "iot.r", csv]);
 
     let (out, _) = timelake(&warehouse, &["upgrade", "--dry-run"]);
-    assert!(out.contains("iot.r: would:") && out.contains("set table format 1 → 2"), "{out}");
+    assert!(out.contains("iot.r: would:") && out.contains("set table format 0.1.0 → 0.2.0"), "{out}");
     let (out, _) = timelake(&warehouse, &["upgrade", "iot.r"]);
     let undo = out.lines().find_map(|l| l.split("undo: ").nth(1)).unwrap_or_else(|| panic!("{out}"));
     let (out, _) = timelake(&warehouse, &["upgrade", "iot.r"]);

@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use chrono::Datelike;
 
-use crate::{FormatError, Result, property};
+use crate::{FORMAT_VERSION, FormatError, FormatVersion, Result, property};
 
 const HOUR_MICROS: i64 = 3_600_000_000;
 const DAY_MICROS: i64 = 24 * HOUR_MICROS;
@@ -159,7 +159,7 @@ pub struct Contract {
     /// Bytes the head may spend on optional sections (the last-value index).
     pub head_inline_bytes: u64,
     /// The table format version (see [`crate::FORMAT_VERSION`]).
-    pub format_version: u32,
+    pub format_version: FormatVersion,
     /// No snapshot expires before this time (milliseconds since the epoch).
     pub keep_snapshots_until: Option<i64>,
 }
@@ -196,12 +196,36 @@ impl Contract {
             compact_min_files: p.number(property::COMPACT_MIN_FILES, Self::DEFAULT_COMPACT_MIN_FILES)?,
             head_format: p.get(property::HEAD_FORMAT).unwrap_or(Self::DEFAULT_HEAD_FORMAT).to_ascii_lowercase(),
             head_inline_bytes: p.number(property::HEAD_INLINE_BYTES, Self::DEFAULT_HEAD_INLINE_BYTES)?,
-            format_version: p.number(property::FORMAT_VERSION, 1)?,
+            format_version: p.get(property::FORMAT_VERSION).map_or(Ok(FormatVersion::UNVERSIONED), str::parse)?,
             keep_snapshots_until: p
                 .get(property::KEEP_SNAPSHOTS_UNTIL)
                 .map(|_| p.number(property::KEEP_SNAPSHOTS_UNTIL, 0))
                 .transpose()?,
         })
+    }
+
+    /// Errors when this Timelake can't read the table correctly: its format is newer than
+    /// [`FORMAT_VERSION`] in a way that breaks older readers.
+    pub fn check_readable(&self) -> Result<()> {
+        if self.format_version.readable_by(FORMAT_VERSION) {
+            return Ok(());
+        }
+        Err(FormatError::new(format!(
+            "table format {} is newer than this Timelake reads ({FORMAT_VERSION}): upgrade Timelake",
+            self.format_version
+        )))
+    }
+
+    /// Errors when this Timelake must not write to the table: it wouldn't keep what the table's
+    /// newer format relies on.
+    pub fn check_writable(&self) -> Result<()> {
+        if self.format_version.writable_by(FORMAT_VERSION) {
+            return Ok(());
+        }
+        Err(FormatError::new(format!(
+            "table format {} is newer than this Timelake writes ({FORMAT_VERSION}): upgrade Timelake",
+            self.format_version
+        )))
     }
 
     /// Whether the table has a time column.
@@ -368,7 +392,10 @@ mod tests {
         assert_eq!(c.retention, None);
         assert_eq!(c.snapshot_retention, Duration::from_secs(3600));
         assert_eq!((c.min_snapshots, c.max_snapshots, c.compact_min_files), (5, 100, 8));
-        assert_eq!((c.head_format.as_str(), c.head_inline_bytes, c.format_version), ("arrow", 1 << 20, 1));
+        assert_eq!(
+            (c.head_format.as_str(), c.head_inline_bytes, c.format_version),
+            ("arrow", 1 << 20, FormatVersion::UNVERSIONED)
+        );
         assert!(c.sort_columns().is_empty());
     }
 

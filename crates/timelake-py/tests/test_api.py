@@ -179,14 +179,14 @@ def test_maintain_report_has_documented_keys(table: timelake.Table) -> None:
 def test_upgrade_and_rollback(lake: timelake.Lake) -> None:
     # A table in the format Timelake 0.2 wrote, with two small files.
     table = lake.create_table(
-        "iot.old", SCHEMA, time_column="time", series_key=["device"], properties={"timelake.format-version": "1"}
+        "iot.old", SCHEMA, time_column="time", series_key=["device"], properties={"timelake.format-version": "0.1.0"}
     )
     table.append(readings(), maintain=False)
     table.append(readings(START + dt.timedelta(hours=1)), maintain=False)
     version = table.info()["version"]
 
     plan = table.upgrade(dry_run=True)
-    assert plan["steps"][0] == "set table format 1 → 2"
+    assert plan["steps"][0] == "set table format 0.1.0 → 0.2.0"
     assert table.info()["version"] == version
     report = table.upgrade()
     assert report["steps"] == plan["steps"]

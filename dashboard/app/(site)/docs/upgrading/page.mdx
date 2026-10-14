@@ -4,20 +4,26 @@ export const metadata = { title: "Upgrading" }
 
 Timelake has one version number for everything: the Rust crates, the CLI, the Python package and the TypeScript client. Versions follow [semantic versioning as Cargo applies it](https://doc.rust-lang.org/cargo/reference/semver.html): before 1.0, a minor release (0.3 → 0.4) may change behaviour or APIs, and the [changelog](/docs/changelog) says what to do; a patch release (0.3.0 → 0.3.1) never does. Every version is a [tag on GitHub](https://github.com/polythings/timelake/tags).
 
-Tables have a version of their own, the **table format**, stored as the table property `timelake.format-version`.
+## Table format
+
+Tables have a version of their own, the **table format**, stored as the table property `timelake.format-version`. It is a semantic version too, separate from Timelake’s: it changes only when the files a table writes change, and most changes are compatible.
 
 | Format | Written by | What it adds |
 | --- | --- | --- |
-| 1 | 0.1, 0.2 (no property) | Iceberg tables with Timelake’s layout and last-value index |
-| 2 | 0.3 and later | The head object, `metadata/timelake-head`: first queries in one round trip |
+| 0.1.0 | Timelake 0.1, 0.2 (no property) | Iceberg tables with Timelake’s layout and last-value index |
+| 0.2.0 | Timelake 0.3 and later | The head object, `metadata/timelake-head`: first queries in one round trip |
 
-## What works across versions
+Timelake 0.3.0 wrote the format as `2`; it reads as 0.2.0, so those tables need no upgrade.
 
-- **Any Timelake reads any older format.** A table written by an older version, or by another Iceberg engine, is read as it is, only slower if it lacks a head or a last-value index.
-- **A Timelake refuses to write to a newer format** than it knows, with a message to upgrade it. An older writer would not keep what the newer format relies on: it doesn’t update the head, for example.
+### What works across versions
+
+- **Any Timelake reads and writes older formats.** A table written by an older version, or by another Iceberg engine, is used as it is, only slower if it lacks a head or a last-value index.
+- **A newer patch format** (0.2.0 → 0.2.1) is compatible: older Timelakes still read and write the table.
+- **A newer minor format** (0.2 → 0.3) is not: an older Timelake refuses to read or write the table, with a message to upgrade Timelake. It could otherwise give wrong answers, or break what the newer format relies on (for example, by not updating the head).
+- **From 1.0,** a minor bump only stops older writers, and a major bump also stops older readers.
 - **Other engines** (DuckDB, Spark, PyIceberg) read every format: the Iceberg metadata is standard.
 
-So upgrade every writer of a table before you upgrade the table.
+So upgrade every reader and writer of a table before you upgrade the table.
 
 ## Upgrading tables
 

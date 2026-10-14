@@ -8,6 +8,15 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
 
 ## Unreleased
 
+### Changed
+
+- **Table format versions are semantic versions,** separate from Timelake's: tables created now record
+  `timelake.format-version = 0.2.0`. Tables marked `2` by Timelake 0.3.0 read as 0.2.0 and need no upgrade; tables
+  without the property are 0.1.0. A newer patch format is read and written by older Timelakes, a newer minor format
+  (before 1.0) by neither, with a message to upgrade Timelake. See
+  [Upgrading](https://timelake.dev/docs/upgrading#table-format). Timelake 0.3.0 can't open tables created from now on:
+  upgrade every reader and writer first.
+
 ## 0.3.0 – 2026-10-14
 
 ### Added

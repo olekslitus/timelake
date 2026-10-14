@@ -131,8 +131,16 @@ Everything shares one version: the Rust crates, the CLI, the Python package, the
 and the website. It follows [Semantic Versioning as Cargo applies it](https://doc.rust-lang.org/cargo/reference/semver.html):
 before 1.0, a minor release (0.3 → 0.4) may break the API or behaviour, and its changelog entry says what to do; a
 patch release (0.3.0 → 0.3.1) never does. Tables carry their own format version (`timelake.format-version`,
-`FORMAT_VERSION` in `timelake-format`): bump it when an older Timelake must not write the tables a newer one creates,
-and teach `timelake upgrade` to bring older tables to it.
+`FORMAT_VERSION` in `timelake-format`), a semantic version separate from the software's. Bump it when the files a
+table writes change:
+
+- **patch** (0.2.0 → 0.2.1) when older Timelakes still read and write the table correctly, for example a new
+  optional section in the head that writers needn't keep;
+- **minor** before 1.0 (0.2 → 0.3) when older ones would read it wrongly or break it by writing. From 1.0, a minor bump
+  is for changes only older writers must avoid, and a major bump for changes older readers must avoid.
+
+Teach `timelake upgrade` to bring older tables to it, and add the format to the table in the
+[Upgrading](https://timelake.dev/docs/upgrading#table-format) docs.
 
 To release, from a clean `main`:
 

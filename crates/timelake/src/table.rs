@@ -59,6 +59,7 @@ impl Table {
         metadata: TableMetadata,
     ) -> Result<Self> {
         let contract = Contract::from_properties(metadata.properties())?;
+        contract.check_readable().map_err(|e| Error::invalid(format!("{name}: {e}")))?;
         let schema = Arc::new(schema_to_arrow_schema(metadata.current_schema())?);
         Ok(Self {
             lake,

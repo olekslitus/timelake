@@ -11,8 +11,8 @@ use std::time::Duration;
 
 use arrow::compute::concat_batches;
 use iceberg::spec::{MAIN_BRANCH, SnapshotReference, SnapshotRetention, TableMetadataBuilder};
-use timelake_format::FORMAT_VERSION;
 use timelake_format::head::NO_HEAD;
+use timelake_format::{FORMAT_VERSION, FormatVersion};
 
 use crate::commit::{Change, commit, publish};
 use crate::error::{Error, Result};
@@ -47,9 +47,9 @@ pub enum UpgradeStep {
     /// Record the table format version, and keep every snapshot until `keep_until_ms`.
     SetFormatVersion {
         /// The format before.
-        from: u32,
+        from: FormatVersion,
         /// The format after: [`FORMAT_VERSION`].
-        to: u32,
+        to: FormatVersion,
     },
     /// Build the last-value index the table lacks (a time-series table written by another engine).
     BuildLastValueIndex,
@@ -190,7 +190,7 @@ async fn plan(table: &Table, opts: &UpgradeOptions) -> Result<Vec<UpgradeStep>> 
 }
 
 /// Commits new table properties (no new snapshot).
-async fn set_properties(table: &Table, properties: &[(&str, String)]) -> Result<Table> {
+pub(crate) async fn set_properties(table: &Table, properties: &[(&str, String)]) -> Result<Table> {
     let mut base = table.clone();
     loop {
         let previous = Some(metadata_uri(base.location(), base.version()));
@@ -228,13 +228,13 @@ mod tests {
         t.summary_value(summary::TOTAL_RECORDS).and_then(|v| v.parse().ok()).unwrap_or(0)
     }
 
-    /// A table as an older Timelake or another engine leaves it: format 1, no last-value index,
+    /// A table as an older Timelake or another engine leaves it: format 0.1.0, no last-value index,
     /// no head, small files.
     async fn old_table() -> (crate::Lake, Table) {
         let (lake, _store) = faulty_lake();
         let mut o = opts();
         o.properties = HashMap::from([
-            (property::FORMAT_VERSION.into(), "1".into()),
+            (property::FORMAT_VERSION.into(), FormatVersion::UNVERSIONED.to_string()),
             (property::HEAD_FORMAT.into(), NO_HEAD.into()),
         ]);
         let t = lake.create_table("iot.r", &crate::testing::schema(), o).await.unwrap();
@@ -256,7 +256,7 @@ mod tests {
         assert_eq!(
             plan.steps,
             [
-                UpgradeStep::SetFormatVersion { from: 1, to: FORMAT_VERSION },
+                UpgradeStep::SetFormatVersion { from: FormatVersion::UNVERSIONED, to: FORMAT_VERSION },
                 UpgradeStep::BuildLastValueIndex,
                 UpgradeStep::Compact { partitions: 1, files: 2 },
                 UpgradeStep::WriteHead,

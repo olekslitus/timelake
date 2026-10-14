@@ -26,8 +26,10 @@ pub mod bounds;
 pub mod contract;
 #[cfg(feature = "head")]
 pub mod head;
+pub mod version;
 
 pub use contract::{Chunk, Contract, TableOptions, format_duration, parse_duration};
+pub use version::FormatVersion;
 
 /// Table property keys holding the [`Contract`].
 pub mod property {
@@ -63,7 +65,7 @@ pub mod property {
     /// No snapshot expires before this time (milliseconds since the epoch). Set by `timelake upgrade`
     /// so the table can be rolled back to its state before the upgrade.
     pub const KEEP_SNAPSHOTS_UNTIL: &str = "timelake.keep-snapshots-until";
-    /// The table format version (see [`crate::FORMAT_VERSION`]); absent means 1.
+    /// The table format version (see [`crate::FORMAT_VERSION`]); absent means 0.1.0.
     pub const FORMAT_VERSION: &str = "timelake.format-version";
 }
 
@@ -100,13 +102,13 @@ pub mod summary {
     pub const TOTAL_EQUALITY_DELETES: &str = "total-equality-deletes";
 }
 
-/// The newest table format this version of Timelake reads and writes, recorded in each table as
-/// `timelake.format-version`. Any Timelake reads tables of older formats; it refuses to write to a
-/// table of a newer one. `timelake upgrade` brings a table to this format.
+/// The table format this version of Timelake writes, recorded in each table as
+/// `timelake.format-version`. It reads and writes older formats, and newer ones as far as
+/// [`FormatVersion`] allows. `timelake upgrade` brings a table to this format.
 ///
-/// - 1: tables written by Timelake 0.1 and 0.2 (no property).
-/// - 2: the head object (`metadata/timelake-head`), from 0.3.
-pub const FORMAT_VERSION: u32 = 2;
+/// - 0.1.0: tables written by Timelake 0.1 and 0.2 (no property).
+/// - 0.2.0: the head object (`metadata/timelake-head`), from Timelake 0.3 (which wrote it as `2`).
+pub const FORMAT_VERSION: FormatVersion = FormatVersion::new(0, 2, 0);
 
 /// Optional warehouse-level index of table names, for stores that cannot list (plain HTTPS).
 pub const TABLES_INDEX: &str = "timelake-tables.json";

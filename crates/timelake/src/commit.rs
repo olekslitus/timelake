@@ -160,15 +160,7 @@ async fn commit_with(
 /// Refuses to write to a table of a newer format than this Timelake knows: it could break what
 /// the newer format relies on.
 pub(crate) fn writable(table: &Table) -> Result<()> {
-    let format = table.contract().format_version;
-    if format > timelake_format::FORMAT_VERSION {
-        return Err(Error::invalid(format!(
-            "{} has table format {format}, newer than this Timelake writes ({}): upgrade Timelake",
-            table.name(),
-            timelake_format::FORMAT_VERSION
-        )));
-    }
-    Ok(())
+    table.contract().check_writable().map_err(|e| Error::invalid(format!("{}: {e}", table.name())))
 }
 
 /// Idempotency: an append whose batch id is already in the table's history (the current snapshot
@@ -579,19 +571,27 @@ mod tests {
         assert_eq!(store.paths().await, before);
     }
 
-    /// A table of a newer format than this Timelake knows can be read but not written.
+    /// A table of a newer patch format is read and written; of a newer minor (before 1.0), neither.
     #[tokio::test]
-    async fn refuses_to_write_newer_formats() {
+    async fn checks_the_table_format() {
         let (lake, _store) = faulty_lake();
-        let mut o = opts();
-        o.properties.insert(crate::property::FORMAT_VERSION.into(), (timelake_format::FORMAT_VERSION + 1).to_string());
-        let t = lake.create_table("iot.r", &schema(), o).await.unwrap();
-        let err = t.append(&[batch(&[(T0, 1, 1.0)])], no_maintenance()).await.unwrap_err();
-        assert!(matches!(err, Error::Invalid(ref m) if m.contains("upgrade Timelake")), "{err}");
-        assert!(lake.table("iot.r").await.is_ok());
-
         let t = lake.create_table("iot.new", &schema(), opts()).await.unwrap();
         assert_eq!(t.contract().format_version, timelake_format::FORMAT_VERSION);
+
+        let newer = |patch, minor| {
+            let v = timelake_format::FORMAT_VERSION;
+            timelake_format::FormatVersion::new(v.major, v.minor + minor, v.patch + patch).to_string()
+        };
+        let mut o = opts();
+        o.properties.insert(crate::property::FORMAT_VERSION.into(), newer(1, 0));
+        let t = lake.create_table("iot.patch", &schema(), o).await.unwrap();
+        t.append(&[batch(&[(T0, 1, 1.0)])], no_maintenance()).await.unwrap();
+
+        let t = crate::upgrade::set_properties(&t, &[(crate::property::FORMAT_VERSION, newer(0, 1))]).await;
+        let err = t.map(|_| ()).unwrap_err();
+        assert!(matches!(err, Error::Invalid(ref m) if m.contains("upgrade Timelake")), "{err}");
+        let err = lake.table("iot.patch").await.map(|_| ()).unwrap_err();
+        assert!(matches!(err, Error::Invalid(ref m) if m.contains("newer than this Timelake reads")), "{err}");
     }
 
     /// The version hint is only a shortcut for readers: failing to update it doesn't fail the commit.
