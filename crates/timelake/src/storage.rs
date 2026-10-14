@@ -13,8 +13,7 @@ use bytes::Bytes;
 use futures::StreamExt;
 use futures::stream::BoxStream;
 use iceberg::io::{
-    FileIO, FileIOBuilder, FileMetadata, FileRead, FileWrite, InputFile, OutputFile, StorageConfig,
-    StorageFactory,
+    FileIO, FileIOBuilder, FileMetadata, FileRead, FileWrite, InputFile, OutputFile, StorageConfig, StorageFactory,
 };
 use object_store::aws::{AmazonS3Builder, AmazonS3ConfigKey, S3ConditionalPut};
 use object_store::azure::{AzureConfigKey, MicrosoftAzureBuilder};
@@ -96,8 +95,8 @@ impl Storage {
             "gs" => {
                 let mut b = GoogleCloudStorageBuilder::from_env().with_bucket_name(authority);
                 for (k, v) in &options {
-                    let key = GoogleConfigKey::from_str(k)
-                        .map_err(|_| Error::config(format!("unknown GCS option {k:?}")))?;
+                    let key =
+                        GoogleConfigKey::from_str(k).map_err(|_| Error::config(format!("unknown GCS option {k:?}")))?;
                     b = b.with_config(key, v);
                 }
                 Arc::new(b.build()?)
@@ -133,9 +132,8 @@ impl Storage {
 
     /// Store path for an absolute URI under this store.
     pub fn path(&self, uri: &str) -> Result<Path> {
-        let rest = uri
-            .strip_prefix(&self.base)
-            .ok_or_else(|| Error::config(format!("{uri} is not under {}", self.base)))?;
+        let rest =
+            uri.strip_prefix(&self.base).ok_or_else(|| Error::config(format!("{uri} is not under {}", self.base)))?;
         Ok(Path::parse(rest.trim_start_matches('/'))?)
     }
 
@@ -171,9 +169,7 @@ impl Storage {
         let opts = PutOptions { mode: PutMode::Create, ..Default::default() };
         match self.store.put_opts(&self.path(uri)?, PutPayload::from_bytes(bytes), opts).await {
             Ok(_) => Ok(true),
-            Err(object_store::Error::AlreadyExists { .. }) | Err(object_store::Error::Precondition { .. }) => {
-                Ok(false)
-            }
+            Err(object_store::Error::AlreadyExists { .. }) | Err(object_store::Error::Precondition { .. }) => Ok(false),
             Err(e) => Err(e.into()),
         }
     }
@@ -204,11 +200,7 @@ impl Storage {
     pub async fn list_dirs(&self, uri: &str) -> Result<Vec<String>> {
         let prefix = self.path(uri)?;
         let res = self.store.list_with_delimiter(Some(&prefix)).await?;
-        Ok(res
-            .common_prefixes
-            .iter()
-            .filter_map(|p| p.filename().map(str::to_string))
-            .collect())
+        Ok(res.common_prefixes.iter().filter_map(|p| p.filename().map(str::to_string)).collect())
     }
 
     /// All objects under `uri`, as absolute URIs with size and last-modified time.

@@ -91,7 +91,9 @@ impl QuerySpec {
 
 fn bound_cmp(b: &Bound, v: &Json) -> Option<std::cmp::Ordering> {
     match (b, v) {
-        (Bound::Int(x), Json::Number(n)) => n.as_i64().map(|n| x.cmp(&n)).or_else(|| (*x as f64).partial_cmp(&n.as_f64()?)),
+        (Bound::Int(x), Json::Number(n)) => {
+            n.as_i64().map(|n| x.cmp(&n)).or_else(|| (*x as f64).partial_cmp(&n.as_f64()?))
+        }
         (Bound::Float(x), Json::Number(n)) => x.partial_cmp(&n.as_f64()?),
         (Bound::Str(x), Json::String(s)) => Some(x.as_str().cmp(s)),
         _ => None,
@@ -209,9 +211,19 @@ impl OpenFile {
             return Err(Error(format!("need the last {need} bytes for the footer")));
         }
         let meta_bytes = &tail[tail.len() - need as usize..tail.len() - 8];
-        let meta = Arc::new(ParquetMetaDataReader::decode_metadata(meta_bytes).map_err(|e| Error(format!("bad Parquet footer: {e}")))?);
-        let reader_meta = ArrowReaderMetadata::try_new(meta.clone(), ArrowReaderOptions::new()).map_err(|e| Error(e.to_string()))?;
-        Ok(Self { data: SparseFile { len: size, chunks: BTreeMap::new() }, meta, reader_meta, selected: vec![], projection: vec![] })
+        let meta = Arc::new(
+            ParquetMetaDataReader::decode_metadata(meta_bytes)
+                .map_err(|e| Error(format!("bad Parquet footer: {e}")))?,
+        );
+        let reader_meta =
+            ArrowReaderMetadata::try_new(meta.clone(), ArrowReaderOptions::new()).map_err(|e| Error(e.to_string()))?;
+        Ok(Self {
+            data: SparseFile { len: size, chunks: BTreeMap::new() },
+            meta,
+            reader_meta,
+            selected: vec![],
+            projection: vec![],
+        })
     }
 
     pub fn arrow_schema(&self) -> SchemaRef {
@@ -225,7 +237,8 @@ impl OpenFile {
         let needed = spec.needed_columns(&schema);
         let descr = self.meta.file_metadata().schema_descr();
         // Leaf column index for each needed top-level column (Timelake tables are flat).
-        self.projection = needed.iter().filter_map(|c| (0..descr.num_columns()).find(|&i| descr.column(i).name() == c)).collect();
+        self.projection =
+            needed.iter().filter_map(|c| (0..descr.num_columns()).find(|&i| descr.column(i).name() == c)).collect();
         let col_idx = |name: &str| (0..descr.num_columns()).find(|&i| descr.column(i).name() == name);
         self.selected = (0..self.meta.num_row_groups())
             .filter(|&rg| {
@@ -301,7 +314,9 @@ fn int_range(s: Option<&Statistics>) -> (Option<i64>, Option<i64>) {
 
 fn stat_bounds(s: Option<&Statistics>) -> (Option<Bound>, Option<Bound>) {
     match s {
-        Some(Statistics::Int32(v)) => (v.min_opt().map(|x| Bound::Int(*x as i64)), v.max_opt().map(|x| Bound::Int(*x as i64))),
+        Some(Statistics::Int32(v)) => {
+            (v.min_opt().map(|x| Bound::Int(*x as i64)), v.max_opt().map(|x| Bound::Int(*x as i64)))
+        }
         Some(Statistics::Int64(v)) => (v.min_opt().map(|x| Bound::Int(*x)), v.max_opt().map(|x| Bound::Int(*x))),
         Some(Statistics::Double(v)) => (v.min_opt().map(|x| Bound::Float(*x)), v.max_opt().map(|x| Bound::Float(*x))),
         Some(Statistics::ByteArray(v)) => (
@@ -326,7 +341,9 @@ fn eq_any(col: &ArrayRef, values: &[Json]) -> Result<BooleanArray, Error> {
             (DataType::Int32, Json::Number(n)) => {
                 arrow_ord::cmp::eq(col, &Int32Array::new_scalar(n.as_i64().unwrap_or(i64::MIN) as i32))
             }
-            (DataType::Int64, Json::Number(n)) => arrow_ord::cmp::eq(col, &Int64Array::new_scalar(n.as_i64().unwrap_or(i64::MIN))),
+            (DataType::Int64, Json::Number(n)) => {
+                arrow_ord::cmp::eq(col, &Int64Array::new_scalar(n.as_i64().unwrap_or(i64::MIN)))
+            }
             (DataType::Utf8, Json::String(s)) => arrow_ord::cmp::eq(col, &StringArray::new_scalar(s.as_str())),
             (_, v) => {
                 let as_str = arrow_cast::cast(col, &DataType::Utf8).map_err(|e| Error(e.to_string()))?;
@@ -367,10 +384,8 @@ fn filter(batch: &RecordBatch, spec: &QuerySpec) -> Result<RecordBatch, Error> {
         && let Some(col) = batch.column_by_name(tc)
     {
         let t = micros(col)?;
-        let m: BooleanArray = t
-            .iter()
-            .map(|v| v.map(|v| spec.from.is_none_or(|f| v >= f) && spec.to.is_none_or(|e| v < e)))
-            .collect();
+        let m: BooleanArray =
+            t.iter().map(|v| v.map(|v| spec.from.is_none_or(|f| v >= f) && spec.to.is_none_or(|e| v < e))).collect();
         and(m);
     }
     for (c, values) in &spec.series {
@@ -415,7 +430,8 @@ pub fn rows_json(batches: &[RecordBatch], spec: &QuerySpec) -> Result<String, Er
         limited.project(&idx).map_err(|e| Error(e.to_string()))?
     };
     let mut buf = vec![];
-    let mut w = arrow_json::WriterBuilder::new().with_explicit_nulls(true).build::<_, arrow_json::writer::JsonArray>(&mut buf);
+    let mut w =
+        arrow_json::WriterBuilder::new().with_explicit_nulls(true).build::<_, arrow_json::writer::JsonArray>(&mut buf);
     w.write(&projected).map_err(|e| Error(e.to_string()))?;
     w.finish().map_err(|e| Error(e.to_string()))?;
     drop(w);
@@ -489,7 +505,8 @@ impl Aggregator {
             let bucket = (ts - origin).div_euclid(every) * every + origin;
             let key_vals: Vec<Json> = by.iter().map(|c| json_at(c, i)).collect();
             let key = (bucket, key_vals.iter().map(|v| v.to_string()).collect());
-            let entry = self.groups.entry(key).or_insert_with(|| (key_vals, vec![Acc::default(); self.spec.aggs.len()]));
+            let entry =
+                self.groups.entry(key).or_insert_with(|| (key_vals, vec![Acc::default(); self.spec.aggs.len()]));
             for (j, a) in self.spec.aggs.iter().enumerate() {
                 let acc = &mut entry.1[j];
                 if a.column == "*" {

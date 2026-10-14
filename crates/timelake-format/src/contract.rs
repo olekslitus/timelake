@@ -73,7 +73,12 @@ impl Chunk {
             Self::Day => value as i64 * 24 * H,
             Self::Month => {
                 let (y, m) = (1970 + value.div_euclid(12), value.rem_euclid(12) as u32 + 1);
-                chrono::NaiveDate::from_ymd_opt(y, m, 1).unwrap().and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp_micros()
+                chrono::NaiveDate::from_ymd_opt(y, m, 1)
+                    .unwrap()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap()
+                    .and_utc()
+                    .timestamp_micros()
             }
         }
     }
@@ -144,7 +149,10 @@ impl Contract {
             target_file_size: parse_u(P_TARGET_FILE_SIZE, 256 << 20)?,
             row_group_rows: parse_u(P_ROW_GROUP_ROWS, 1024 * 1024)? as usize,
             auto_maintain: get(P_AUTO_MAINTAIN).map(|s| s != "false").unwrap_or(true),
-            snapshot_retention: get(P_SNAPSHOT_RETENTION).map(parse_duration).transpose()?.unwrap_or(Duration::from_secs(3600)),
+            snapshot_retention: get(P_SNAPSHOT_RETENTION)
+                .map(parse_duration)
+                .transpose()?
+                .unwrap_or(Duration::from_secs(3600)),
             min_snapshots: parse_u(P_MIN_SNAPSHOTS, 5)? as usize,
             max_snapshots: parse_u(P_MAX_SNAPSHOTS, 100)? as usize,
             compact_min_files: parse_u(P_COMPACT_MIN_FILES, 8)? as usize,

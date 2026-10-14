@@ -108,7 +108,16 @@ impl Table {
             summary.insert(S_BATCH_ID.into(), id.clone());
         }
         let (table, info) = if files.is_empty() {
-            (self.clone(), CommitInfo { snapshot_id: 0, version: self.version, attempts: 0, duration: Duration::ZERO, duplicate: false })
+            (
+                self.clone(),
+                CommitInfo {
+                    snapshot_id: 0,
+                    version: self.version,
+                    attempts: 0,
+                    duration: Duration::ZERO,
+                    duplicate: false,
+                },
+            )
         } else {
             let res = commit(self, Change::Append { files: files.clone(), latest }, summary).await;
             if matches!(&res, Ok((_, i)) if i.duplicate) || res.is_err() {
@@ -271,7 +280,8 @@ async fn compact(table: &Table, opts: &MaintainOptions, report: &mut MaintainRep
 
 async fn read_file(table: &Table, df: &DataFile) -> Result<Vec<RecordBatch>> {
     let storage = table.lake.storage();
-    let reader = ParquetObjectReader::new(storage.object_store(), storage.path(df.file_path())?).with_file_size(df.file_size_in_bytes());
+    let reader = ParquetObjectReader::new(storage.object_store(), storage.path(df.file_path())?)
+        .with_file_size(df.file_size_in_bytes());
     let stream = ParquetRecordBatchStreamBuilder::new(reader).await?.with_batch_size(64 * 1024).build()?;
     let schema = table.schema();
     let batches: Vec<RecordBatch> = stream.try_collect().await?;
@@ -296,7 +306,10 @@ fn sort_dedup(table: &Table, batches: &[RecordBatch]) -> Result<RecordBatch> {
             })
         })
         .collect::<Result<Vec<_>>>()?;
-    keys.push(SortColumn { values: std::sync::Arc::new(UInt32Array::from_iter_values(0..all.num_rows() as u32)), options: None });
+    keys.push(SortColumn {
+        values: std::sync::Arc::new(UInt32Array::from_iter_values(0..all.num_rows() as u32)),
+        options: None,
+    });
     let sorted = take_record_batch(&all, &lexsort_to_indices(&keys, None)?)?;
     if !table.contract.dedup {
         return Ok(sorted);
@@ -333,10 +346,13 @@ async fn expire(table: &Table, report: &mut MaintainReport) -> Result<Table> {
         if expired.is_empty() {
             break;
         }
-        let new_meta = TableMetadataBuilder::new_from_metadata((**meta).clone(), Some(crate::lake::metadata_uri(&table.location, table.version)))
-            .remove_snapshots(&expired)
-            .build()?
-            .metadata;
+        let new_meta = TableMetadataBuilder::new_from_metadata(
+            (**meta).clone(),
+            Some(crate::lake::metadata_uri(&table.location, table.version)),
+        )
+        .remove_snapshots(&expired)
+        .build()?
+        .metadata;
         let Some(t) = publish(&table, new_meta).await? else {
             table = table.refresh().await?;
             continue;
@@ -347,7 +363,9 @@ async fn expire(table: &Table, report: &mut MaintainReport) -> Result<Table> {
 
         // Files reachable from the expired snapshots but not from the remaining ones.
         let kept = reachable(&table, &table.metadata.snapshots().cloned().collect::<Vec<_>>()).await?;
-        let gone = reachable(&old, &snaps.iter().filter(|s| expired.contains(&s.snapshot_id())).cloned().collect::<Vec<_>>()).await?;
+        let gone =
+            reachable(&old, &snaps.iter().filter(|s| expired.contains(&s.snapshot_id())).cloned().collect::<Vec<_>>())
+                .await?;
         let doomed: Vec<String> = gone.difference(&kept).cloned().collect();
         report.objects_deleted += table.lake.storage().delete_many(doomed).await?;
         report.objects_deleted += prune_metadata_files(&table).await?;
@@ -376,7 +394,9 @@ async fn reachable(table: &Table, snapshots: &[iceberg::spec::SnapshotRef]) -> R
                 continue;
             }
             // Entries marked deleted only record a removal; the file itself is unreferenced.
-            for e in table.lake.manifest(mf).await?.iter().filter(|e| e.status != iceberg::spec::ManifestStatus::Deleted) {
+            for e in
+                table.lake.manifest(mf).await?.iter().filter(|e| e.status != iceberg::spec::ManifestStatus::Deleted)
+            {
                 out.insert(e.data_file.file_path().to_string());
             }
         }
@@ -390,7 +410,8 @@ async fn prune_metadata_files(table: &Table) -> Result<usize> {
     let mut doomed = vec![];
     for (uri, _, _) in table.lake.storage().list(&format!("{}/metadata", table.location)).await? {
         let name = uri.rsplit('/').next().unwrap_or_default();
-        if let Some(v) = name.strip_prefix('v').and_then(|s| s.strip_suffix(".metadata.json")).and_then(|s| s.parse::<u64>().ok())
+        if let Some(v) =
+            name.strip_prefix('v').and_then(|s| s.strip_suffix(".metadata.json")).and_then(|s| s.parse::<u64>().ok())
             && v < keep_from
         {
             doomed.push(uri);

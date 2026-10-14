@@ -154,7 +154,9 @@ enum Format {
 }
 
 fn parse_kv(s: &str) -> Result<(String, String), String> {
-    s.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())).ok_or_else(|| format!("expected key=value, got {s:?}"))
+    s.split_once('=')
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .ok_or_else(|| format!("expected key=value, got {s:?}"))
 }
 
 #[tokio::main]
@@ -226,12 +228,25 @@ async fn run(cli: Cli) -> Result<()> {
             };
             for name in names {
                 let t = lake.table(&name).await?;
-                let opts = MaintainOptions { compact: !no_compact, retention: !no_retention, expire: !no_expire, ..Default::default() };
+                let opts = MaintainOptions {
+                    compact: !no_compact,
+                    retention: !no_retention,
+                    expire: !no_expire,
+                    ..Default::default()
+                };
                 let (t, r) = t.maintain(opts).await?;
                 println!(
                     "{name}: compacted {} partitions ({} → {} files, {} rows, {} duplicates removed), dropped {} partitions, expired {} snapshots, deleted {} objects in {:.2}s → v{}",
-                    r.partitions_compacted, r.files_rewritten, r.files_written, r.rows_rewritten, r.duplicates_removed,
-                    r.partitions_dropped, r.snapshots_expired, r.objects_deleted, r.duration.as_secs_f64(), t.version
+                    r.partitions_compacted,
+                    r.files_rewritten,
+                    r.files_written,
+                    r.rows_rewritten,
+                    r.duplicates_removed,
+                    r.partitions_dropped,
+                    r.snapshots_expired,
+                    r.objects_deleted,
+                    r.duration.as_secs_f64(),
+                    t.version
                 );
             }
         }
@@ -250,7 +265,9 @@ async fn run(cli: Cli) -> Result<()> {
             let t = lake.table(&table).await?;
             println!("INSTALL iceberg; LOAD iceberg;");
             if t.location.starts_with("s3://") {
-                println!("-- CREATE SECRET (TYPE s3, KEY_ID '…', SECRET '…', REGION '…' [, ENDPOINT '…', URL_STYLE 'path', USE_SSL false]);");
+                println!(
+                    "-- CREATE SECRET (TYPE s3, KEY_ID '…', SECRET '…', REGION '…' [, ENDPOINT '…', URL_STYLE 'path', USE_SSL false]);"
+                );
             }
             println!("SELECT * FROM iceberg_scan('{}');", t.location);
             if let Some(lvi) = t.last_value_index() {
@@ -323,7 +340,11 @@ async fn read_file(ctx: &SessionContext, path: &str) -> Result<DataFrame> {
             o = o.delimiter(b'\t').file_extension(".tsv");
         }
         if lower.ends_with(".gz") {
-            o = o.file_compression_type(timelake::datafusion::datasource::file_format::file_compression_type::FileCompressionType::GZIP).file_extension(".csv.gz");
+            o = o
+                .file_compression_type(
+                    timelake::datafusion::datasource::file_format::file_compression_type::FileCompressionType::GZIP,
+                )
+                .file_extension(".csv.gz");
         }
         Ok(ctx.read_csv(path, o).await?)
     } else if lower.ends_with(".parquet") || std::path::Path::new(path).is_dir() {
@@ -374,12 +395,21 @@ async fn load_files(mut table: timelake::Table, files: &[String], load: &LoadArg
         (table, rows, commits) = (t, rows + r.rows, commits + 1);
     }
     let secs = t0.elapsed().as_secs_f64();
-    println!("{}: appended {rows} rows in {commits} commits, {secs:.2}s ({:.0} rows/s) → v{}", table.name, rows as f64 / secs, table.version);
+    println!(
+        "{}: appended {rows} rows in {commits} commits, {secs:.2}s ({:.0} rows/s) → v{}",
+        table.name,
+        rows as f64 / secs,
+        table.version
+    );
     Ok(())
 }
 
 fn report(r: &timelake::AppendResult, n: usize, t0: Instant) {
-    let m = r.maintenance.as_ref().map(|m| format!(", compacted {} partitions", m.partitions_compacted)).unwrap_or_default();
+    let m = r
+        .maintenance
+        .as_ref()
+        .map(|m| format!(", compacted {} partitions", m.partitions_compacted))
+        .unwrap_or_default();
     let dup = if r.commit.duplicate { " (duplicate batch, skipped)" } else { "" };
     eprintln!(
         "  commit {n}: {} rows, {} files, {:.1} MB, commit {:.0} ms{m}{dup} [{:.1}s]",
@@ -460,11 +490,17 @@ async fn info(lake: &Lake, name: &str) -> Result<()> {
         println!("time       {tc} (chunk {})", c.chunk.map(|c| c.as_str()).unwrap_or("-"));
         println!("series key {}", if c.series_key.is_empty() { "-".into() } else { c.series_key.join(", ") });
         println!("dedup      {}", c.dedup);
-        println!("retention  {}", c.retention.map(|d| format!("{}d", d.as_secs() / 86_400)).unwrap_or("forever".into()));
+        println!(
+            "retention  {}",
+            c.retention.map(|d| format!("{}d", d.as_secs() / 86_400)).unwrap_or("forever".into())
+        );
     } else {
         println!("kind       plain table (no time column)");
     }
-    println!("schema     {}", t.schema().fields().iter().map(|f| format!("{} {}", f.name(), f.data_type())).collect::<Vec<_>>().join(", "));
+    println!(
+        "schema     {}",
+        t.schema().fields().iter().map(|f| format!("{} {}", f.name(), f.data_type())).collect::<Vec<_>>().join(", ")
+    );
     let rows: u64 = files.iter().map(|f| f.data_file.record_count()).sum();
     let bytes: u64 = files.iter().map(|f| f.data_file.file_size_in_bytes()).sum();
     println!("data       {rows} rows in {} files, {:.1} MB", files.len(), bytes as f64 / 1e6);

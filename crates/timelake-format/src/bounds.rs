@@ -35,7 +35,10 @@ mod tests {
     #[test]
     fn decodes_primitives() {
         assert_eq!(decode("int", &7i32.to_le_bytes()), Some(Bound::Int(7)));
-        assert_eq!(decode("timestamptz", &1_700_000_000_000_000i64.to_le_bytes()), Some(Bound::Int(1_700_000_000_000_000)));
+        assert_eq!(
+            decode("timestamptz", &1_700_000_000_000_000i64.to_le_bytes()),
+            Some(Bound::Int(1_700_000_000_000_000))
+        );
         assert_eq!(decode("double", &1.5f64.to_le_bytes()), Some(Bound::Float(1.5)));
         assert_eq!(decode("string", b"truck_1"), Some(Bound::Str("truck_1".into())));
         assert_eq!(decode("decimal(10,2)", &[0]), None);

@@ -29,6 +29,7 @@ use datafusion::datasource::physical_plan::parquet::metadata::DFParquetMetadata;
 use datafusion::datasource::physical_plan::{FileGroup, FileScanConfigBuilder, ParquetSource};
 use datafusion::datasource::provider_as_source;
 use datafusion::error::{DataFusionError, Result as DfResult};
+use datafusion::execution::SessionStateBuilder;
 use datafusion::execution::object_store::ObjectStoreUrl;
 use datafusion::logical_expr::expr::{Sort, WindowFunction};
 use datafusion::logical_expr::{
@@ -41,7 +42,6 @@ use datafusion::physical_optimizer::pruning::{PruningPredicate, PruningStatistic
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_plan::empty::EmptyExec;
 use datafusion::prelude::{DataFrame, SessionConfig, SessionContext};
-use datafusion::execution::SessionStateBuilder;
 use iceberg::spec::{Datum, PrimitiveLiteral};
 
 use crate::error::Result;
@@ -70,7 +70,11 @@ impl Session {
         // flight. Raise the default (one per core) unless the caller changed it.
         let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8);
         let remote = !matches!(lake.storage().base_url().split(':').next(), Some("file") | Some("memory"));
-        let config = if remote && config.target_partitions() == cores { config.with_target_partitions((cores * 4).max(32)) } else { config };
+        let config = if remote && config.target_partitions() == cores {
+            config.with_target_partitions((cores * 4).max(32))
+        } else {
+            config
+        };
         let config = config
             .with_information_schema(true)
             .with_default_catalog_and_schema("timelake", schema)
@@ -133,7 +137,11 @@ impl Session {
     /// The newest row of every series (from the last-value index when available).
     pub async fn latest(&self, table: &str) -> Result<DataFrame> {
         let t = self.lake.table(table).await?;
-        let tc = t.contract.time_column.clone().ok_or_else(|| crate::Error::invalid(format!("{table} has no time column")))?;
+        let tc = t
+            .contract
+            .time_column
+            .clone()
+            .ok_or_else(|| crate::Error::invalid(format!("{table} has no time column")))?;
         if t.last_value_index().is_some() {
             return Ok(self.ctx.read_table(Arc::new(TimelakeProvider::latest(t)))?);
         }
@@ -477,7 +485,11 @@ impl PruningStatistics for FileStats {
     fn row_counts(&self) -> Option<ArrayRef> {
         Some(self.rows.clone())
     }
-    fn contained(&self, _column: &Column, _values: &std::collections::HashSet<ScalarValue>) -> Option<arrow::array::BooleanArray> {
+    fn contained(
+        &self,
+        _column: &Column,
+        _values: &std::collections::HashSet<ScalarValue>,
+    ) -> Option<arrow::array::BooleanArray> {
         None
     }
 }
@@ -512,7 +524,8 @@ fn indexed_table(scan: &TableScan) -> Option<Table> {
     let provider = datafusion::datasource::source_as_provider(&scan.source).ok()?;
     let any: &dyn Any = provider.as_ref();
     let p = any.downcast_ref::<TimelakeProvider>()?;
-    (p.kind == Kind::Data && p.table.last_value_index().is_some() && p.table.contract.time_column.is_some()).then(|| p.table.clone())
+    (p.kind == Kind::Data && p.table.last_value_index().is_some() && p.table.contract.time_column.is_some())
+        .then(|| p.table.clone())
 }
 
 fn latest_scan(scan: &TableScan, table: Table) -> LogicalPlan {
@@ -529,7 +542,9 @@ fn is_one(e: &Expr) -> bool {
 /// Skips pass-through projections (plain column references).
 fn through_projections(plan: &LogicalPlan) -> &LogicalPlan {
     match plan {
-        LogicalPlan::Projection(p) if p.expr.iter().all(|e| matches!(e, Expr::Column(_))) => through_projections(&p.input),
+        LogicalPlan::Projection(p) if p.expr.iter().all(|e| matches!(e, Expr::Column(_))) => {
+            through_projections(&p.input)
+        }
         other => other,
     }
 }
@@ -586,7 +601,14 @@ fn rewrite_row_number(node: &LogicalPlan) -> DfResult<Option<LogicalPlan>> {
     if !matches!(fun, WindowFunctionDefinition::WindowUDF(u) if u.name() == "row_number") {
         return Ok(None);
     }
-    let names = |es: &[Expr]| es.iter().map(|e| match e { Expr::Column(c) => Some(c.name.clone()), _ => None }).collect::<Option<Vec<_>>>();
+    let names = |es: &[Expr]| {
+        es.iter()
+            .map(|e| match e {
+                Expr::Column(c) => Some(c.name.clone()),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()
+    };
     if names(&params.partition_by) != Some(table.contract.series_key.clone()) {
         return Ok(None);
     }
@@ -609,14 +631,21 @@ fn rewrite_row_number(node: &LogicalPlan) -> DfResult<Option<LogicalPlan>> {
     let mut exprs: Vec<Expr> = scan.projected_schema.columns().into_iter().map(Expr::Column).collect();
     let (q, f) = window.schema.qualified_field(window.schema.fields().len() - 1);
     exprs.push(Expr::Literal(ScalarValue::UInt64(Some(1)), None).alias_qualified(q.cloned(), f.name()));
-    let proj = LogicalPlan::Projection(Projection::try_new_with_schema(exprs, Arc::new(new_scan), window.schema.clone())?);
+    let proj =
+        LogicalPlan::Projection(Projection::try_new_with_schema(exprs, Arc::new(new_scan), window.schema.clone())?);
     // Rebuild the projections between filter and window on top, keeping the filter (always true).
     let mut rebuilt = proj;
     for p in projections.iter().rev() {
-        rebuilt = LogicalPlan::Projection(Projection::try_new_with_schema(p.expr.clone(), Arc::new(rebuilt), p.schema.clone())?);
+        rebuilt = LogicalPlan::Projection(Projection::try_new_with_schema(
+            p.expr.clone(),
+            Arc::new(rebuilt),
+            p.schema.clone(),
+        )?);
     }
     match conjunction(others) {
-        Some(pred) => Ok(Some(LogicalPlan::Filter(datafusion::logical_expr::Filter::try_new(pred, Arc::new(rebuilt))?))),
+        Some(pred) => {
+            Ok(Some(LogicalPlan::Filter(datafusion::logical_expr::Filter::try_new(pred, Arc::new(rebuilt))?)))
+        }
         None => Ok(Some(rebuilt)),
     }
 }

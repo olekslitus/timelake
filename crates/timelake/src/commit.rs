@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 use arrow::array::RecordBatch;
 use bytes::Bytes;
 use iceberg::spec::{
-    DataFile, ManifestFile, ManifestStatus, ManifestWriterBuilder, ManifestListWriter, Operation, Snapshot,
-    Summary, TableMetadataBuilder, UNASSIGNED_SEQUENCE_NUMBER,
+    DataFile, ManifestFile, ManifestListWriter, ManifestStatus, ManifestWriterBuilder, Operation, Snapshot, Summary,
+    TableMetadataBuilder, UNASSIGNED_SEQUENCE_NUMBER,
 };
 
 use crate::error::{Error, Result};
@@ -45,7 +45,11 @@ pub struct CommitInfo {
     pub duplicate: bool,
 }
 
-pub(crate) async fn commit(table: &Table, change: Change, mut props: HashMap<String, String>) -> Result<(Table, CommitInfo)> {
+pub(crate) async fn commit(
+    table: &Table,
+    change: Change,
+    mut props: HashMap<String, String>,
+) -> Result<(Table, CommitInfo)> {
     let t0 = Instant::now();
     let mut base = table.clone();
     for attempt in 1..=MAX_ATTEMPTS {
@@ -69,7 +73,13 @@ pub(crate) async fn commit(table: &Table, change: Change, mut props: HashMap<Str
         let mut written = vec![];
         match try_commit(&base, &change, &mut props, &mut written).await {
             Ok(Some((t, snapshot_id))) => {
-                let info = CommitInfo { snapshot_id, version: t.version, attempts: attempt, duration: t0.elapsed(), duplicate: false };
+                let info = CommitInfo {
+                    snapshot_id,
+                    version: t.version,
+                    attempts: attempt,
+                    duration: t0.elapsed(),
+                    duplicate: false,
+                };
                 return Ok((t, info));
             }
             Ok(None) => {
@@ -104,7 +114,8 @@ async fn try_commit(
     let spec = (**meta.default_partition_spec()).clone();
     let manifest_uri = |kind: &str| format!("{}/metadata/{}-{kind}-m.avro", base.location, uuid::Uuid::new_v4());
     let new_writer = |uri: &str| {
-        ManifestWriterBuilder::new(storage.output_file(uri), Some(snapshot_id), schema.clone(), spec.clone()).build_v2_data()
+        ManifestWriterBuilder::new(storage.output_file(uri), Some(snapshot_id), schema.clone(), spec.clone())
+            .build_v2_data()
     };
 
     let current = base.manifests().await?;
@@ -117,7 +128,8 @@ async fn try_commit(
 
     // Manifests and the last-value index don't depend on each other: write them concurrently.
     let base_props = base.current_snapshot().map(|s| s.summary().additional_properties.clone()).unwrap_or_default();
-    let manifests = write_manifests(base, &current, added, &removed_paths, snapshot_id, seq, &manifest_uri, &new_writer);
+    let manifests =
+        write_manifests(base, &current, added, &removed_paths, snapshot_id, seq, &manifest_uri, &new_writer);
     let index = last_value_index(base, change, snapshot_id, &base_props);
     let (m, (lvi_uri, new_lvi)) = futures::try_join!(manifests, index)?;
     let ManifestsOut { new_manifests, carried, entries, found, written: w } = m;
@@ -191,10 +203,11 @@ async fn try_commit(
         .with_summary(Summary { operation, additional_properties: summary })
         .with_schema_id(meta.current_schema_id())
         .build();
-    let new_meta = TableMetadataBuilder::new_from_metadata((**meta).clone(), Some(metadata_uri(&base.location, base.version)))
-        .set_branch_snapshot(snapshot, "main")?
-        .build()?
-        .metadata;
+    let new_meta =
+        TableMetadataBuilder::new_from_metadata((**meta).clone(), Some(metadata_uri(&base.location, base.version)))
+            .set_branch_snapshot(snapshot, "main")?
+            .build()?
+            .metadata;
     let Some(t) = publish(base, new_meta).await? else { return Ok(None) };
     // Prime the caches with what this commit wrote, so the next commit and inline maintenance
     // don't read it back from object storage.
@@ -294,11 +307,17 @@ async fn write_manifests(
             let uri = manifest_uri("merged");
             let mut w = new_writer(&uri);
             for e in &kept {
-                w.add_existing_file(e.data_file.clone(), e.snapshot_id, e.sequence_number, Some(e.file_sequence_number))?;
+                w.add_existing_file(
+                    e.data_file.clone(),
+                    e.snapshot_id,
+                    e.sequence_number,
+                    Some(e.file_sequence_number),
+                )?;
             }
             out.written.push(uri.clone());
             out.new_manifests.push(w.write_manifest_file().await?);
-            out.entries.push((uri, kept.into_iter().map(|e| LiveEntry { status: ManifestStatus::Existing, ..e }).collect()));
+            out.entries
+                .push((uri, kept.into_iter().map(|e| LiveEntry { status: ManifestStatus::Existing, ..e }).collect()));
         }
         if !deleted.is_empty() {
             let uri = manifest_uri("deleted");
@@ -308,7 +327,10 @@ async fn write_manifests(
             }
             out.written.push(uri.clone());
             out.new_manifests.push(w.write_manifest_file().await?);
-            out.entries.push((uri, deleted.into_iter().map(|e| LiveEntry { status: ManifestStatus::Deleted, snapshot_id, ..e }).collect()));
+            out.entries.push((
+                uri,
+                deleted.into_iter().map(|e| LiveEntry { status: ManifestStatus::Deleted, snapshot_id, ..e }).collect(),
+            ));
         }
     }
     Ok(out)
@@ -342,7 +364,8 @@ async fn last_value_index(
         Change::Delete { lvi_cutoff, .. } => match (base.last_value_index(), lvi_cutoff, &base.contract.time_column) {
             (Some(uri), Some(cutoff), Some(tc)) => {
                 let idx = lvi::read(base, &uri).await?;
-                let ts = arrow::compute::cast(idx.column(idx.schema().index_of(tc)?), &arrow::datatypes::DataType::Int64)?;
+                let ts =
+                    arrow::compute::cast(idx.column(idx.schema().index_of(tc)?), &arrow::datatypes::DataType::Int64)?;
                 let keep = arrow::compute::kernels::cmp::gt_eq(&ts, &arrow::array::Int64Array::new_scalar(*cutoff))?;
                 let idx = arrow::compute::filter_record_batch(&idx, &keep)?;
                 let new = lvi::write(base, snapshot_id, &idx).await?;

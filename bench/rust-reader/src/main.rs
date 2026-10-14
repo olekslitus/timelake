@@ -73,14 +73,14 @@ fn tables(a: &Args) -> Vec<(String, String)> {
         "tpch" => TPCH
             .iter()
             .map(|t| {
-                let loc = if vortex { format!("{base}/tpch/vortex/{t}.vortex") } else { format!("{base}/tpch/{t}.parquet") };
+                let loc =
+                    if vortex { format!("{base}/tpch/vortex/{t}.vortex") } else { format!("{base}/tpch/{t}.parquet") };
                 (t.to_string(), loc)
             })
             .collect(),
-        "tsbs_iot" | "iot_point" => TSBS
-            .iter()
-            .map(|t| (t.to_string(), format!("{base}/tsbs/{tsbs_dir}/{t}.{}", a.format)))
-            .collect(),
+        "tsbs_iot" | "iot_point" => {
+            TSBS.iter().map(|t| (t.to_string(), format!("{base}/tsbs/{tsbs_dir}/{t}.{}", a.format))).collect()
+        }
         "clickbench" => {
             let dir = if vortex { format!("{base}/clickbench/vortex/") } else { format!("{base}/clickbench/") };
             vec![("hits_raw".to_string(), dir)]
@@ -120,7 +120,8 @@ async fn setup(a: &Args) -> Result<SessionContext> {
 
     let stored_as = if a.format == "vortex" { "VORTEX" } else { "PARQUET" };
     for (name, loc) in tables(a) {
-        let options = if a.suite == "clickbench" && a.format == "parquet" { " OPTIONS ('binary_as_string' 'true')" } else { "" };
+        let options =
+            if a.suite == "clickbench" && a.format == "parquet" { " OPTIONS ('binary_as_string' 'true')" } else { "" };
         ctx.sql(&format!("CREATE EXTERNAL TABLE {name} STORED AS {stored_as} LOCATION '{loc}'{options}"))
             .await?
             .collect()

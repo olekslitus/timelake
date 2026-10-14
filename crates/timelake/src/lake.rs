@@ -17,13 +17,12 @@ use std::sync::{Arc, Mutex};
 
 use arrow::datatypes::{DataType, Field, Schema as ArrowSchema, SchemaRef, TimeUnit};
 use bytes::Bytes;
+use iceberg::TableCreation;
 use iceberg::arrow::{arrow_schema_to_schema_auto_assign_ids, schema_to_arrow_schema};
 use iceberg::spec::{
-    DataFile, FormatVersion, Manifest, ManifestFile, ManifestList, ManifestStatus, NullOrder,
-    SortDirection, SortField, SortOrder, TableMetadata, TableMetadataBuilder, Transform,
-    UnboundPartitionSpec,
+    DataFile, FormatVersion, Manifest, ManifestFile, ManifestList, ManifestStatus, NullOrder, SortDirection, SortField,
+    SortOrder, TableMetadata, TableMetadataBuilder, Transform, UnboundPartitionSpec,
 };
-use iceberg::TableCreation;
 
 use crate::contract::*;
 use crate::error::{Error, Result};
@@ -324,7 +323,9 @@ impl Lake {
             return Ok(v.clone());
         }
         let bytes = self.inner.storage.read(uri).await?;
-        let list = Arc::new(ManifestList::parse_with_version(&bytes, version)?.consume_entries().into_iter().collect::<Vec<_>>());
+        let list = Arc::new(
+            ManifestList::parse_with_version(&bytes, version)?.consume_entries().into_iter().collect::<Vec<_>>(),
+        );
         let mut cache = self.inner.manifest_lists.lock().unwrap();
         if cache.len() > 1024 {
             cache.clear();
@@ -416,7 +417,13 @@ pub struct Table {
 }
 
 impl Table {
-    pub(crate) fn new(lake: Lake, name: TableName, location: String, version: u64, metadata: TableMetadata) -> Result<Self> {
+    pub(crate) fn new(
+        lake: Lake,
+        name: TableName,
+        location: String,
+        version: u64,
+        metadata: TableMetadata,
+    ) -> Result<Self> {
         let contract = Contract::from_properties(metadata.properties())?;
         let arrow_schema = Arc::new(schema_to_arrow_schema(metadata.current_schema())?);
         Ok(Self { lake, name, location, version, metadata: Arc::new(metadata), contract, arrow_schema })
@@ -456,10 +463,7 @@ impl Table {
     pub async fn files(&self) -> Result<Vec<LiveEntry>> {
         let manifests = self.manifests().await?;
         let loaded = futures::future::try_join_all(manifests.iter().map(|m| self.lake.manifest(m))).await?;
-        Ok(loaded
-            .iter()
-            .flat_map(|es| es.iter().filter(|e| e.status != ManifestStatus::Deleted).cloned())
-            .collect())
+        Ok(loaded.iter().flat_map(|es| es.iter().filter(|e| e.status != ManifestStatus::Deleted).cloned()).collect())
     }
 }
 
@@ -470,12 +474,16 @@ pub(crate) fn normalize_schema(schema: &ArrowSchema, time_column: Option<&str>) 
             DataType::Int8 | DataType::Int16 | DataType::UInt8 | DataType::UInt16 => DataType::Int32,
             DataType::UInt32 => DataType::Int64,
             DataType::Float16 => DataType::Float32,
-            DataType::Timestamp(_, tz) => DataType::Timestamp(TimeUnit::Microsecond, tz.as_ref().map(|_| "+00:00".into())),
+            DataType::Timestamp(_, tz) => {
+                DataType::Timestamp(TimeUnit::Microsecond, tz.as_ref().map(|_| "+00:00".into()))
+            }
             DataType::Date64 => DataType::Date32,
             DataType::Dictionary(_, v) => norm(v)?,
             DataType::LargeUtf8 | DataType::Utf8View => DataType::Utf8,
             DataType::LargeBinary | DataType::BinaryView => DataType::Binary,
-            DataType::UInt64 => return Err(Error::invalid("UInt64 columns are not supported by Iceberg; cast to Int64")),
+            DataType::UInt64 => {
+                return Err(Error::invalid("UInt64 columns are not supported by Iceberg; cast to Int64"));
+            }
             other => other.clone(),
         })
     }

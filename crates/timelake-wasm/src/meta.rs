@@ -209,7 +209,8 @@ pub fn parse_manifest_list(bytes: &[u8]) -> Result<Vec<ManifestRef>, Error> {
         .iter()
         .map(|r| {
             Ok(ManifestRef {
-                path: as_str(field(r, "manifest_path")).ok_or_else(|| Error("manifest list entry without path".into()))?,
+                path: as_str(field(r, "manifest_path"))
+                    .ok_or_else(|| Error("manifest list entry without path".into()))?,
                 length: as_i64(field(r, "manifest_length")).unwrap_or(0),
                 content: as_i64(field(r, "content")).unwrap_or(0),
                 sequence_number: as_i64(field(r, "sequence_number")).unwrap_or(0),

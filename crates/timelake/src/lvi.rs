@@ -24,7 +24,11 @@ use crate::write::align_batch;
 
 /// Newest row per series among `batches`. On equal times, the later row wins (later input
 /// position), matching dedup's "latest write wins".
-pub fn latest_per_series(schema: &SchemaRef, contract: &Contract, batches: &[RecordBatch]) -> Result<Option<RecordBatch>> {
+pub fn latest_per_series(
+    schema: &SchemaRef,
+    contract: &Contract,
+    batches: &[RecordBatch],
+) -> Result<Option<RecordBatch>> {
     let Some(tc) = &contract.time_column else { return Ok(None) };
     if batches.iter().all(|b| b.num_rows() == 0) {
         return Ok(None);
@@ -43,7 +47,11 @@ pub fn latest_per_series(schema: &SchemaRef, contract: &Contract, batches: &[Rec
     let last: Vec<u32> = if contract.series_key.is_empty() {
         vec![(n - 1) as u32]
     } else {
-        let key_cols: Vec<_> = contract.series_key.iter().map(|c| Ok(sorted.column(schema.index_of(c)?).clone())).collect::<Result<_>>()?;
+        let key_cols: Vec<_> = contract
+            .series_key
+            .iter()
+            .map(|c| Ok(sorted.column(schema.index_of(c)?).clone()))
+            .collect::<Result<_>>()?;
         let ranges = arrow::compute::partition(&key_cols)?.ranges();
         ranges.iter().map(|r| (r.end - 1) as u32).collect()
     };
@@ -57,7 +65,8 @@ pub(crate) async fn read(table: &Table, uri: &str) -> Result<RecordBatch> {
     let bytes = table.lake.storage().read(uri).await?;
     let schema = table.schema();
     let reader = ParquetRecordBatchReaderBuilder::try_new(bytes)?.build()?;
-    let batches = reader.map(|b| b.map_err(Into::into).and_then(|b| align_batch(&b, &schema))).collect::<Result<Vec<_>>>()?;
+    let batches =
+        reader.map(|b| b.map_err(Into::into).and_then(|b| align_batch(&b, &schema))).collect::<Result<Vec<_>>>()?;
     let batch = concat_batches(&schema, &batches)?;
     table.lake.cache_lvi(uri.to_string(), batch.clone());
     Ok(batch)

@@ -106,7 +106,10 @@ async fn append_query_latest_compact_expire() {
     // File pruning on time: only the files of the last day remain in the plan.
     let plan = explain(&s, "SELECT avg(value) FROM iot.readings WHERE time >= TIMESTAMP '2026-01-03 00:00:00'").await;
     assert!(plan.contains("file_groups={4 groups"), "{plan}");
-    assert_eq!(scalar_i64(&s, "SELECT count(*) FROM iot.readings WHERE time >= TIMESTAMP '2026-01-03 00:00:00'").await, 14_400);
+    assert_eq!(
+        scalar_i64(&s, "SELECT count(*) FROM iot.readings WHERE time >= TIMESTAMP '2026-01-03 00:00:00'").await,
+        14_400
+    );
     assert_eq!(
         scalar_i64(&s, "SELECT count(*) FROM (SELECT time_bucket(INTERVAL '1 hour', time) h, avg(value) FROM iot.readings GROUP BY 1)").await,
         72
@@ -118,7 +121,10 @@ async fn append_query_latest_compact_expire() {
     let rn_sql = "SELECT device, value FROM (SELECT device, value, ROW_NUMBER() OVER (PARTITION BY device ORDER BY time DESC) AS rn FROM iot.readings) WHERE rn = 1 ORDER BY device";
     let plan = explain(&s, rn_sql).await;
     assert!(plan.contains("TimelakeProvider(iot.readings") || !plan.contains("WindowAggr"), "{plan}");
-    assert!(!plan.contains("BoundedWindowAggExec") && !plan.contains("WindowAggExec"), "row_number not rewritten:\n{plan}");
+    assert!(
+        !plan.contains("BoundedWindowAggExec") && !plan.contains("WindowAggExec"),
+        "row_number not rewritten:\n{plan}"
+    );
     let rows = s.sql(rn_sql).await.unwrap().collect().await.unwrap();
     let v = rows[0].column(1).as_any().downcast_ref::<Float64Array>().unwrap();
     assert_eq!(v.value(3), 3000.0 + 359.0); // device 3, last point of the last append
@@ -186,7 +192,8 @@ async fn auto_maintain_retention_idempotency_concurrency() {
     let now = chrono::Utc::now().timestamp_micros() / DAY * DAY;
     let mut compactions = 0;
     for i in 0..9 {
-        let (nt, r) = t.append(&[batch(now + i * 60_000_000, 1, 1, 5, |_, _| i as f64)], Default::default()).await.unwrap();
+        let (nt, r) =
+            t.append(&[batch(now + i * 60_000_000, 1, 1, 5, |_, _| i as f64)], Default::default()).await.unwrap();
         compactions += r.maintenance.is_some() as usize;
         t = nt;
     }
@@ -208,7 +215,9 @@ async fn auto_maintain_retention_idempotency_concurrency() {
             let base = base.clone();
             tokio::spawn(async move {
                 let b = batch(now + DAY / 3 + i * 1000, 1, 1, 5, |_, _| 1.0);
-                base.append(&[b], AppendOptions { maintain: Some(false), ..Default::default() }).await.map(|(_, r)| r.commit.attempts)
+                base.append(&[b], AppendOptions { maintain: Some(false), ..Default::default() })
+                    .await
+                    .map(|(_, r)| r.commit.attempts)
             })
         })
         .collect();
@@ -233,9 +242,14 @@ async fn auto_maintain_retention_idempotency_concurrency() {
 async fn dimension_tables_and_schema_alignment() {
     let dir = tmp();
     let lake = Lake::open(dir.path(), HashMap::new()).unwrap();
-    let tags = Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, true), Field::new("name", DataType::Utf8, true)]));
+    let tags =
+        Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, true), Field::new("name", DataType::Utf8, true)]));
     let t = lake.create_table("iot.tags", &tags, TableOptions::default()).await.unwrap();
-    let b = RecordBatch::try_new(tags.clone(), vec![Arc::new(Int32Array::from(vec![1, 2])), Arc::new(StringArray::from(vec!["a", "b"]))]).unwrap();
+    let b = RecordBatch::try_new(
+        tags.clone(),
+        vec![Arc::new(Int32Array::from(vec![1, 2])), Arc::new(StringArray::from(vec!["a", "b"]))],
+    )
+    .unwrap();
     t.append(&[b], Default::default()).await.unwrap();
 
     // Columns in another order and a missing nullable column are fine; unknown columns are not.
@@ -246,13 +260,19 @@ async fn dimension_tables_and_schema_alignment() {
     ]));
     let b = RecordBatch::try_new(
         partial,
-        vec![Arc::new(Int64Array::from(vec![1, 2])), Arc::new(arrow::array::TimestampMillisecondArray::from(vec![T0 / 1000, T0 / 1000]))],
+        vec![
+            Arc::new(Int64Array::from(vec![1, 2])),
+            Arc::new(arrow::array::TimestampMillisecondArray::from(vec![T0 / 1000, T0 / 1000])),
+        ],
     )
     .unwrap();
     r.append(&[b], Default::default()).await.unwrap();
 
     let s = Session::new(lake.clone());
-    assert_eq!(scalar_i64(&s, "SELECT count(*) FROM iot.r r JOIN iot.tags t ON r.device = t.id WHERE t.name = 'b'").await, 1);
+    assert_eq!(
+        scalar_i64(&s, "SELECT count(*) FROM iot.r r JOIN iot.tags t ON r.device = t.id WHERE t.name = 'b'").await,
+        1
+    );
     let mut names: Vec<_> = lake.all_tables().await.unwrap().into_iter().map(|t| t.to_string()).collect();
     names.sort();
     assert_eq!(names, vec!["iot.r", "iot.tags"]);

@@ -7,8 +7,8 @@ use arrow::array::{Array, ArrayRef, RecordBatch, TimestampMicrosecondArray, UInt
 use arrow::compute::{SortColumn, SortOptions, cast, concat_batches, lexsort_to_indices, take_record_batch};
 use arrow::datatypes::{DataType, SchemaRef};
 use iceberg::spec::{DataContentType, DataFile, Literal, PrimitiveLiteral, Struct};
-use iceberg::writer::file_writer::{FileWriter, FileWriterBuilder, ParquetWriterBuilder};
 use iceberg::writer::CurrentFileStatus;
+use iceberg::writer::file_writer::{FileWriter, FileWriterBuilder, ParquetWriterBuilder};
 use parquet::basic::{Compression, Encoding, ZstdLevel};
 use parquet::file::metadata::SortingColumn;
 use parquet::file::properties::{EnabledStatistics, WriterProperties};
@@ -33,17 +33,14 @@ pub fn align_batch(batch: &RecordBatch, schema: &SchemaRef) -> Result<RecordBatc
         .map(|f| match input.index_of(f.name()) {
             Ok(i) => {
                 let col = batch.column(i);
-                if col.data_type() == f.data_type() {
-                    Ok(col.clone())
-                } else {
-                    Ok(cast(col, f.data_type())?)
-                }
+                if col.data_type() == f.data_type() { Ok(col.clone()) } else { Ok(cast(col, f.data_type())?) }
             }
             Err(_) if f.is_nullable() => Ok(new_null_array(f.data_type(), batch.num_rows())),
             Err(_) => Err(Error::invalid(format!("required column {:?} is missing", f.name()))),
         })
         .collect::<Result<Vec<ArrayRef>>>()?;
-    RecordBatch::try_new(schema.clone(), columns).map_err(|e| Error::invalid(format!("batch does not fit the table schema: {e}")))
+    RecordBatch::try_new(schema.clone(), columns)
+        .map_err(|e| Error::invalid(format!("batch does not fit the table schema: {e}")))
 }
 
 /// Sort options for the series key and time columns.
@@ -73,7 +70,8 @@ fn partition_values(batch: &RecordBatch, contract: &Contract) -> Result<Option<V
 /// Concatenates, sorts by `(partition, series…, time)`, and splits by partition.
 pub(crate) fn sort_and_split(table: &Table, batches: &[RecordBatch]) -> Result<Vec<(Option<i32>, RecordBatch)>> {
     let schema = table.schema();
-    let aligned = batches.iter().filter(|b| b.num_rows() > 0).map(|b| align_batch(b, &schema)).collect::<Result<Vec<_>>>()?;
+    let aligned =
+        batches.iter().filter(|b| b.num_rows() > 0).map(|b| align_batch(b, &schema)).collect::<Result<Vec<_>>>()?;
     if aligned.is_empty() {
         return Ok(vec![]);
     }
@@ -88,7 +86,10 @@ pub(crate) fn sort_and_split(table: &Table, batches: &[RecordBatch]) -> Result<V
         all
     } else {
         // Stable tiebreak on input order, so later rows of the same (series, time) stay later.
-        keys.push(SortColumn { values: Arc::new(UInt32Array::from_iter_values(0..all.num_rows() as u32)), options: None });
+        keys.push(SortColumn {
+            values: Arc::new(UInt32Array::from_iter_values(0..all.num_rows() as u32)),
+            options: None,
+        });
         take_record_batch(&all, &lexsort_to_indices(&keys, None)?)?
     };
     let Some(parts) = parts else { return Ok(vec![(None, sorted)]) };
@@ -119,10 +120,14 @@ pub(crate) fn writer_properties(table: &Table) -> Result<WriterProperties> {
         let path = ColumnPath::from(f.name().as_str());
         match f.data_type() {
             DataType::Float32 | DataType::Float64 => {
-                b = b.set_column_dictionary_enabled(path.clone(), false).set_column_encoding(path, Encoding::BYTE_STREAM_SPLIT);
+                b = b
+                    .set_column_dictionary_enabled(path.clone(), false)
+                    .set_column_encoding(path, Encoding::BYTE_STREAM_SPLIT);
             }
             DataType::Timestamp(_, _) if Some(f.name()) == table.contract.time_column.as_ref() => {
-                b = b.set_column_dictionary_enabled(path.clone(), false).set_column_encoding(path, Encoding::DELTA_BINARY_PACKED);
+                b = b
+                    .set_column_dictionary_enabled(path.clone(), false)
+                    .set_column_encoding(path, Encoding::DELTA_BINARY_PACKED);
             }
             _ => {}
         }
@@ -164,7 +169,9 @@ pub(crate) async fn write_partition(
     let storage = table.lake.storage();
     let builder = ParquetWriterBuilder::new(props.clone(), table.metadata.current_schema().clone());
     let dir = match (partition, &table.contract.time_column, table.contract.chunk) {
-        (Some(v), Some(tc), Some(chunk)) => format!("{}/data/{tc}_{}={}", table.location, chunk.as_str(), chunk.label(v)),
+        (Some(v), Some(tc), Some(chunk)) => {
+            format!("{}/data/{tc}_{}={}", table.location, chunk.as_str(), chunk.label(v))
+        }
         _ => format!("{}/data", table.location),
     };
     let spec_id = table.metadata.default_partition_spec().spec_id();

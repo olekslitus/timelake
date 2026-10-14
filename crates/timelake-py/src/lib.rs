@@ -3,13 +3,13 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
+use arrow_array::ffi_stream::ArrowArrayStreamReader;
 use arrow_pyarrow::{FromPyArrow, IntoPyArrow};
 use pyo3::exceptions::{PyFileExistsError, PyKeyError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use timelake::arrow::array::{RecordBatch, RecordBatchIterator, RecordBatchReader};
 use timelake::arrow::datatypes::Schema;
-use arrow_array::ffi_stream::ArrowArrayStreamReader;
 use timelake::datafusion::prelude::SessionConfig;
 use timelake::{AppendOptions, Chunk, MaintainOptions, Session, TableOptions};
 
@@ -43,11 +43,14 @@ fn batches(data: &Bound<'_, PyAny>) -> PyResult<Vec<RecordBatch>> {
         return Ok(vec![b]);
     }
     let reader = ArrowArrayStreamReader::from_pyarrow_bound(data)?;
-    reader.collect::<Result<Vec<_>, _>>().map_err(|e: timelake::arrow::error::ArrowError| PyValueError::new_err(e.to_string()))
+    reader
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e: timelake::arrow::error::ArrowError| PyValueError::new_err(e.to_string()))
 }
 
 fn to_pyarrow_table(py: Python<'_>, schema: Arc<Schema>, batches: Vec<RecordBatch>) -> PyResult<Py<PyAny>> {
-    let reader: Box<dyn RecordBatchReader + Send> = Box::new(RecordBatchIterator::new(batches.into_iter().map(Ok), schema));
+    let reader: Box<dyn RecordBatchReader + Send> =
+        Box::new(RecordBatchIterator::new(batches.into_iter().map(Ok), schema));
     let r = reader.into_pyarrow(py)?;
     Ok(r.call_method0("read_all")?.unbind())
 }
@@ -217,7 +220,13 @@ impl Table {
     /// Appends Arrow data (pyarrow Table/RecordBatch/reader, polars DataFrame, …) as one commit.
     /// `batch_id` makes the append idempotent. Returns commit statistics.
     #[pyo3(signature = (data, batch_id=None, maintain=None))]
-    fn append<'py>(&self, py: Python<'py>, data: &Bound<'py, PyAny>, batch_id: Option<String>, maintain: Option<bool>) -> PyResult<Bound<'py, PyDict>> {
+    fn append<'py>(
+        &self,
+        py: Python<'py>,
+        data: &Bound<'py, PyAny>,
+        batch_id: Option<String>,
+        maintain: Option<bool>,
+    ) -> PyResult<Bound<'py, PyDict>> {
         let batches = batches(data)?;
         let t = self.get();
         let opts = AppendOptions { batch_id, maintain, ..Default::default() };
@@ -239,7 +248,13 @@ impl Table {
 
     /// Compaction (sort + dedup), retention, snapshot expiry. Returns what was done.
     #[pyo3(signature = (compact=true, retention=true, expire=true))]
-    fn maintain<'py>(&self, py: Python<'py>, compact: bool, retention: bool, expire: bool) -> PyResult<Bound<'py, PyDict>> {
+    fn maintain<'py>(
+        &self,
+        py: Python<'py>,
+        compact: bool,
+        retention: bool,
+        expire: bool,
+    ) -> PyResult<Bound<'py, PyDict>> {
         let t = self.get();
         let opts = MaintainOptions { compact, retention, expire, ..Default::default() };
         let (t, r) = run(py, async move { t.maintain(opts).await })?;
