@@ -18,11 +18,11 @@
     }
   },
   "files": [
-    "dist"
+    "src"
   ],
   "scripts": {
     "build:wasm": "bash scripts/build-wasm.sh",
-    "build": "tsc -p tsconfig.json && cp src/wasm/*.js src/wasm/*.d.ts dist/wasm/",
+    "check:wasm": "bash scripts/build-wasm.sh --check",
     "test": "bun test",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
@@ -30,12 +30,9 @@
     "zod": "^4"
   },
   "devDependencies": {
-    "@types/bun": "latest",
+    "@types/bun": "1.4.3",
+    "binaryen": "132.0.0",
     "typescript": "^5",
-    "wasm-opt": "^1.4.0",
     "zod": "^4"
-  },
-  "trustedDependencies": [
-    "wasm-opt"
-  ]
+  }
 }
