@@ -2,11 +2,14 @@
 /* eslint-disable */
 
 /**
- * One Parquet file being read through fetched byte ranges.
+ * One Parquet file, read through the byte ranges the host fetches.
  */
 export class ParquetFile {
     free(): void;
     [Symbol.dispose](): void;
+    /**
+     * Adds fetched bytes starting at offset `start`.
+     */
     addRange(start: number, bytes: Uint8Array): void;
     /**
      * Bytes needed from the end of the file for the footer, given at least its last 8 bytes.
@@ -17,13 +20,15 @@ export class ParquetFile {
      */
     constructor(size: number, tail: Uint8Array);
     /**
-     * Selects row groups and columns for `query`; returns `[[start, end), …]` byte ranges to fetch.
+     * Selects row groups and columns for `query`; returns the byte ranges to fetch,
+     * `[[start, end), …]`.
      */
     plan(query: any): any;
 }
 
 /**
- * Accumulates results across files: rows, or time-bucket aggregates when `query.bucket` is set.
+ * Collects a query's result across files: rows, time-bucket aggregates when `query.bucket` is
+ * set, or the newest row per series when `query.latestBy` is.
  */
 export class Query {
     free(): void;
@@ -34,7 +39,7 @@ export class Query {
     finish(): string;
     constructor(query: any);
     /**
-     * Decodes the file's planned ranges and adds matching rows to the result.
+     * Decodes the file's planned ranges and adds its matching rows to the result.
      */
     push(file: ParquetFile): void;
 }
@@ -46,9 +51,12 @@ export class Table {
     free(): void;
     [Symbol.dispose](): void;
     /**
-     * Parses the manifest list; returns the paths of the data manifests to fetch.
+     * Parses the manifest list; returns the paths of the data manifests to fetch and add.
      */
     addManifestList(bytes: Uint8Array): string[];
+    /**
+     * Adds the live data files of one data manifest.
+     */
     addManifest(bytes: Uint8Array): void;
     /**
      * All live data files: `[{path, size, records, partition}]`.
@@ -60,13 +68,22 @@ export class Table {
     info(): any;
     constructor(metadata_json: string);
     /**
-     * Data files that may contain rows matching `query`: `[{path, size, records}]`.
+     * Data files that may contain rows matching `query`, in the same shape as `files()`.
      */
     planFiles(query: any): any;
+    /**
+     * The current snapshot's last-value index (newest row per series), if it has one.
+     */
     readonly lastValueIndex: string | undefined;
+    /**
+     * The current snapshot's manifest list, if the table has a snapshot.
+     */
     readonly manifestList: string | undefined;
 }
 
+/**
+ * Version of this crate.
+ */
 export function version(): string;
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
@@ -76,7 +93,7 @@ export interface InitOutput {
     readonly __wbg_parquetfile_free: (a: number, b: number) => void;
     readonly __wbg_query_free: (a: number, b: number) => void;
     readonly __wbg_table_free: (a: number, b: number) => void;
-    readonly parquetfile_addRange: (a: number, b: number, c: number, d: number) => void;
+    readonly parquetfile_addRange: (a: number, b: number, c: number, d: number) => [number, number];
     readonly parquetfile_footerLength: (a: number, b: number) => [number, number, number];
     readonly parquetfile_new: (a: number, b: number, c: number) => [number, number, number];
     readonly parquetfile_plan: (a: number, b: any) => [number, number, number];

@@ -1,7 +1,7 @@
 /* @ts-self-types="./timelake_wasm.d.ts" */
 
 /**
- * One Parquet file being read through fetched byte ranges.
+ * One Parquet file, read through the byte ranges the host fetches.
  */
 export class ParquetFile {
     __destroy_into_raw() {
@@ -15,13 +15,17 @@ export class ParquetFile {
         wasm.__wbg_parquetfile_free(ptr, 0);
     }
     /**
+     * Adds fetched bytes starting at offset `start`.
      * @param {number} start
      * @param {Uint8Array} bytes
      */
     addRange(start, bytes) {
         const ptr0 = passArray8ToWasm0(bytes, wasm.__wbindgen_malloc);
         const len0 = WASM_VECTOR_LEN;
-        wasm.parquetfile_addRange(this.__wbg_ptr, start, ptr0, len0);
+        const ret = wasm.parquetfile_addRange(this.__wbg_ptr, start, ptr0, len0);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
     }
     /**
      * Bytes needed from the end of the file for the footer, given at least its last 8 bytes.
@@ -54,7 +58,8 @@ export class ParquetFile {
         return this;
     }
     /**
-     * Selects row groups and columns for `query`; returns `[[start, end), …]` byte ranges to fetch.
+     * Selects row groups and columns for `query`; returns the byte ranges to fetch,
+     * `[[start, end), …]`.
      * @param {any} query
      * @returns {any}
      */
@@ -69,7 +74,8 @@ export class ParquetFile {
 if (Symbol.dispose) ParquetFile.prototype[Symbol.dispose] = ParquetFile.prototype.free;
 
 /**
- * Accumulates results across files: rows, or time-bucket aggregates when `query.bucket` is set.
+ * Collects a query's result across files: rows, time-bucket aggregates when `query.bucket` is
+ * set, or the newest row per series when `query.latestBy` is.
  */
 export class Query {
     __destroy_into_raw() {
@@ -117,7 +123,7 @@ export class Query {
         return this;
     }
     /**
-     * Decodes the file's planned ranges and adds matching rows to the result.
+     * Decodes the file's planned ranges and adds its matching rows to the result.
      * @param {ParquetFile} file
      */
     push(file) {
@@ -145,7 +151,7 @@ export class Table {
         wasm.__wbg_table_free(ptr, 0);
     }
     /**
-     * Parses the manifest list; returns the paths of the data manifests to fetch.
+     * Parses the manifest list; returns the paths of the data manifests to fetch and add.
      * @param {Uint8Array} bytes
      * @returns {string[]}
      */
@@ -161,6 +167,7 @@ export class Table {
         return v2;
     }
     /**
+     * Adds the live data files of one data manifest.
      * @param {Uint8Array} bytes
      */
     addManifest(bytes) {
@@ -194,6 +201,7 @@ export class Table {
         return takeFromExternrefTable0(ret[0]);
     }
     /**
+     * The current snapshot's last-value index (newest row per series), if it has one.
      * @returns {string | undefined}
      */
     get lastValueIndex() {
@@ -206,6 +214,7 @@ export class Table {
         return v1;
     }
     /**
+     * The current snapshot's manifest list, if the table has a snapshot.
      * @returns {string | undefined}
      */
     get manifestList() {
@@ -232,7 +241,7 @@ export class Table {
         return this;
     }
     /**
-     * Data files that may contain rows matching `query`: `[{path, size, records}]`.
+     * Data files that may contain rows matching `query`, in the same shape as `files()`.
      * @param {any} query
      * @returns {any}
      */
@@ -247,6 +256,7 @@ export class Table {
 if (Symbol.dispose) Table.prototype[Symbol.dispose] = Table.prototype.free;
 
 /**
+ * Version of this crate.
  * @returns {string}
  */
 export function version() {

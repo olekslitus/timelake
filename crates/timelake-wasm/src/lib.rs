@@ -12,40 +12,84 @@
 //!    first if the tail might be short), `file.plan(query)` returns byte ranges, fetch them,
 //!    `file.addRange(start, bytes)`, then `query.push(file)`.
 //! 4. `query.finish()` returns the result as a JSON string.
+//!
+//! The same steps are available to Rust through [`TableMeta`], [`plan_files`], [`FileReader`] and
+//! [`Collector`].
 
+mod aggregate;
+mod error;
+mod file;
+mod filter;
+mod keys;
+mod latest;
 mod meta;
+mod output;
+mod prune;
 mod query;
+mod spec;
 
+use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
-pub use meta::{DataFile, TableMeta};
-pub use query::{Aggregator, QuerySpec};
-
-/// Error message carried to JavaScript as an `Error`.
-#[derive(Debug)]
-pub struct Error(pub String);
+pub use aggregate::bucket_start;
+pub use error::{Error, Result};
+pub use file::{COALESCE_GAP, FileReader, coalesce, footer_len};
+pub use meta::{
+    DataFile, Field, MAX_SNAPSHOTS, ManifestContent, ManifestRef, SnapshotInfo, TableMeta, parse_manifest,
+    parse_manifest_list,
+};
+pub use prune::plan_files;
+pub use query::Collector;
+pub use spec::{AggInput, AggOp, AggSpec, BucketSpec, QuerySpec};
 
 impl From<Error> for JsValue {
-    fn from(e: Error) -> JsValue {
-        js_sys::Error::new(&e.0).into()
+    fn from(e: Error) -> Self {
+        js_sys::Error::new(&e.to_string()).into()
     }
 }
 
-fn spec_from(js: JsValue) -> Result<QuerySpec, JsValue> {
-    serde_wasm_bindgen::from_value(js).map_err(|e| Error(format!("bad query: {e}")).into())
+fn parse_query(query: &JsValue) -> Result<QuerySpec> {
+    serde_wasm_bindgen::from_value(query.clone()).map_err(|e| Error::invalid(format!("bad query: {e}")))
 }
 
-fn to_js<T: serde::Serialize>(v: &T) -> Result<JsValue, JsValue> {
-    v.serialize(&serde_wasm_bindgen::Serializer::json_compatible()).map_err(|e| Error(e.to_string()).into())
+fn to_js<T: Serialize + ?Sized>(value: &T) -> Result<JsValue, JsValue> {
+    Ok(value.serialize(&serde_wasm_bindgen::Serializer::json_compatible())?)
 }
 
+/// A byte offset or size passed as a JavaScript number.
+fn byte_offset(x: f64) -> Result<u64> {
+    const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+    if !(0.0..=MAX_SAFE_INTEGER).contains(&x) || x.fract() != 0.0 {
+        return Err(Error::invalid(format!("not a byte offset: {x}")));
+    }
+    #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a safe integer, checked above")]
+    Ok(x as u64)
+}
+
+/// Version of this crate.
 #[wasm_bindgen]
 pub fn version() -> String {
     env!("CARGO_PKG_VERSION").into()
 }
 
+/// A data file as JavaScript sees it.
+#[derive(Serialize)]
+struct FileView<'a> {
+    path: &'a str,
+    size: u64,
+    records: u64,
+    partition: Option<i64>,
+}
+
+impl<'a> From<&'a DataFile> for FileView<'a> {
+    fn from(f: &'a DataFile) -> Self {
+        Self { path: &f.path, size: f.size, records: f.records, partition: f.partition }
+    }
+}
+
 /// A table at one version: its metadata plus the data files of the current snapshot.
 #[wasm_bindgen]
+#[derive(Debug)]
 pub struct Table {
     meta: TableMeta,
     files: Vec<DataFile>,
@@ -55,7 +99,7 @@ pub struct Table {
 impl Table {
     #[wasm_bindgen(constructor)]
     pub fn new(metadata_json: &str) -> Result<Table, JsValue> {
-        Ok(Table { meta: meta::parse_table_metadata(metadata_json)?, files: vec![] })
+        Ok(Table { meta: TableMeta::parse(metadata_json)?, files: vec![] })
     }
 
     /// Contract, schema and snapshot summary (a plain object).
@@ -63,54 +107,50 @@ impl Table {
         to_js(&self.meta)
     }
 
+    /// The current snapshot's manifest list, if the table has a snapshot.
     #[wasm_bindgen(getter, js_name = manifestList)]
     pub fn manifest_list(&self) -> Option<String> {
         self.meta.manifest_list.clone()
     }
 
+    /// The current snapshot's last-value index (newest row per series), if it has one.
     #[wasm_bindgen(getter, js_name = lastValueIndex)]
     pub fn last_value_index(&self) -> Option<String> {
         self.meta.last_value_index.clone()
     }
 
-    /// Parses the manifest list; returns the paths of the data manifests to fetch.
+    /// Parses the manifest list; returns the paths of the data manifests to fetch and add.
     #[wasm_bindgen(js_name = addManifestList)]
-    pub fn add_manifest_list(&mut self, bytes: &[u8]) -> Result<Vec<String>, JsValue> {
-        Ok(meta::parse_manifest_list(bytes)?.into_iter().filter(|m| m.content == 0).map(|m| m.path).collect())
+    pub fn add_manifest_list(&self, bytes: &[u8]) -> Result<Vec<String>, JsValue> {
+        let manifests = parse_manifest_list(bytes)?;
+        Ok(manifests.into_iter().filter(|m| m.content == ManifestContent::Data).map(|m| m.path).collect())
     }
 
+    /// Adds the live data files of one data manifest.
     #[wasm_bindgen(js_name = addManifest)]
     pub fn add_manifest(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
-        self.files.extend(meta::parse_manifest(bytes, &self.meta.schema)?);
+        self.files.extend(parse_manifest(bytes, &self.meta.schema)?);
         Ok(())
     }
 
     /// All live data files: `[{path, size, records, partition}]`.
     pub fn files(&self) -> Result<JsValue, JsValue> {
-        let v: Vec<serde_json::Value> = self
-            .files
-            .iter()
-            .map(|f| serde_json::json!({ "path": f.path, "size": f.size, "records": f.records, "partition": f.partition }))
-            .collect();
-        to_js(&v)
+        to_js(&self.files.iter().map(FileView::from).collect::<Vec<_>>())
     }
 
-    /// Data files that may contain rows matching `query`: `[{path, size, records}]`.
+    /// Data files that may contain rows matching `query`, in the same shape as `files()`.
     #[wasm_bindgen(js_name = planFiles)]
-    pub fn plan_files(&self, query: JsValue) -> Result<JsValue, JsValue> {
-        let spec = spec_from(query)?;
-        let v: Vec<serde_json::Value> = query::plan_files(&self.files, &spec)
-            .into_iter()
-            .map(|f| serde_json::json!({ "path": f.path, "size": f.size, "records": f.records }))
-            .collect();
-        to_js(&v)
+    pub fn plan_files(&self, query: &JsValue) -> Result<JsValue, JsValue> {
+        let files = prune::plan_files(&self.files, &parse_query(query)?);
+        to_js(&files.into_iter().map(FileView::from).collect::<Vec<_>>())
     }
 }
 
-/// One Parquet file being read through fetched byte ranges.
+/// One Parquet file, read through the byte ranges the host fetches.
 #[wasm_bindgen]
+#[derive(Debug)]
 pub struct ParquetFile {
-    inner: query::OpenFile,
+    reader: FileReader,
 }
 
 #[wasm_bindgen]
@@ -118,67 +158,52 @@ impl ParquetFile {
     /// Bytes needed from the end of the file for the footer, given at least its last 8 bytes.
     #[wasm_bindgen(js_name = footerLength)]
     pub fn footer_length(tail: &[u8]) -> Result<f64, JsValue> {
-        Ok(query::footer_len(tail)? as f64)
+        Ok(footer_len(tail)? as f64)
     }
 
     /// `tail` must contain the whole footer (the last `footerLength` bytes or more).
     #[wasm_bindgen(constructor)]
-    pub fn new(size: f64, tail: Vec<u8>) -> Result<ParquetFile, JsValue> {
-        Ok(ParquetFile { inner: query::OpenFile::new(size as u64, tail)? })
+    pub fn new(size: f64, tail: &[u8]) -> Result<ParquetFile, JsValue> {
+        Ok(ParquetFile { reader: FileReader::new(byte_offset(size)?, tail)? })
     }
 
-    /// Selects row groups and columns for `query`; returns `[[start, end), …]` byte ranges to fetch.
-    pub fn plan(&mut self, query: JsValue) -> Result<JsValue, JsValue> {
-        let spec = spec_from(query)?;
-        let ranges: Vec<[f64; 2]> = self.inner.plan(&spec).into_iter().map(|(s, e)| [s as f64, e as f64]).collect();
-        to_js(&ranges)
+    /// Selects row groups and columns for `query`; returns the byte ranges to fetch,
+    /// `[[start, end), …]`.
+    pub fn plan(&mut self, query: &JsValue) -> Result<JsValue, JsValue> {
+        let ranges = self.reader.plan(&parse_query(query)?);
+        to_js(&ranges.into_iter().map(|r| [r.start as f64, r.end as f64]).collect::<Vec<_>>())
     }
 
+    /// Adds fetched bytes starting at offset `start`.
     #[wasm_bindgen(js_name = addRange)]
-    pub fn add_range(&mut self, start: f64, bytes: Vec<u8>) {
-        self.inner.add_range(start as u64, bytes);
+    pub fn add_range(&mut self, start: f64, bytes: Vec<u8>) -> Result<(), JsValue> {
+        self.reader.add_range(byte_offset(start)?, bytes);
+        Ok(())
     }
 }
 
-/// Accumulates results across files: rows, or time-bucket aggregates when `query.bucket` is set.
+/// Collects a query's result across files: rows, time-bucket aggregates when `query.bucket` is
+/// set, or the newest row per series when `query.latestBy` is.
 #[wasm_bindgen]
+#[derive(Debug)]
 pub struct Query {
-    spec: QuerySpec,
-    rows: Vec<arrow_array::RecordBatch>,
-    agg: Option<Aggregator>,
+    collector: Collector,
 }
 
 #[wasm_bindgen]
 impl Query {
     #[wasm_bindgen(constructor)]
-    pub fn new(query: JsValue) -> Result<Query, JsValue> {
-        let spec = spec_from(query)?;
-        let agg = match &spec.bucket {
-            Some(b) => {
-                let tc = spec.time_column.clone().ok_or_else(|| Error("bucket queries need a time column".into()))?;
-                Some(Aggregator::new(b.clone(), tc)?)
-            }
-            None => None,
-        };
-        Ok(Query { spec, rows: vec![], agg })
+    pub fn new(query: &JsValue) -> Result<Query, JsValue> {
+        Ok(Query { collector: Collector::new(parse_query(query)?)? })
     }
 
-    /// Decodes the file's planned ranges and adds matching rows to the result.
+    /// Decodes the file's planned ranges and adds its matching rows to the result.
     pub fn push(&mut self, file: &ParquetFile) -> Result<(), JsValue> {
-        for b in file.inner.read(&self.spec)? {
-            match &mut self.agg {
-                Some(a) => a.push(&b)?,
-                None => self.rows.push(b),
-            }
-        }
-        Ok(())
+        Ok(self.collector.push(&file.reader)?)
     }
 
     /// The result as a JSON array string.
     pub fn finish(&self) -> Result<String, JsValue> {
-        match &self.agg {
-            Some(a) => Ok(a.finish()),
-            None => Ok(query::rows_json(&self.rows, &self.spec)?),
-        }
+        Ok(self.collector.finish()?)
     }
 }
