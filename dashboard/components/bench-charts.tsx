@@ -1,31 +1,40 @@
 "use client"
 
 import { ChevronDown } from "lucide-react"
-import { Bar, BarChart, Cell, LabelList, XAxis, YAxis } from "recharts"
+import { Bar, BarChart, Cell, LabelList, XAxis, YAxis, type TooltipContentProps } from "recharts"
 
+import { ChartTooltipCard } from "@/components/chart-tooltip-card"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { ChartContainer, ChartTooltip, type ChartConfig } from "@/components/ui/chart"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-
-type Bar = { engine: string; label: string; timelake: boolean; first: number; best: number; requests: number | null }
-type QueryRow = { query: string; times: Record<string, number | null>; rows: Record<string, number | null> }
-type Panel = { suite: string; state: string; bars: Bar[]; queries: number; perQuery: QueryRow[] }
+import type { BenchBar, BenchPanel } from "@/lib/benchmarks"
+import { formatNumber, formatSeconds } from "@/lib/format"
 
 const config = { first: { label: "First run", color: "var(--chart-2)" } } satisfies ChartConfig
 
-export function fmtSeconds(s: number) {
-  return s < 0.1 ? `${(s * 1000).toFixed(0)} ms` : `${s.toFixed(2)} s`
+/** Bars within 5% of the fastest get no "× slower" tag. */
+const SAME_AS_FASTEST = 1.05
+
+function BarTooltip({ active, payload }: TooltipContentProps) {
+  const bar = active ? (payload[0]?.payload as BenchBar | undefined) : undefined
+  if (!bar) return null
+  const rows: [string, string][] = [
+    ["first run", formatSeconds(bar.first)],
+    ["best repeat", formatSeconds(bar.best)],
+  ]
+  if (bar.requests != null) rows.push(["requests", formatNumber(Math.round(bar.requests))])
+  return <ChartTooltipCard title={bar.label} rows={rows} />
 }
 
-function PanelChart({ panel }: { panel: Panel }) {
+function PanelChart({ panel }: { panel: BenchPanel }) {
   const fastest = Math.min(...panel.bars.map((b) => b.first))
   const data = [...panel.bars]
     .sort((a, b) => a.first - b.first)
     .map((b) => ({
       ...b,
-      tag: `${fmtSeconds(b.first)}${b.first > fastest * 1.05 ? ` · ${(b.first / fastest).toFixed(1)}×` : ""}`,
+      tag: `${formatSeconds(b.first)}${b.first > fastest * SAME_AS_FASTEST ? ` · ${(b.first / fastest).toFixed(1)}×` : ""}`,
     }))
   const engines = panel.bars.map((b) => b.engine)
   return (
@@ -39,30 +48,7 @@ function PanelChart({ panel }: { panel: Panel }) {
           <BarChart data={data} layout="vertical" margin={{ left: 0, right: 120 }} barCategoryGap={6}>
             <XAxis type="number" hide domain={[0, "dataMax"]} />
             <YAxis type="category" dataKey="label" width={150} tickLine={false} axisLine={false} />
-            <ChartTooltip
-              cursor={false}
-              content={({ active, payload }) => {
-                const b = active && (payload?.[0]?.payload as Bar | undefined)
-                if (!b) return null
-                return (
-                  <div className="rounded-lg border bg-background px-3 py-2 text-xs shadow-sm">
-                    <div className="mb-1 font-medium">{b.label}</div>
-                    <div className="grid grid-cols-[auto_auto] gap-x-4 font-mono tabular-nums">
-                      <span className="text-muted-foreground">first run</span>
-                      <span className="text-right">{fmtSeconds(b.first)}</span>
-                      <span className="text-muted-foreground">best repeat</span>
-                      <span className="text-right">{fmtSeconds(b.best)}</span>
-                      {b.requests != null && (
-                        <>
-                          <span className="text-muted-foreground">requests</span>
-                          <span className="text-right">{Math.round(b.requests).toLocaleString("en-US")}</span>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                )
-              }}
-            />
+            <ChartTooltip cursor={false} content={BarTooltip} />
             <Bar dataKey="first" radius={[0, 4, 4, 0]} isAnimationActive={false}>
               {data.map((d) => (
                 <Cell key={d.engine} fill={d.timelake ? "var(--chart-1)" : "var(--chart-2)"} />
@@ -92,11 +78,14 @@ function PanelChart({ panel }: { panel: Panel }) {
                 {panel.perQuery.map((q) => (
                   <TableRow key={q.query}>
                     <TableCell className="font-mono">{q.query}</TableCell>
-                    {engines.map((e) => (
-                      <TableCell key={e} className="text-right font-mono tabular-nums">
-                        {q.times[e] == null ? "—" : fmtSeconds(q.times[e]!)}
-                      </TableCell>
-                    ))}
+                    {engines.map((e) => {
+                      const time = q.times[e]
+                      return (
+                        <TableCell key={e} className="text-right font-mono tabular-nums">
+                          {time == null ? "—" : formatSeconds(time)}
+                        </TableCell>
+                      )
+                    })}
                   </TableRow>
                 ))}
               </TableBody>
@@ -108,13 +97,20 @@ function PanelChart({ panel }: { panel: Panel }) {
   )
 }
 
-export function BenchCharts({ panels, suites }: { panels: Panel[]; suites: { id: string; label: string }[] }) {
+export function BenchCharts({
+  panels,
+  suites,
+}: {
+  panels: BenchPanel[]
+  suites: readonly { id: string; label: string }[]
+}) {
   const available = suites.filter((s) => panels.some((p) => p.suite === s.id))
-  if (available.length === 0) {
+  const [first] = available
+  if (!first) {
     return <p className="text-sm text-muted-foreground">No v0 results found in bench/results.</p>
   }
   return (
-    <Tabs defaultValue={available[0].id}>
+    <Tabs defaultValue={first.id}>
       <TabsList>
         {available.map((s) => (
           <TabsTrigger key={s.id} value={s.id}>

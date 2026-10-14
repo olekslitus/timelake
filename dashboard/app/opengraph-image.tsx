@@ -47,6 +47,7 @@ export default function Image() {
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+          {/* oxlint-disable-next-line nextjs/no-img-element -- ImageResponse renders plain <img>; next/image can't run here */}
           <img src={markSrc} width={72} height={72} alt="" />
           <div style={{ fontFamily: "Geist", fontWeight: 500, fontSize: 45, letterSpacing: "-0.045em", color: FG }}>
             timelake

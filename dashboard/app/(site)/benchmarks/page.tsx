@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { SUITES, loadIngest, loadPanels, loadS3TablesDelay, loadTsdb, type TsdbRow } from "@/lib/benchmarks"
+import { formatNumber, formatSeconds } from "@/lib/format"
 
 export const metadata: Metadata = { title: "Benchmarks" }
 
@@ -17,10 +18,7 @@ const SYSTEMS: Record<string, string> = {
   s3tables: "S3 Tables (PyIceberg)",
 }
 
-function fmt(s: number | null) {
-  if (s == null) return "—"
-  return s < 0.1 ? `${(s * 1000).toFixed(0)} ms` : `${s.toFixed(2)} s`
-}
+const seconds = (s: number | null) => (s == null ? "—" : formatSeconds(s))
 
 export default function BenchmarksPage() {
   return (
@@ -124,7 +122,7 @@ async function Results() {
               ` S3 Tables compacted ${delay[0].toFixed(1)}–${delay[1].toFixed(1)} hours after ingest; until then its readers see the first panel.`}
           </p>
         </div>
-        <BenchCharts panels={panels} suites={[...SUITES]} />
+        <BenchCharts panels={panels} suites={SUITES} />
       </section>
 
       <section>
@@ -159,9 +157,7 @@ async function Results() {
                     <TableCell className="text-right font-mono tabular-nums">{r.seconds.toFixed(1)} s</TableCell>
                     <TableCell className="text-right font-mono tabular-nums">{Math.round(r.p50)} ms</TableCell>
                     <TableCell className="text-right font-mono tabular-nums">{Math.round(r.p95)} ms</TableCell>
-                    <TableCell className="text-right font-mono tabular-nums">
-                      {r.files.toLocaleString("en-US")}
-                    </TableCell>
+                    <TableCell className="text-right font-mono tabular-nums">{formatNumber(r.files)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -231,9 +227,9 @@ function TsdbSection({ rows }: { rows: TsdbRow[] }) {
                         <TableCell className="text-right font-mono tabular-nums">
                           {r.completed}/{r.total}
                         </TableCell>
-                        <TableCell className="text-right font-mono tabular-nums">{fmt(r.firstClient)}</TableCell>
-                        <TableCell className="text-right font-mono tabular-nums">{fmt(r.firstServer)}</TableCell>
-                        <TableCell className="text-right font-mono tabular-nums">{fmt(r.bestServer)}</TableCell>
+                        <TableCell className="text-right font-mono tabular-nums">{seconds(r.firstClient)}</TableCell>
+                        <TableCell className="text-right font-mono tabular-nums">{seconds(r.firstServer)}</TableCell>
+                        <TableCell className="text-right font-mono tabular-nums">{seconds(r.bestServer)}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>

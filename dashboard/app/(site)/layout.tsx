@@ -2,7 +2,7 @@ import { TimelakeLockup } from "@/components/brand/timelake-mark"
 import { SiteHeader } from "@/components/site-header"
 import { LICENSE_URL, REPO_URL } from "@/lib/site"
 
-export default function SiteLayout({ children }: { children: React.ReactNode }) {
+export default function SiteLayout({ children }: LayoutProps<"/">) {
   return (
     <div className="flex min-h-svh flex-col">
       <SiteHeader />

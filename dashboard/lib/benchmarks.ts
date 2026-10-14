@@ -8,7 +8,7 @@ import { cacheLife } from "next/cache"
 const RESULTS =
   process.env.TIMELAKE_BENCH_RESULTS ?? path.resolve(/*turbopackIgnore: true*/ process.cwd(), "data/results")
 
-export const ENGINES = [
+const ENGINES = [
   { id: "v0-timelake", label: "Timelake reader", timelake: true },
   { id: "v0-timelake-duckdb", label: "Timelake tables + DuckDB", timelake: false },
   { id: "v0-lance-df", label: "Lance + DataFusion", timelake: false },
@@ -18,7 +18,7 @@ export const ENGINES = [
 ] as const
 
 // The real-S3 run (bench/run_aws.sh): a laptop reading S3 in us-east-2. S3 Tables is its own table bucket.
-export const STATES = [
+const STATES = [
   { files: ["v0-laptop-aws-s3-ingested", "v0-laptop-aws-s3tables-ingested"], label: "AWS S3 · right after ingest" },
   { files: ["v0-laptop-aws-s3-maintained", "v0-laptop-aws-s3tables-maintained"], label: "AWS S3 · after compaction" },
   { files: ["v0-laptop-local-ingested"], label: "Local disk · right after ingest" },
@@ -30,7 +30,7 @@ export const SUITES = [
   { id: "iot_point", label: "Single truck (5 queries)" },
 ] as const
 
-export const TSDB_ENGINES = [
+const TSDB_ENGINES = [
   { id: "tsdb-hypertable", label: "Hypertable (row store)" },
   { id: "tsdb-columnstore", label: "Hypertable, columnstore (compressed)" },
   { id: "tsdb-tiered", label: "Tiered to S3 (tiered reads)" },
@@ -62,14 +62,17 @@ export type TsdbRow = {
   reference?: boolean
 }
 
+/** Per-run measurements: the first run, then the repeats. */
+type Runs = [first: number, ...repeats: number[]]
+
 type Rec = {
   engine: string
   query: string
   status: string
-  times: number[]
+  times: Runs
   rows?: number
-  requests?: number[]
-  server_ms?: number[]
+  requests?: Runs
+  server_ms?: Runs
   suite?: string
 }
 
@@ -84,7 +87,13 @@ async function lines<T>(file: string): Promise<T[]> {
   }
 }
 
-const gm = (xs: number[]) => Math.exp(xs.reduce((s, x) => s + Math.log(Math.max(x, 1e-4)), 0) / xs.length)
+/** Floor for times in the geometric mean, so a near-zero time doesn't dominate it. */
+const MIN_SECONDS = 1e-4
+
+const gm = (xs: number[]) => Math.exp(xs.reduce((s, x) => s + Math.log(Math.max(x, MIN_SECONDS)), 0) / xs.length)
+
+/** The best repeat, or the first run when there were no repeats. */
+const best = ([first, ...repeats]: Runs) => Math.min(...(repeats.length > 0 ? repeats : [first]))
 
 /** Geometric-mean first-run time per engine, over queries every engine in the panel completed (as bench/v0/summarize.py). */
 export async function loadPanels(): Promise<BenchPanel[]> {
@@ -102,15 +111,15 @@ export async function loadPanels(): Promise<BenchPanel[]> {
       const queries = allQueries.filter((q) => engines.every((e) => by.has(`${e.id}|${q}`)))
       if (queries.length === 0) continue
       const bars = engines.map((e) => {
-        const rs = queries.map((q) => by.get(`${e.id}|${q}`)!)
-        const counted = rs.filter((r) => r.requests?.length)
+        const rs = queries.flatMap((q) => by.get(`${e.id}|${q}`) ?? [])
+        const requests = rs.map((r) => r.requests?.[0])
         return {
           engine: e.id,
           label: e.label,
           timelake: e.timelake,
           first: gm(rs.map((r) => r.times[0])),
-          best: gm(rs.map((r) => Math.min(...(r.times.length > 1 ? r.times.slice(1) : r.times)))),
-          requests: counted.length === rs.length ? rs.reduce((s, r) => s + r.requests![0], 0) / rs.length : null,
+          best: gm(rs.map((r) => best(r.times))),
+          requests: requests.every((n) => n !== undefined) ? requests.reduce((s, n) => s + n, 0) / rs.length : null,
         }
       })
       const perQuery = allQueries.map((q) => ({
@@ -183,8 +192,9 @@ export async function loadTsdb(): Promise<TsdbRow[] | null> {
     )
     for (const e of TSDB_ENGINES) {
       const completed = inSuite.filter((r) => r.engine === e.id && r.status === "ok").length
-      const rs = withData.includes(e) ? common.map((q) => okBy.get(`${e.id}|${q}`)!) : []
-      const srv = rs.filter((r) => r.server_ms && r.server_ms.length > 0)
+      const rs = withData.includes(e) ? common.flatMap((q) => okBy.get(`${e.id}|${q}`) ?? []) : []
+      const server = rs.flatMap((r) => (r.server_ms?.length ? [r.server_ms] : []))
+      const allServer = server.length > 0 && server.length === rs.length
       out.push({
         suite: suite.id,
         engine: e.id,
@@ -193,11 +203,8 @@ export async function loadTsdb(): Promise<TsdbRow[] | null> {
         total,
         common: common.length,
         firstClient: rs.length ? gm(rs.map((r) => r.times[0])) : null,
-        firstServer: srv.length === rs.length && srv.length ? gm(srv.map((r) => r.server_ms![0] / 1000)) : null,
-        bestServer:
-          srv.length === rs.length && srv.length
-            ? gm(srv.map((r) => Math.min(...(r.server_ms!.length > 1 ? r.server_ms!.slice(1) : r.server_ms!)) / 1000))
-            : null,
+        firstServer: allServer ? gm(server.map((ms) => ms[0] / 1000)) : null,
+        bestServer: allServer ? gm(server.map((ms) => best(ms) / 1000)) : null,
       })
     }
     // Timelake's reader over the same queries, after maintenance, for reference.
@@ -210,7 +217,7 @@ export async function loadTsdb(): Promise<TsdbRow[] | null> {
           .filter((r) => r.engine === "v0-timelake" && r.status === "ok")
           .map((r) => [r.query, r]),
       )
-      const rs = common.filter((q) => tl.has(q)).map((q) => tl.get(q)!)
+      const rs = common.flatMap((q) => tl.get(q) ?? [])
       if (rs.length !== common.length || rs.length === 0) continue
       out.push({
         suite: suite.id,

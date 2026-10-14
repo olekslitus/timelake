@@ -4,10 +4,9 @@ const nextConfig: NextConfig = {
   cacheComponents: true,
   // The TypeScript client (with its WASM reader) is a workspace package consumed from source.
   transpilePackages: ["@timelake/client"],
-  // Benchmark results are read from disk; ship them with the server too (cached at build normally).
+  // Files read from disk at runtime: benchmark results (when /benchmarks revalidates) and the OG image fonts.
   outputFileTracingIncludes: {
     "/benchmarks": ["./data/results/**"],
-    "/": ["./data/results/**"],
     "/opengraph-image": ["./assets/fonts/**"],
   },
   partialPrefetching: true,
