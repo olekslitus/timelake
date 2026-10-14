@@ -1,0 +1,7 @@
+# Formatting-only commits, skipped by `git blame` (git config blame.ignoreRevsFile .git-blame-ignore-revs).
+# Rust: rustfmt (width 120)
+72921890296ea33ececb8888d41b7fb48696c8b8
+# Python: ruff format
+2c89bee0b14568718991b4d919849a45a99493e6
+# TypeScript: oxfmt
+e38d0a03ffaf6f14c5569906a3ad93dc3c8ccaef
