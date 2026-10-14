@@ -19,6 +19,7 @@ A table’s contract and maintenance policy live in Iceberg table properties und
 | `timelake.min-snapshots` | 5 | …but always keep at least this many, |
 | `timelake.max-snapshots` | 100 | and never keep more than this many (older ones expire even if younger than the retention). |
 | `timelake.format-version` | 2 for new tables; absent means 1 | The table format. Timelake writes only tables of formats it knows and refuses newer ones; `timelake upgrade` brings a table to the current format. |
+| `timelake.keep-snapshots-until` | (none) | No snapshot expires before this time, in milliseconds since the epoch. `upgrade` sets it so the upgrade can be rolled back. |
 | `timelake.head-format` | arrow | Format of the head object (`metadata/timelake-head`): `arrow`, `json`, a registered codec, or `none` for no head. See [Architecture](/docs/architecture#head-object). |
 | `timelake.head-inline-bytes` | 1048576 (1 MiB) | Room in the head for the last-value index, then the Parquet footers of the newest files. What doesn’t fit is read separately. |
 

@@ -88,6 +88,7 @@ What lives where, which technologies are used and why, and how a write and a que
 | `background.rs` | Writes a call doesn't wait for (the version hint and the head), and `flush`, which waits for them before a process exits. |
 | `append.rs` | `Table::append`, with inline maintenance afterwards. |
 | `maintain.rs` | `Table::maintain`: retention, compaction with dedup, snapshot expiry and file cleanup. |
+| `upgrade.rs` | `Table::upgrade` (format version, missing last-value index, compaction, head; each a commit, with snapshots kept for a rollback) and `Table::rollback`. |
 | `query/` | The SQL reader: `session.rs` (`Session`: parse, plan, run), `catalog.rs` (namespaces and tables for DataFusion), `provider.rs` (a table as a pruned Parquet scan or the last-value index), `stats.rs` (min/max from manifests), `rewrite.rs` (latest-row queries onto the index). |
 | `error.rs` | `Error`: not found, already exists, invalid input, conflict, and the underlying storage, Arrow and Parquet errors. |
 

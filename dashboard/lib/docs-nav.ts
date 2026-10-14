@@ -18,6 +18,7 @@ export const DOCS_NAV: { title: string; items: { href: string; label: string }[]
       { href: "/docs/querying", label: "Querying" },
       { href: "/docs/table-properties", label: "Table properties" },
       { href: "/docs/storage", label: "Storage & configuration" },
+      { href: "/docs/upgrading", label: "Upgrading" },
     ],
   },
   {

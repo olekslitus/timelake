@@ -33,6 +33,7 @@ from timelake._types import (
     HasArrowSchema,
     MaintainReport,
     TableInfo,
+    UpgradeReport,
 )
 
 __version__ = version("timelake")
@@ -48,5 +49,6 @@ __all__ = [
     "MaintainReport",
     "Table",
     "TableInfo",
+    "UpgradeReport",
     "__version__",
 ]

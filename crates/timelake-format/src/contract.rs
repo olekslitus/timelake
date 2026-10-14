@@ -160,6 +160,8 @@ pub struct Contract {
     pub head_inline_bytes: u64,
     /// The table format version (see [`crate::FORMAT_VERSION`]).
     pub format_version: u32,
+    /// No snapshot expires before this time (milliseconds since the epoch).
+    pub keep_snapshots_until: Option<i64>,
 }
 
 impl Contract {
@@ -195,6 +197,10 @@ impl Contract {
             head_format: p.get(property::HEAD_FORMAT).unwrap_or(Self::DEFAULT_HEAD_FORMAT).to_ascii_lowercase(),
             head_inline_bytes: p.number(property::HEAD_INLINE_BYTES, Self::DEFAULT_HEAD_INLINE_BYTES)?,
             format_version: p.number(property::FORMAT_VERSION, 1)?,
+            keep_snapshots_until: p
+                .get(property::KEEP_SNAPSHOTS_UNTIL)
+                .map(|_| p.number(property::KEEP_SNAPSHOTS_UNTIL, 0))
+                .transpose()?,
         })
     }
 

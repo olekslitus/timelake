@@ -13,6 +13,14 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
 - **Table format version:** tables record `timelake.format-version` (2 for tables created now; tables without it are
   format 1). Timelake reads tables of any older format and refuses to write to a table of a newer format than it
   knows, with a message to upgrade.
+- **`timelake upgrade`** (also `Table.upgrade()` in Python and Rust) brings tables to the current format: records the
+  format version, builds a missing last-value index, rewrites unsorted or small files and writes the head. Each step is
+  a commit, and no snapshot expires for 7 days (`--keep-snapshots`), so **`timelake rollback <table> <snapshot>`**
+  (`Table.rollback()`) undoes it. `--dry-run` shows the plan. New table property `timelake.keep-snapshots-until`.
+
+### Fixed
+
+- After a rollback, a batch id from the abandoned snapshots no longer counts as already committed.
 
 ### Changed
 

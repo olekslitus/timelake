@@ -176,6 +176,31 @@ def test_maintain_report_has_documented_keys(table: timelake.Table) -> None:
     }
 
 
+def test_upgrade_and_rollback(lake: timelake.Lake) -> None:
+    # A table in the format Timelake 0.2 wrote, with two small files.
+    table = lake.create_table(
+        "iot.old", SCHEMA, time_column="time", series_key=["device"], properties={"timelake.format-version": "1"}
+    )
+    table.append(readings(), maintain=False)
+    table.append(readings(START + dt.timedelta(hours=1)), maintain=False)
+    version = table.info()["version"]
+
+    plan = table.upgrade(dry_run=True)
+    assert plan["steps"][0] == "set table format 1 → 2"
+    assert table.info()["version"] == version
+    report = table.upgrade()
+    assert report["steps"] == plan["steps"]
+    assert report["keep_snapshots_until_ms"] is not None
+    assert table.info()["files"] == 1
+    assert table.upgrade()["steps"] == []
+
+    assert report["snapshot_before"] is not None
+    table.rollback(report["snapshot_before"])
+    assert table.info()["files"] == 2
+    with pytest.raises(KeyError):
+        table.rollback(12345)
+
+
 def test_inline_maintenance_is_reported(lake: timelake.Lake) -> None:
     table = lake.create_table("iot.busy", SCHEMA, time_column="time", properties={"timelake.compact-min-files": "2"})
     results = [table.append(readings(START + dt.timedelta(hours=1), minutes=1)) for _ in range(4)]

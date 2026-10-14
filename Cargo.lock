@@ -4225,6 +4225,7 @@ name = "timelake-cli"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
  "futures",
  "serde_json",

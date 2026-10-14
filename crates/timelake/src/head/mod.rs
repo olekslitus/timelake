@@ -64,7 +64,14 @@ pub(crate) fn update(table: &Table) {
     });
 }
 
-async fn write(table: &Table) -> Result<()> {
+/// The table version the stored head describes, if there is a head this process can parse.
+pub(crate) async fn stored_version(table: &Table) -> Result<Option<u64>> {
+    let prefix = table.lake().storage().read_prefix_versioned(&uri(table.location()), MAX_HEADER).await?;
+    Ok(prefix.and_then(|(bytes, _)| Header::parse(&bytes).map(|h| h.version)))
+}
+
+/// Writes `table`'s head now (see [`update`] for the background version).
+pub(crate) async fn write(table: &Table) -> Result<()> {
     let lake = table.lake();
     if lake.has_newer(table.name(), table.version()) {
         return Ok(());

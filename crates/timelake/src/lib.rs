@@ -41,6 +41,7 @@ pub mod storage;
 mod table;
 #[cfg(test)]
 mod testing;
+mod upgrade;
 mod write;
 
 pub use append::{AppendOptions, AppendResult};
@@ -56,5 +57,6 @@ pub use schema::align_batch;
 pub use table::{LiveEntry, Table};
 pub use timelake_format::contract::{Chunk, Contract, TableOptions};
 pub use timelake_format::{bounds, contract, format_duration, parse_duration, property, summary};
+pub use upgrade::{UpgradeOptions, UpgradeReport, UpgradeStep};
 pub use write::file_partition;
 pub use {arrow, datafusion};

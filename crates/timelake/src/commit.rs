@@ -48,6 +48,9 @@ pub(crate) enum Change {
     /// Remove files (retention): `Operation::Delete`. The last-value index drops series whose
     /// newest row is older than `lvi_cutoff` (µs since the epoch).
     Delete { removed: Vec<LiveEntry>, lvi_cutoff: Option<i64> },
+    /// Set the last-value index of a table that has none (`timelake upgrade`); data is unchanged:
+    /// `Operation::Replace` with no files.
+    Index { latest: RecordBatch },
 }
 
 impl Change {
@@ -55,13 +58,13 @@ impl Change {
         match self {
             Self::Append { files, .. } => files,
             Self::Replace { added, .. } => added,
-            Self::Delete { .. } => &[],
+            Self::Delete { .. } | Self::Index { .. } => &[],
         }
     }
 
     fn removed(&self) -> &[LiveEntry] {
         match self {
-            Self::Append { .. } => &[],
+            Self::Append { .. } | Self::Index { .. } => &[],
             Self::Replace { removed, .. } | Self::Delete { removed, .. } => removed,
         }
     }
@@ -69,7 +72,7 @@ impl Change {
     fn operation(&self) -> Operation {
         match self {
             Self::Append { .. } => Operation::Append,
-            Self::Replace { .. } => Operation::Replace,
+            Self::Replace { .. } | Self::Index { .. } => Operation::Replace,
             Self::Delete { .. } => Operation::Delete,
         }
     }
@@ -168,10 +171,19 @@ pub(crate) fn writable(table: &Table) -> Result<()> {
     Ok(())
 }
 
-/// Idempotency: an append whose batch id is already in the history is a no-op.
+/// Idempotency: an append whose batch id is already in the table's history (the current snapshot
+/// and its ancestors, so not snapshots a rollback left behind) is a no-op.
 fn is_duplicate(base: &Table, change: &Change, props: &HashMap<String, String>) -> bool {
     let (Change::Append { .. }, Some(id)) = (change, props.get(summary::BATCH_ID)) else { return false };
-    base.metadata().snapshots().any(|s| s.summary().additional_properties.get(summary::BATCH_ID) == Some(id))
+    let metadata = base.metadata();
+    let mut snapshot = metadata.current_snapshot();
+    while let Some(s) = snapshot {
+        if s.summary().additional_properties.get(summary::BATCH_ID) == Some(id) {
+            return true;
+        }
+        snapshot = s.parent_snapshot_id().and_then(|p| metadata.snapshot_by_id(p));
+    }
+    false
 }
 
 /// Commits new table metadata as version N+1. `Ok(None)` if another writer got there first.
@@ -448,6 +460,7 @@ impl<'a> SnapshotWriter<'a> {
                 lvi::merged(base, latest).await?
             }
             Change::Append { latest: None, .. } => return Ok(LastValueIndex { location: None, written: None }),
+            Change::Index { latest } => Some(latest.clone()),
             Change::Replace { .. } => return Ok(unchanged),
             Change::Delete { lvi_cutoff, .. } => {
                 let (Some(location), Some(cutoff), Some(time_column)) =

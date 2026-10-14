@@ -52,6 +52,19 @@ class MaintainReport(TypedDict):
     seconds: float
 
 
+class UpgradeReport(TypedDict):
+    """What ``Table.upgrade()`` did, or would do with ``dry_run``.
+
+    ``steps`` is empty when the table was already current. ``Table.rollback(snapshot_before)`` undoes the upgrade
+    while its snapshots are kept (until ``keep_snapshots_until_ms``, milliseconds since the epoch).
+    """
+
+    steps: list[str]
+    version_before: int
+    snapshot_before: int | None
+    keep_snapshots_until_ms: int | None
+
+
 class _AppendResult(TypedDict):
     rows: int
     files: int

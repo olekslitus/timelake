@@ -10,7 +10,7 @@ use std::time::Instant;
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use timelake::datafusion::prelude::{DataFrame, SessionConfig};
-use timelake::{Lake, MaintainOptions, Session, TableName};
+use timelake::{Lake, MaintainOptions, Session, TableName, UpgradeOptions};
 
 use crate::info::TableInfo;
 use crate::load::{LoadArgs, TableDef};
@@ -71,6 +71,23 @@ enum Cmd {
         #[arg(long)]
         no_expire: bool,
     },
+    /// Bring tables to the current format: format version, last-value index, sorted and compacted
+    /// files, head object. Each step is a commit; no snapshot expires for --keep-snapshots, so
+    /// `rollback` undoes it. All tables if none given.
+    Upgrade {
+        tables: Vec<String>,
+        /// Only show what would change.
+        #[arg(long)]
+        dry_run: bool,
+        /// Don't rewrite unsorted or small files.
+        #[arg(long)]
+        no_compact: bool,
+        /// How long every snapshot is kept, so the upgrade can be rolled back.
+        #[arg(long, default_value = "7d", value_parser = parse_keep)]
+        keep_snapshots: std::time::Duration,
+    },
+    /// Make an earlier snapshot current again (snapshot ids are in `info`).
+    Rollback { table: String, snapshot: i64 },
     /// Table details: contract, snapshots, files, partitions.
     Info {
         table: String,
@@ -155,6 +172,15 @@ async fn run(cli: Cli) -> Result<()> {
             };
             maintain(&lake, tables, opts).await
         }
+        Cmd::Upgrade { tables, dry_run, no_compact, keep_snapshots } => {
+            let opts = UpgradeOptions { dry_run, compact: !no_compact, keep_snapshots };
+            upgrade(&lake, tables, &opts).await
+        }
+        Cmd::Rollback { table, snapshot } => {
+            let t = lake.table(&table).await?.rollback(snapshot).await?;
+            println!("{table}: snapshot {snapshot} is current again → v{}", t.version());
+            Ok(())
+        }
         Cmd::Info { table, json } => {
             let info = TableInfo::load(&lake.table(&table).await?).await?;
             if json {
@@ -222,14 +248,40 @@ async fn sql(lake: Lake, args: SqlArgs, started: Instant) -> Result<()> {
     Ok(())
 }
 
+fn parse_keep(s: &str) -> Result<std::time::Duration, String> {
+    timelake::parse_duration(s).map_err(|e| e.to_string())
+}
+
+/// Each table with the name to print: as the user wrote it, or qualified when listing them all.
+async fn targets(lake: &Lake, tables: Vec<String>) -> Result<Vec<(TableName, String)>> {
+    if tables.is_empty() {
+        return Ok(lake.all_tables().await?.into_iter().map(|name| (name.clone(), name.to_string())).collect());
+    }
+    Ok(tables.into_iter().map(|t| Ok((t.parse()?, t))).collect::<timelake::Result<_>>()?)
+}
+
+async fn upgrade(lake: &Lake, tables: Vec<String>, opts: &UpgradeOptions) -> Result<()> {
+    for (name, label) in targets(lake, tables).await? {
+        let (t, r) = lake.table(name).await?.upgrade(opts).await?;
+        if r.steps.is_empty() {
+            println!("{label}: already current (v{})", t.version());
+            continue;
+        }
+        let verb = if opts.dry_run { "would" } else { "did" };
+        println!("{label}: {verb}:");
+        for step in &r.steps {
+            println!("  - {step}");
+        }
+        if !opts.dry_run {
+            let undo = r.snapshot_before.map_or_else(String::new, |s| format!("; undo: timelake rollback {label} {s}"));
+            println!("  v{} → v{}{undo}", r.version_before, t.version());
+        }
+    }
+    Ok(())
+}
+
 async fn maintain(lake: &Lake, tables: Vec<String>, opts: MaintainOptions) -> Result<()> {
-    // Each table with the name to print: as the user wrote it, or qualified when listing them all.
-    let targets: Vec<(TableName, String)> = if tables.is_empty() {
-        lake.all_tables().await?.into_iter().map(|name| (name.clone(), name.to_string())).collect()
-    } else {
-        tables.into_iter().map(|t| Ok((t.parse()?, t))).collect::<timelake::Result<_>>()?
-    };
-    for (name, label) in targets {
+    for (name, label) in targets(lake, tables).await? {
         let (t, r) = lake.table(name).await?.maintain(opts.clone()).await?;
         println!(
             "{label}: compacted {} partitions ({} → {} files, {} rows, {} duplicates removed), dropped {} partitions, expired {} snapshots, deleted {} objects in {:.2}s → v{}",

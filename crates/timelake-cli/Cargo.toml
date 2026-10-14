@@ -13,6 +13,7 @@ name = "timelake"
 path = "src/main.rs"
 
 [dependencies]
+chrono.workspace = true
 timelake = { path = "../timelake" }
 clap.workspace = true
 tokio.workspace = true

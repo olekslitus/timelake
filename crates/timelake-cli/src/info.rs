@@ -9,6 +9,8 @@ use timelake::{Chunk, Contract, Table, file_partition, summary};
 
 /// Partitions listed in text output; JSON lists all.
 const TEXT_PARTITIONS: usize = 10;
+/// Snapshots shown in the text output, newest first (the JSON lists more).
+const TEXT_SNAPSHOTS: usize = 5;
 /// Snapshots listed in JSON output, newest first.
 const JSON_SNAPSHOTS: usize = 50;
 const DAY_SECS: u64 = 86_400;
@@ -33,6 +35,7 @@ pub(crate) struct TableInfo {
     partitions: Vec<PartitionInfo>,
     /// Newest first.
     snapshots: Vec<SnapshotInfo>,
+    current_snapshot: Option<i64>,
 }
 
 struct PartitionInfo {
@@ -112,6 +115,7 @@ impl TableInfo {
             last_value_index: t.last_value_index(),
             partitions: by_partition.into_values().rev().collect(),
             snapshots,
+            current_snapshot: t.metadata().current_snapshot_id(),
             contract,
         })
     }
@@ -174,7 +178,14 @@ impl fmt::Display for TableInfo {
         let columns: Vec<String> = self.columns.iter().map(|(name, ty, _)| format!("{name} {ty}")).collect();
         writeln!(f, "schema     {}", columns.join(", "))?;
         writeln!(f, "data       {} rows in {} files, {:.1} MB", self.rows, self.files, megabytes(self.bytes))?;
+        writeln!(f, "format     {} (timelake.format-version)", c.format_version)?;
         writeln!(f, "snapshots  {} (manifests in current: {})", self.snapshot_count, self.manifests)?;
+        for s in self.snapshots.iter().take(TEXT_SNAPSHOTS) {
+            let when = chrono::DateTime::from_timestamp_millis(s.timestamp_ms).map(|t| t.format("%Y-%m-%d %H:%M:%S"));
+            let current = if Some(s.id) == self.current_snapshot { "  ← current" } else { "" };
+            let when = when.map(|w| w.to_string()).unwrap_or_default();
+            writeln!(f, "  {:<20} {when} {:<8} {:>12} rows{current}", s.id, s.operation, s.total_records)?;
+        }
         writeln!(f, "last-value {}", self.last_value_index.as_deref().unwrap_or("-"))?;
         if c.chunk.is_some() {
             writeln!(f, "partitions {}", self.partitions.len())?;

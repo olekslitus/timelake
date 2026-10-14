@@ -16,7 +16,7 @@ use timelake::arrow::array::{RecordBatch, RecordBatchIterator, RecordBatchReader
 use timelake::arrow::datatypes::Schema;
 use timelake::arrow::error::ArrowError;
 use timelake::datafusion::prelude::{DataFrame, SessionConfig};
-use timelake::{AppendOptions, Chunk, Error, MaintainOptions, Session, TableOptions};
+use timelake::{AppendOptions, Chunk, Error, MaintainOptions, Session, TableOptions, UpgradeOptions};
 
 create_exception!(
     timelake,
@@ -291,6 +291,30 @@ impl Table {
         Ok(MaintainSummary::from(&report))
     }
 
+    /// Brings the table to the current format; returns the steps and how to undo them.
+    #[pyo3(signature = (dry_run=false, compact=true, keep_snapshots="7d"))]
+    fn upgrade(&self, py: Python<'_>, dry_run: bool, compact: bool, keep_snapshots: &str) -> PyResult<UpgradeSummary> {
+        let keep_snapshots = timelake::parse_duration(keep_snapshots).map_err(|err| to_py_err(err.into()))?;
+        let options = UpgradeOptions { dry_run, compact, keep_snapshots };
+        let table = self.get();
+        let (table, report) = run(py, async move { table.upgrade(&options).await })?;
+        self.set(table);
+        Ok(UpgradeSummary {
+            steps: report.steps.iter().map(ToString::to_string).collect(),
+            version_before: report.version_before,
+            snapshot_before: report.snapshot_before,
+            keep_snapshots_until_ms: report.keep_snapshots_until_ms,
+        })
+    }
+
+    /// Makes an earlier snapshot current again.
+    fn rollback(&self, py: Python<'_>, snapshot_id: i64) -> PyResult<()> {
+        let table = self.get();
+        let table = run(py, async move { table.rollback(snapshot_id).await })?;
+        self.set(table);
+        Ok(())
+    }
+
     /// Reloads the latest committed version.
     fn refresh(&self, py: Python<'_>) -> PyResult<()> {
         let table = self.get();
@@ -370,6 +394,15 @@ impl From<&timelake::MaintainReport> for MaintainSummary {
             seconds: report.duration.as_secs_f64(),
         }
     }
+}
+
+/// `Table.upgrade` result.
+#[derive(IntoPyObject)]
+struct UpgradeSummary {
+    steps: Vec<String>,
+    version_before: u64,
+    snapshot_before: Option<i64>,
+    keep_snapshots_until_ms: Option<i64>,
 }
 
 /// `Table.info` result.

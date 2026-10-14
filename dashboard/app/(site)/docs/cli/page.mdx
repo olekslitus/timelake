@@ -99,6 +99,25 @@ timelake maintain iot.readings --no-expire
 | `--no-retention` | Skip dropping partitions past the retention period. |
 | `--no-expire` | Skip snapshot expiry and file cleanup. |
 
+## upgrade
+
+Bring tables to the current format: record the format version, build a missing last-value index, rewrite unsorted or small files, write the head. Every step is a commit, and no snapshot expires for `--keep-snapshots`, so `rollback` undoes it. All tables if none are given. See [Upgrading](/docs/upgrading).
+
+```bash
+timelake upgrade --dry-run
+timelake upgrade iot.readings
+```
+
+| Flag | Meaning |
+| --- | --- |
+| `--dry-run` | Only print what would change. |
+| `--no-compact` | Don't rewrite files. |
+| `--keep-snapshots` | How long every snapshot is kept so the upgrade can be undone (default `7d`). |
+
+## rollback
+
+Make an earlier snapshot current again: `timelake rollback <table> <snapshot id>`. The ids are in `timelake info`; `upgrade` prints the command that undoes it.
+
 ## info
 
 Show a table’s contract, schema, size, snapshots, last-value index and newest partitions.

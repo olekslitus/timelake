@@ -1,0 +1,56 @@
+export const metadata = { title: "Upgrading" }
+
+# Upgrading
+
+Timelake has one version number for everything: the Rust crates, the CLI, the Python package and the TypeScript client. Versions follow [semantic versioning as Cargo applies it](https://doc.rust-lang.org/cargo/reference/semver.html): before 1.0, a minor release (0.3 → 0.4) may change behaviour or APIs, and the [changelog](/docs/changelog) says what to do; a patch release (0.3.0 → 0.3.1) never does. Every version is a [tag on GitHub](https://github.com/polythings/timelake/tags).
+
+Tables have a version of their own, the **table format**, stored as the table property `timelake.format-version`.
+
+| Format | Written by | What it adds |
+| --- | --- | --- |
+| 1 | 0.1, 0.2 (no property) | Iceberg tables with Timelake’s layout and last-value index |
+| 2 | 0.3 and later | The head object, `metadata/timelake-head`: first queries in one round trip |
+
+## What works across versions
+
+- **Any Timelake reads any older format.** A table written by an older version, or by another Iceberg engine, is read as it is, only slower if it lacks a head or a last-value index.
+- **A Timelake refuses to write to a newer format** than it knows, with a message to upgrade it. An older writer would not keep what the newer format relies on: it doesn’t update the head, for example.
+- **Other engines** (DuckDB, Spark, PyIceberg) read every format: the Iceberg metadata is standard.
+
+So upgrade every writer of a table before you upgrade the table.
+
+## Upgrading tables
+
+```bash
+timelake upgrade --dry-run          # what would change, for every table
+timelake upgrade                    # do it
+timelake upgrade iot.readings       # one table
+```
+
+```python
+report = table.upgrade(dry_run=True)   # {"steps": [...], ...}
+report = table.upgrade()
+```
+
+An upgrade brings a table to the current format and layout:
+
+1. Records the table format and keeps every snapshot for 7 days (`--keep-snapshots`).
+2. Builds the last-value index, if a time-series table has none (written by another engine).
+3. Rewrites unsorted or small files into sorted ones, as `maintain` does (`--no-compact` skips it).
+4. Writes the head object.
+
+A table that is already current is left alone. An upgrade reads all of a table’s data only when it builds a last-value index or rewrites files.
+
+## Nothing is lost
+
+Every step is an ordinary commit: new files are written, and the old snapshots, with all the files they use, stay readable. The upgrade sets `timelake.keep-snapshots-until` so that no snapshot expires for the next 7 days. Within that time, go back to the table as it was:
+
+```bash
+timelake rollback iot.readings 7210694381829421937   # the upgrade prints this command
+```
+
+```python
+table.rollback(report["snapshot_before"])
+```
+
+A rollback is a commit too: it makes the earlier snapshot current again, and the later ones stay in the history until they expire, so it can be undone the same way. Snapshot ids are listed by `timelake info <table>`.

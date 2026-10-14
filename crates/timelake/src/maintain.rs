@@ -208,7 +208,10 @@ async fn rewrite_partition(
 }
 
 /// Which files of which partitions to rewrite.
-async fn compaction_plan(table: &Table, opts: &MaintainOptions) -> Result<Vec<(Option<i32>, Vec<LiveEntry>)>> {
+pub(crate) async fn compaction_plan(
+    table: &Table,
+    opts: &MaintainOptions,
+) -> Result<Vec<(Option<i32>, Vec<LiveEntry>)>> {
     let c = table.contract();
     let small = c.target_file_size / SMALL_FILE_DENOMINATOR * SMALL_FILE_NUMERATOR;
     let is_small = |e: &LiveEntry| e.data_file.file_size_in_bytes() < small;
@@ -316,9 +319,13 @@ async fn expire(table: &Table, report: &mut MaintainReport) -> Result<Table> {
 /// the snapshot retention or beyond `max_snapshots`. The current snapshot always stays.
 fn expired_snapshots(table: &Table, newest_first: &[SnapshotRef]) -> Vec<SnapshotRef> {
     let c = table.contract();
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    if c.keep_snapshots_until.is_some_and(|until| now_ms < until) {
+        return vec![];
+    }
     let current = table.metadata().current_snapshot_id();
     let retention_ms = i64::try_from(c.snapshot_retention.as_millis()).unwrap_or(i64::MAX);
-    let cutoff = chrono::Utc::now().timestamp_millis().saturating_sub(retention_ms);
+    let cutoff = now_ms.saturating_sub(retention_ms);
     newest_first
         .iter()
         .enumerate()

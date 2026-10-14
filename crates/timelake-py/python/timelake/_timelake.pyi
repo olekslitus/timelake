@@ -13,6 +13,7 @@ from timelake._types import (
     HasArrowSchema,
     MaintainReport,
     TableInfo,
+    UpgradeReport,
 )
 
 __all__ = ["ConflictError", "Lake", "Table"]
@@ -144,6 +145,28 @@ class Table:
 
         Raises:
             ConflictError: A concurrent commit could not be rebased.
+        """
+
+    def upgrade(self, dry_run: bool = False, compact: bool = True, keep_snapshots: str = "7d") -> UpgradeReport:
+        """Brings the table to the current format: format version, last-value index, sorted and compacted files, head.
+
+        Each step is a commit, and no snapshot expires for ``keep_snapshots`` (a duration such as ``"7d"``), so
+        ``rollback(report["snapshot_before"])`` undoes it.
+
+        Args:
+            dry_run: Only report what would change.
+            compact: Rewrite unsorted or small files, as ``maintain()`` does.
+            keep_snapshots: How long every snapshot is kept after the upgrade.
+
+        Raises:
+            ConflictError: A concurrent commit could not be rebased.
+        """
+
+    def rollback(self, snapshot_id: int) -> None:
+        """Makes an earlier snapshot current again; later snapshots stay in the history until they expire.
+
+        Raises:
+            KeyError: The table has no snapshot with this id.
         """
 
     def refresh(self) -> None:

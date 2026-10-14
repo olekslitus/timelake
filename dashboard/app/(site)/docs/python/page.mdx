@@ -32,6 +32,8 @@ Properties: `name`, `location`, `version`, `schema` (pyarrow). Methods that comm
 | Method | Returns |
 | --- | --- |
 | `append(data, batch_id=None, maintain=None)` | dict: `rows`, `files`, `bytes`, `version`, `commit_ms`, `attempts`, `duplicate`; `maintenance` when inline maintenance did work, or `maintenance_error` if it failed after the append committed (the data is in the table: run `maintain()` later rather than retrying the append). A skipped duplicate batch reports 0 rows, files and bytes. `maintain` overrides the table’s auto-maintain setting. |
+| `upgrade(dry_run=False, compact=True, keep_snapshots="7d")` | dict: `steps` (empty if the table was current), `version_before`, `snapshot_before`, `keep_snapshots_until_ms`. Brings the table to the current format; see [Upgrading](/docs/upgrading). |
+| `rollback(snapshot_id)` | Makes an earlier snapshot current again (`KeyError` if the table has none with that id). |
 | `maintain(compact=True, retention=True, expire=True)` | dict: `partitions_compacted`, `files_rewritten`, `files_written`, `rows_rewritten`, `duplicates_removed`, `partitions_dropped`, `snapshots_expired`, `objects_deleted`, `seconds`. |
 | `info()` | dict: `name`, `version`, `location`, contract (`time_column`, `series_key`, `chunk`, `dedup`), size (`rows`, `files`, `bytes`), `snapshots`, `manifests`, `last_value_index`. |
 | `refresh()` | Reloads the latest committed version. |

@@ -60,6 +60,9 @@ pub mod property {
     pub const HEAD_FORMAT: &str = "timelake.head-format";
     /// Bytes the head may spend on optional sections such as the last-value index.
     pub const HEAD_INLINE_BYTES: &str = "timelake.head-inline-bytes";
+    /// No snapshot expires before this time (milliseconds since the epoch). Set by `timelake upgrade`
+    /// so the table can be rolled back to its state before the upgrade.
+    pub const KEEP_SNAPSHOTS_UNTIL: &str = "timelake.keep-snapshots-until";
     /// The table format version (see [`crate::FORMAT_VERSION`]); absent means 1.
     pub const FORMAT_VERSION: &str = "timelake.format-version";
 }
