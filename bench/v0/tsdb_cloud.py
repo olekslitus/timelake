@@ -78,7 +78,9 @@ def load():
         with connect() as c, c.cursor() as cur, cur.copy(f"COPY {t} FROM STDIN (FORMAT csv)") as cp:
             while chunk := export.stdout.read(1 << 20):
                 cp.write(chunk)
-        export.wait()
+            # Raising inside the COPY block aborts it, so a failed export loads nothing instead of a partial table.
+            if export.wait() != 0:
+                raise subprocess.CalledProcessError(export.returncode, export.args)
         print(f"{t}: loaded in {time.perf_counter() - t0:.0f}s", flush=True)
     with connect() as c:
         c.execute(INDEXES)
@@ -115,14 +117,12 @@ def tier():
                 c.execute(f"SELECT tier_chunk('{chunk}')")
             print(f"{t}: tier_chunk issued for all chunks in {time.perf_counter() - t0:.0f}s", flush=True)
         # Tiering runs in the background; wait until no chunk is left in the database.
+        if not has_is_tiered(c):
+            raise RuntimeError("timescaledb_information.chunks has no is_tiered column: can't tell when tiering is done")
         while True:
-            left = (
-                c.execute(
-                    "SELECT count(*) FROM timescaledb_information.chunks WHERE hypertable_name IN ('readings','diagnostics') AND NOT is_tiered"
-                ).fetchone()[0]
-                if has_is_tiered(c)
-                else None
-            )
+            left = c.execute(
+                "SELECT count(*) FROM timescaledb_information.chunks WHERE hypertable_name IN ('readings','diagnostics') AND NOT is_tiered"
+            ).fetchone()[0]
             print(f"chunks not yet tiered: {left}", flush=True)
             if not left:
                 break
