@@ -15,7 +15,7 @@ export const WORDMARK = {
   "font": "Geist",
   "weight": 500,
   "letterSpacingEm": -0.045,
-  "sizeOfMark": 0.76,
+  "sizeOfMark": 0.7,
   "gapOfMark": 0.24,
   "layout": "row"
 } as const
