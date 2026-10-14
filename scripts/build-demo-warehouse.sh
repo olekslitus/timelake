@@ -16,14 +16,7 @@ TL=target/release/timelake
 TRUCKS=${TRUCKS:-50}
 [ -x "$TL" ] || cargo build --release -p timelake-cli
 rm -rf "$OUT" bench/data/demo-src && mkdir -p bench/data/demo-src
-uv run python - "$SRC" bench/data/demo-src "$TRUCKS" <<'PY'
-import sys, duckdb
-src, dst, n = sys.argv[1], sys.argv[2], int(sys.argv[3])
-duckdb.sql("SET TimeZone='UTC'")
-duckdb.sql(f"COPY (SELECT * FROM '{src}/tags.parquet' WHERE id <= {n}) TO '{dst}/tags.parquet'")
-for t in ("readings", "diagnostics"):
-    duckdb.sql(f"COPY (SELECT * FROM '{src}/{t}.parquet' WHERE tags_id <= {n}) TO '{dst}/{t}.parquet'")
-PY
+uv run python scripts/slice_tsbs.py "$SRC" bench/data/demo-src "$TRUCKS"
 # Small row groups: web readers fetch whole row-group column chunks, so 64k rows keeps a
 # one-series read to a few hundred KB.
 TLW=("$TL" -w "$BASE_URL" -o "timelake_local_root=$OUT")
