@@ -18,6 +18,7 @@ const LINKS = [
   { href: "/docs", label: "Docs" },
   { href: "/benchmarks", label: "Benchmarks" },
   { href: "/explore", label: "Explorer" },
+  { href: "/roadmap", label: "Roadmap" },
 ]
 
 function NavLinks({ pathname }: { pathname: string | null }) {

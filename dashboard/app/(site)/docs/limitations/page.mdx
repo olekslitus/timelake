@@ -1,6 +1,6 @@
-export const metadata = { title: "Roadmap & limitations" }
+export const metadata = { title: "Limitations" }
 
-# Roadmap & limitations
+# Limitations
 
 ## Known limitations in v0
 
@@ -17,15 +17,4 @@ export const metadata = { title: "Roadmap & limitations" }
 
 ## Planned
 
-| Area | What |
-| --- | --- |
-| Catalog | An optional Iceberg REST endpoint over the same layout, so any REST-capable engine can attach. |
-| Deletes | Immutable, audited deletes with deletion vectors (Iceberg v3), undelete, and GDPR purge with a 7-day maximum delay. |
-| Backfill & import | Branch-staged backfill with atomic publish; import from Iceberg/S3 Tables and TimescaleDB. |
-| Aggregates | Incremental continuous aggregates stored as Iceberg tables, and a time-series function library (gap filling, time-weighted averages, counters, percentiles). |
-| Freshness | An optional hot tier (object-store WAL or Valkey) merged by the reader for second-level freshness. |
-| Ingestion | A Telegraf/Firehose-style pipeline (MQTT, HTTP, Kafka) with in-stream rules and alarms, deployable as a library, Lambda or container. |
-| DuckDB | A DuckDB extension with dedup on read, index-aware scans and the function library. |
-| Reader | A data cache for repeat queries, and more query shapes served from indexes. |
-| Performance | Fewer round trips to object storage: the table state in one request, file footers stored with it, two-step commits. See SPEC §19.1. |
-| Server mode | An experiment: Timelake as a database on one machine with local NVMe, compared with TimescaleDB. See SPEC §21.8. |
+What's planned, and in what order, is on the [roadmap](/roadmap).

@@ -21,6 +21,7 @@ Next.js website (`dashboard/`) and benchmarks (`bench/`).
 - **Keep things in sync:** a change in behaviour updates the docs, the tests and `CHANGELOG.md` (under `Unreleased`) in
   the same commit. A change to the Python bindings updates `_timelake.pyi`. A change to `timelake-wasm` or
   `timelake-format` gets a rebuilt WASM bundle (`bun run build:wasm` in `packages/timelake-client`).
+  A change to the plan in SPEC.md (§19, §21) updates the public roadmap, `dashboard/lib/roadmap.ts`.
 - **Don't run Prettier or ESLint.** Formatting is oxfmt, linting oxlint, Python ruff, Rust rustfmt and clippy.
 - **Never commit secrets** or `.env*` files. Don't touch AWS, Vercel settings, Docker containers or other services
   unless asked.

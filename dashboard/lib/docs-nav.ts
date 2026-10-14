@@ -27,7 +27,7 @@ export const DOCS_NAV: { title: string; items: { href: string; label: string }[]
       { href: "/docs/codebase", label: "Codebase tour" },
       { href: "/docs/development", label: "Development" },
       { href: "/docs/benchmarks", label: "Benchmarks" },
-      { href: "/docs/roadmap", label: "Roadmap & limitations" },
+      { href: "/docs/limitations", label: "Limitations" },
       { href: "/docs/changelog", label: "Changelog" },
     ],
   },
