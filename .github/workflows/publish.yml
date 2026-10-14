@@ -127,7 +127,7 @@ jobs:
       - run: bun run check:wasm
         working-directory: packages/timelake-client
       # npm pack runs the package's prepack script, which builds dist/.
-      - run: npm pack --pack-destination "$RUNNER_TEMP/npm"
+      - run: mkdir -p "$RUNNER_TEMP/npm" && npm pack --pack-destination "$RUNNER_TEMP/npm"
         working-directory: packages/timelake-client
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
