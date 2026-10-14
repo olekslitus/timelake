@@ -26,7 +26,7 @@ Parallel lines that turn together at sharp, mitered corners, inside a circle. Ea
 | `logo/timelake-mark-v1.svg`, `-white.svg` | The mark alone: favicon, avatar, app icon |
 | `logo/timelake-lockup-v1.svg`, `-white.svg` | Mark + wordmark, text outlined (no font needed) |
 
-**Wordmark:** `timelake`, lowercase, Geist Medium, letter-spacing −0.045em, text size 70% of the mark's height, gap 24% of it, set to the right, with the mark centered on the lowercase letters (6% of its height below the text box's center) (`WORDMARK` in `marks.mjs`). Geist is under the SIL Open Font License, which allows outlining it in a logo.
+**Wordmark:** `timelake`, lowercase, Geist Medium, letter-spacing −0.045em, text size 70% of the mark's height, gap 24% of it, set to the right, with the mark centered on the lowercase letters (3% of its height below the text box's center) (`WORDMARK` in `marks.mjs`). Geist is under the SIL Open Font License, which allows outlining it in a logo.
 
 **Kept for later:**
 

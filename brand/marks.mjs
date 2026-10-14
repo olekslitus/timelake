@@ -159,9 +159,9 @@ export const WORDMARK = {
   letterSpacingEm: -0.045,
   sizeOfMark: 0.7,
   gapOfMark: 0.24,
-  // The mark sits this much lower than the text's line box, so its middle meets the middle of the lowercase letters
-  // (Geist's x-height) rather than the box, which the tall t, l and k pull up.
-  markDropOfMark: 0.06,
+  // The mark sits this much lower than the text's line box, which the tall t, l and k pull up: halfway to the middle of
+  // the lowercase letters (Geist's x-height, 0.06), chosen by eye.
+  markDropOfMark: 0.03,
   layout: "row",
 }
 
