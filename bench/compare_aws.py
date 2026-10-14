@@ -17,8 +17,11 @@ RESULTS = Path(__file__).parent / "results"
 RUN = sys.argv[1] if len(sys.argv) > 1 else "laptop"
 TARGETS = ["local", "s3"] if RUN == "laptop" else ["local", "s3", "s3x"]
 # v0 targets: (state name used in tags and the ingest log, label)
-V0_TARGETS = ([("local", "local disk"), ("aws-s3", "S3"), ("aws-s3tables", "S3 Tables")] if RUN == "laptop"
-              else [("local", "local disk"), ("s3", "S3"), ("s3x", "S3 Express")])
+V0_TARGETS = (
+    [("local", "local disk"), ("aws-s3", "S3"), ("aws-s3tables", "S3 Tables")]
+    if RUN == "laptop"
+    else [("local", "local disk"), ("s3", "S3"), ("s3x", "S3 Express")]
+)
 NAMES = {"local": "local disk", "s3": "S3", "s3x": "S3 Express"}
 # $ per request by kind (tier 1: PUT, COPY, POST, LIST; tier 2: GET, HEAD, other) and $ per GB retrieved.
 PRICES = {
@@ -27,9 +30,21 @@ PRICES = {
     "s3x": {"tier1": 0.00113 / 1000, "tier2": 0.00003 / 1000, "gb_out": 0.0006},
 }
 TIER1 = {"PUT", "COPY", "POST", "LIST"}
-ENGINE_ORDER = ["duckdb", "duckdb-iceberg", "duckdb-vortex", "datafusion", "datafusion-rs", "datafusion-rs-vortex",
-                "polars", "v0-iceberg", "v0-s3tables", "v0-lance-duckdb", "v0-lance-df", "v0-timelake",
-                "v0-timelake-duckdb"]
+ENGINE_ORDER = [
+    "duckdb",
+    "duckdb-iceberg",
+    "duckdb-vortex",
+    "datafusion",
+    "datafusion-rs",
+    "datafusion-rs-vortex",
+    "polars",
+    "v0-iceberg",
+    "v0-s3tables",
+    "v0-lance-duckdb",
+    "v0-lance-df",
+    "v0-timelake",
+    "v0-timelake-duckdb",
+]
 
 
 def gm(xs):
@@ -125,8 +140,10 @@ def proxy_check():
         p = load(RESULTS / f"{suite}.{RUN}-s3.jsonl").get("duckdb", {})
         qs = set(d) & set(p)
         if qs:
-            rows.append(f"| {suite} | {gm([first(d[q]) for q in qs]):.3f} | {gm([first(p[q]) for q in qs]):.3f} "
-                        f"| {gm([best(d[q]) for q in qs]):.3f} | {gm([best(p[q]) for q in qs]):.3f} |")
+            rows.append(
+                f"| {suite} | {gm([first(d[q]) for q in qs]):.3f} | {gm([first(p[q]) for q in qs]):.3f} "
+                f"| {gm([best(d[q]) for q in qs]):.3f} | {gm([best(p[q]) for q in qs]):.3f} |"
+            )
     if rows:
         print("### Proxy overhead (plain DuckDB, S3 Standard)\n")
         print("| suite | direct first | proxied first | direct best | proxied best |")
@@ -140,8 +157,10 @@ def v0():
         return
     recs = [json.loads(l) for l in p.read_text().splitlines() if l.strip()]
     print("### v0: ingest (1,728 commits, 5-minute windows) and maintenance\n")
-    print("| system | target | ingest s | commit p50 ms | commit p95 ms | data files | objects | MB | maintenance s "
-          "| data files after | MB after |")
+    print(
+        "| system | target | ingest s | commit p50 ms | commit p95 ms | data files | objects | MB | maintenance s "
+        "| data files after | MB after |"
+    )
     print("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
     last = {}
     for r in recs:
@@ -153,8 +172,10 @@ def v0():
                 continue
             ms = f"{m['seconds']:.0f} | {m['data_files']} | {m['bytes'] / 1e6:.0f}" if m else "— | — | —"
             objects = i["objects"] if i["objects"] is not None else "n/a"  # S3 Tables storage can't be listed
-            print(f"| {system} | {label} | {i['seconds']:.0f} | {i['commit_ms_p50']:.0f} | {i['commit_ms_p95']:.0f} "
-                  f"| {i['data_files']} | {objects} | {i['bytes'] / 1e6:.0f} | {ms} |")
+            print(
+                f"| {system} | {label} | {i['seconds']:.0f} | {i['commit_ms_p50']:.0f} | {i['commit_ms_p95']:.0f} "
+                f"| {i['data_files']} | {objects} | {i['bytes'] / 1e6:.0f} | {ms} |"
+            )
     print()
     for suite in ["tsbs_iot", "iot_point"]:
         print(f"### v0 queries: {suite} (geometric mean seconds, first run / best run)\n")
@@ -166,10 +187,18 @@ def v0():
             for e in order(set().union(*(d.keys() for d in by_target.values()))):
                 present = [t for t in names if e in by_target[t]]
                 qs = set.intersection(*(set(by_target[t][e]) for t in present))
-                cells = [f"{gm([first(by_target[t][e][q]) for q in qs]):.3f} / {gm([best(by_target[t][e][q]) for q in qs]):.3f}"
-                         if t in present and qs else "—" for t in names]
+                cells = [
+                    f"{gm([first(by_target[t][e][q]) for q in qs]):.3f} / {gm([best(by_target[t][e][q]) for q in qs]):.3f}"
+                    if t in present and qs
+                    else "—"
+                    for t in names
+                ]
                 remote = [by_target[t][e][q] for t in present if t != "local" for q in qs]
-                reqs = f"{sum(r['requests'][0] for r in remote) / len(remote):.0f}" if remote and "requests" in remote[0] else "—"
+                reqs = (
+                    f"{sum(r['requests'][0] for r in remote) / len(remote):.0f}"
+                    if remote and "requests" in remote[0]
+                    else "—"
+                )
                 print(f"| {e} | {phase} | " + " | ".join(cells) + f" | {reqs} |")
         print()
 

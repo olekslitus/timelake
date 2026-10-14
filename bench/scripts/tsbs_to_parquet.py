@@ -25,8 +25,7 @@ class TableWriter:
     def __init__(self, path: Path, value_cols: list[str]):
         self.value_cols = value_cols
         self.schema = pa.schema(
-            [("time", pa.timestamp("us", tz="UTC")), ("tags_id", pa.int32())]
-            + [(c, pa.float64()) for c in value_cols]
+            [("time", pa.timestamp("us", tz="UTC")), ("tags_id", pa.int32())] + [(c, pa.float64()) for c in value_cols]
         )
         self.writer = pq.ParquetWriter(path, self.schema, compression="zstd")
         self.reset()
@@ -100,10 +99,7 @@ def main(out_dir: Path):
         {
             "id": pa.array([r["id"] for r in tag_rows], pa.int32()),
             **{c: pa.array([r.get(c) for r in tag_rows], pa.string()) for c in TAG_COLS},
-            **{
-                c: pa.array([float(r[c]) if r.get(c) else None for r in tag_rows], pa.float64())
-                for c in TAG_FLOATS
-            },
+            **{c: pa.array([float(r[c]) if r.get(c) else None for r in tag_rows], pa.float64()) for c in TAG_FLOATS},
         }
     )
     pq.write_table(tags, out_dir / "tags.parquet", compression="zstd")

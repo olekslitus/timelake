@@ -1,6 +1,6 @@
 """Markdown summary of the v0 benchmark: ingest, maintenance, and query results.
 
-    python v0/summarize.py > results/V0.md
+python v0/summarize.py > results/V0.md
 """
 
 import json
@@ -32,20 +32,32 @@ def ingest_tables():
     last = {}
     for r in recs:  # keep the latest record per (system, storage, phase)
         last[(r["system"], r["storage"], r["phase"])] = r
-    out = ["### Ingest: 864 five-minute windows × 2 tables = 1,728 commits, 23.3M rows", "",
-           "| storage | system | wall time | commit p50 | commit p95 | commit max | objects | total MB | data files |",
-           "|---|---|---:|---:|---:|---:|---:|---:|---:|"]
+    out = [
+        "### Ingest: 864 five-minute windows × 2 tables = 1,728 commits, 23.3M rows",
+        "",
+        "| storage | system | wall time | commit p50 | commit p95 | commit max | objects | total MB | data files |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|",
+    ]
     for (s, st, ph), r in sorted(last.items(), key=lambda kv: (kv[0][1], kv[0][0])):
         if ph != "ingest":
             continue
         extra = f" ({r['inline_compactions']} inline compactions)" if "inline_compactions" in r else ""
-        out.append(f"| {st} | {s}{extra} | {r['seconds']:.1f} s | {r['commit_ms_p50']:.0f} ms | {r['commit_ms_p95']:.0f} ms | "
-                   f"{r['commit_ms_max']:.0f} ms | {r['objects']} | {r['bytes'] / 1e6:.0f} | {r['data_files']} |")
-    out += ["", "### Maintenance (each system's standard compaction + cleanup)", "",
-            "| storage | system | time | objects after | total MB after | data files after |", "|---|---|---:|---:|---:|---:|"]
+        out.append(
+            f"| {st} | {s}{extra} | {r['seconds']:.1f} s | {r['commit_ms_p50']:.0f} ms | {r['commit_ms_p95']:.0f} ms | "
+            f"{r['commit_ms_max']:.0f} ms | {r['objects']} | {r['bytes'] / 1e6:.0f} | {r['data_files']} |"
+        )
+    out += [
+        "",
+        "### Maintenance (each system's standard compaction + cleanup)",
+        "",
+        "| storage | system | time | objects after | total MB after | data files after |",
+        "|---|---|---:|---:|---:|---:|",
+    ]
     for (s, st, ph), r in sorted(last.items(), key=lambda kv: (kv[0][1], kv[0][0])):
         if ph == "maintain":
-            out.append(f"| {st} | {s} | {r['seconds']:.1f} s | {r['objects']} | {r['bytes'] / 1e6:.0f} | {r['data_files']} |")
+            out.append(
+                f"| {st} | {s} | {r['seconds']:.1f} s | {r['objects']} | {r['bytes'] / 1e6:.0f} | {r['data_files']} |"
+            )
     return out
 
 
@@ -60,8 +72,10 @@ def query_tables(storage, phase):
     out = [f"### Queries: {storage}, after {phase}", ""]
     engines = [e for e in ENGINES if any(e == k[0] for d in data.values() for k in d)]
     # Geomeans over queries every engine completed.
-    out += ["| engine | " + " | ".join(f"{s} first (s) | {s} best (s)" for s in data) + " |",
-            "|---|" + "---:|---:|" * len(data)]
+    out += [
+        "| engine | " + " | ".join(f"{s} first (s) | {s} best (s)" for s in data) + " |",
+        "|---|" + "---:|---:|" * len(data),
+    ]
     rows = {e: [] for e in engines}
     for suite, d in data.items():
         qs = sorted({q for (_, q) in d})
@@ -84,9 +98,12 @@ def query_tables(storage, phase):
     # Per-query first runs.
     for suite, d in data.items():
         qs = list(dict.fromkeys(q for (_, q) in d))
-        out += [f"<details><summary>{suite} per query, first run (s)</summary>", "",
-                "| query | " + " | ".join(LABEL[e].strip("*") for e in engines) + " | rows match |",
-                "|---|" + "---:|" * len(engines) + "---|"]
+        out += [
+            f"<details><summary>{suite} per query, first run (s)</summary>",
+            "",
+            "| query | " + " | ".join(LABEL[e].strip("*") for e in engines) + " | rows match |",
+            "|---|" + "---:|" * len(engines) + "---|",
+        ]
         for q in qs:
             cells, rowset = [], set()
             for e in engines:
@@ -96,13 +113,26 @@ def query_tables(storage, phase):
                     continue
                 cells.append(f"{r['times'][0]:.3f}")
                 rowset.add(r["rows"])
-            out.append(f"| {q} | " + " | ".join(cells) + f" | {'✓' if len(rowset) <= 1 else '⚠ ' + str(sorted(rowset))} |")
+            out.append(
+                f"| {q} | " + " | ".join(cells) + f" | {'✓' if len(rowset) <= 1 else '⚠ ' + str(sorted(rowset))} |"
+            )
         if "requests" in next(iter(d.values()), {}):
-            out += ["", "First-run requests per query:", "",
-                    "| query | " + " | ".join(LABEL[e].strip("*") for e in engines) + " |", "|---|" + "---:|" * len(engines)]
+            out += [
+                "",
+                "First-run requests per query:",
+                "",
+                "| query | " + " | ".join(LABEL[e].strip("*") for e in engines) + " |",
+                "|---|" + "---:|" * len(engines),
+            ]
             for q in qs:
-                out.append(f"| {q} | " + " | ".join(
-                    str(d[(e, q)]["requests"][0]) if d.get((e, q), {}).get("status") == "ok" else "-" for e in engines) + " |")
+                out.append(
+                    f"| {q} | "
+                    + " | ".join(
+                        str(d[(e, q)]["requests"][0]) if d.get((e, q), {}).get("status") == "ok" else "-"
+                        for e in engines
+                    )
+                    + " |"
+                )
         out += ["", "</details>", ""]
     return out
 

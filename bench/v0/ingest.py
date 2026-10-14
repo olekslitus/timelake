@@ -29,8 +29,19 @@ import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent))
-from common import (DATA, LANCE_S3, OBJECT_STORE_S3, PYICEBERG_S3, TABLES, load_state, local_dir, record, root,  # noqa: E402
-                    save_state, storage_stats)
+from common import (
+    DATA,
+    LANCE_S3,
+    OBJECT_STORE_S3,
+    PYICEBERG_S3,
+    TABLES,
+    load_state,
+    local_dir,
+    record,
+    root,  # noqa: E402
+    save_state,
+    storage_stats,
+)
 
 
 def windows(table: pa.Table, minutes: int) -> list[pa.Table]:
@@ -50,7 +61,8 @@ class Iceberg:
 
         d = local_dir(storage, "iceberg")
         self.catalog = SqlCatalog(
-            "v0", uri=f"sqlite:///{d}/catalog.db",
+            "v0",
+            uri=f"sqlite:///{d}/catalog.db",
             warehouse=root(storage, "iceberg") if storage == "s3" else f"file://{root(storage, 'iceberg')}",
             **(PYICEBERG_S3 if storage == "s3" else {}),
         )
@@ -91,7 +103,9 @@ class S3Tables(Iceberg):
         self.arn = os.environ["BENCH_TABLE_BUCKET_ARN"]
         self.client = boto3.client("s3tables", region_name=region)
         self.catalog = RestCatalog(
-            "s3tables", uri=f"https://s3tables.{region}.amazonaws.com/iceberg", warehouse=self.arn,
+            "s3tables",
+            uri=f"https://s3tables.{region}.amazonaws.com/iceberg",
+            warehouse=self.arn,
             **{"rest.sigv4-enabled": "true", "rest.signing-name": "s3tables", "rest.signing-region": region},
             **PYICEBERG_S3,  # data and metadata files through the counting proxy, which passes them to the table's bucket
         )
@@ -111,8 +125,12 @@ class S3Tables(Iceberg):
             data_files += files.num_rows
             data_bytes += sum(files["file_size_in_bytes"].to_pylist())
             manifests += len(set(t.inspect.all_manifests()["path"].to_pylist()))  # listed once per snapshot
-        return {"objects": data_files + manifests, "data_files": data_files, "data_bytes": data_bytes,
-                "bytes": data_bytes}
+        return {
+            "objects": data_files + manifests,
+            "data_files": data_files,
+            "data_bytes": data_bytes,
+            "bytes": data_bytes,
+        }
 
     def maintain(self):
         """Wait for S3 Tables' managed compaction to run on both time-series tables (up to V0_S3TABLES_WAIT_S)."""
@@ -177,7 +195,9 @@ class Timelake:
     def __init__(self, storage):
         import timelake
 
-        self.lake = timelake.Lake(root(storage, "timelake"), storage_options=OBJECT_STORE_S3 if storage == "s3" else None)
+        self.lake = timelake.Lake(
+            root(storage, "timelake"), storage_options=OBJECT_STORE_S3 if storage == "s3" else None
+        )
         self.tables = {}
         self.maint = 0
 
@@ -216,8 +236,14 @@ def main():
             import pyarrow.fs as pafs
 
             from common import S3
-            fs = pafs.S3FileSystem(access_key=S3["key"], secret_key=S3["secret"], region=S3["region"],
-                                   endpoint_override="http://localhost:59000", scheme="http")
+
+            fs = pafs.S3FileSystem(
+                access_key=S3["key"],
+                secret_key=S3["secret"],
+                region=S3["region"],
+                endpoint_override="http://localhost:59000",
+                scheme="http",
+            )
             fs.delete_dir_contents(f"bench/v0/{a.system}", missing_dir_ok=True)
         sys_ = SYSTEMS[a.system](a.storage)
         if hasattr(sys_, "reset"):
@@ -237,14 +263,25 @@ def main():
                 sys_.append(name, batch)
                 lat.append(time.perf_counter() - t)
             if i % 100 == 0:
-                print(f"  window {i}/{len(r_w)}  {time.perf_counter() - t0:.1f}s  last commit {lat[-1] * 1000:.0f} ms", flush=True)
+                print(
+                    f"  window {i}/{len(r_w)}  {time.perf_counter() - t0:.1f}s  last commit {lat[-1] * 1000:.0f} ms",
+                    flush=True,
+                )
         total = time.perf_counter() - t0
         rows = sum(b.num_rows for b in r_w) + sum(b.num_rows for b in d_w)
-        save_state(a.storage, a.system, {"tables": sys_.state(), "phase": "ingested",
-                                         "ingested_at": datetime.now(timezone.utc).isoformat()})
+        save_state(
+            a.storage,
+            a.system,
+            {"tables": sys_.state(), "phase": "ingested", "ingested_at": datetime.now(timezone.utc).isoformat()},
+        )
         rec = {
-            "system": a.system, "storage": a.storage, "phase": "ingest", "window_minutes": a.window_minutes,
-            "commits": len(lat), "rows": rows, "seconds": round(total, 2),
+            "system": a.system,
+            "storage": a.storage,
+            "phase": "ingest",
+            "window_minutes": a.window_minutes,
+            "commits": len(lat),
+            "rows": rows,
+            "seconds": round(total, 2),
             "commit_ms_p50": round(statistics.median(lat) * 1000, 1),
             "commit_ms_p95": round(float(np.percentile(lat, 95)) * 1000, 1),
             "commit_ms_max": round(max(lat) * 1000, 1),
@@ -263,9 +300,13 @@ def main():
         state = load_state(a.storage, a.system)
         state.update(tables=sys_.state(), phase="maintained")
         save_state(a.storage, a.system, state)
-        rec = {"system": a.system, "storage": a.storage, "phase": "maintain",
-               "seconds": round(time.perf_counter() - t0, 2),
-               **(sys_.stats() if hasattr(sys_, "stats") else storage_stats(a.storage, a.system))}
+        rec = {
+            "system": a.system,
+            "storage": a.storage,
+            "phase": "maintain",
+            "seconds": round(time.perf_counter() - t0, 2),
+            **(sys_.stats() if hasattr(sys_, "stats") else storage_stats(a.storage, a.system)),
+        }
         if getattr(sys_, "compaction", None) is not None:
             rec["compaction_after_ingest_s"] = sys_.compaction
         record(rec)

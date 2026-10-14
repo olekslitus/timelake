@@ -67,9 +67,12 @@ def load():
         t0 = time.perf_counter()
         # DuckDB streams the Parquet file as CSV straight into COPY.
         export = subprocess.Popen(
-            [sys.executable, "-c",
-             f"import duckdb; duckdb.sql(\"SET TimeZone='UTC'; SET enable_progress_bar=false\"); "
-             f"duckdb.sql(\"COPY (SELECT * FROM '{PARQUET / (t + '.parquet')}') TO '/dev/stdout' (FORMAT csv, HEADER false)\")"],
+            [
+                sys.executable,
+                "-c",
+                f"import duckdb; duckdb.sql(\"SET TimeZone='UTC'; SET enable_progress_bar=false\"); "
+                f"duckdb.sql(\"COPY (SELECT * FROM '{PARQUET / (t + '.parquet')}') TO '/dev/stdout' (FORMAT csv, HEADER false)\")",
+            ],
             stdout=subprocess.PIPE,
         )
         with connect() as c, c.cursor() as cur, cur.copy(f"COPY {t} FROM STDIN (FORMAT csv)") as cp:
@@ -93,7 +96,9 @@ def sizes(c) -> dict:
 def columnstore():
     with connect() as c:
         for t in ("readings", "diagnostics"):
-            c.execute(f"ALTER TABLE {t} SET (timescaledb.enable_columnstore, timescaledb.segmentby = 'tags_id', timescaledb.orderby = 'time DESC')")
+            c.execute(
+                f"ALTER TABLE {t} SET (timescaledb.enable_columnstore, timescaledb.segmentby = 'tags_id', timescaledb.orderby = 'time DESC')"
+            )
             t0 = time.perf_counter()
             for (chunk,) in c.execute(f"SELECT show_chunks('{t}')").fetchall():
                 c.execute(f"CALL convert_to_columnstore('{chunk}')")
@@ -111,7 +116,13 @@ def tier():
             print(f"{t}: tier_chunk issued for all chunks in {time.perf_counter() - t0:.0f}s", flush=True)
         # Tiering runs in the background; wait until no chunk is left in the database.
         while True:
-            left = c.execute("SELECT count(*) FROM timescaledb_information.chunks WHERE hypertable_name IN ('readings','diagnostics') AND NOT is_tiered").fetchone()[0] if has_is_tiered(c) else None
+            left = (
+                c.execute(
+                    "SELECT count(*) FROM timescaledb_information.chunks WHERE hypertable_name IN ('readings','diagnostics') AND NOT is_tiered"
+                ).fetchone()[0]
+                if has_is_tiered(c)
+                else None
+            )
             print(f"chunks not yet tiered: {left}", flush=True)
             if not left:
                 break
@@ -119,7 +130,12 @@ def tier():
 
 
 def has_is_tiered(c) -> bool:
-    return c.execute("SELECT count(*) FROM information_schema.columns WHERE table_schema='timescaledb_information' AND table_name='chunks' AND column_name='is_tiered'").fetchone()[0] > 0
+    return (
+        c.execute(
+            "SELECT count(*) FROM information_schema.columns WHERE table_schema='timescaledb_information' AND table_name='chunks' AND column_name='is_tiered'"
+        ).fetchone()[0]
+        > 0
+    )
 
 
 def rtt_ms(c) -> float:
@@ -152,9 +168,17 @@ def bench(state: str, runs: int = 2):
                 except Exception as e:  # noqa: BLE001
                     status, err = "error", str(e).splitlines()[0][:300]
             rec = {
-                "suite": suite, "engine": engine, "query": name, "status": status, "times": times, "rows": rows,
-                "rtt_ms": round(rtt, 1), "server_ms": [round(t * 1000 - rtt, 1) for t in times],
-                "storage": "tiger-cloud", "version": f"timescaledb{version}", "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "suite": suite,
+                "engine": engine,
+                "query": name,
+                "status": status,
+                "times": times,
+                "rows": rows,
+                "rtt_ms": round(rtt, 1),
+                "server_ms": [round(t * 1000 - rtt, 1) for t in times],
+                "storage": "tiger-cloud",
+                "version": f"timescaledb{version}",
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
                 "machine": f"client {platform.machine()}",
             }
             if err:
@@ -162,7 +186,10 @@ def bench(state: str, runs: int = 2):
             with RESULTS.open("a") as f:
                 f.write(json.dumps(rec) + "\n")
             if status == "ok":
-                print(f"{engine:18} {name:36} first {times[0]:.3f}s best {min(times[1:] or times):.3f}s (rtt {rtt:.0f} ms) rows {rows}", flush=True)
+                print(
+                    f"{engine:18} {name:36} first {times[0]:.3f}s best {min(times[1:] or times):.3f}s (rtt {rtt:.0f} ms) rows {rows}",
+                    flush=True,
+                )
             else:
                 print(f"{engine:18} {name:36} ERROR {err}", flush=True)
 

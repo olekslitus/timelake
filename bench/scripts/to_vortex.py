@@ -28,7 +28,9 @@ def copy(con, src_sql: str, dst: Path, fmt: str, rec: dict):
     rec.update(write_s=round(time.perf_counter() - t, 3), bytes=dst.stat().st_size)
     with (RESULTS / "formats.jsonl").open("a") as f:
         f.write(json.dumps(rec) + "\n")
-    print(f"{rec['dataset']:12} {rec['table']:14} {fmt:8} {rec['layout']:7} {rec['bytes'] / 1e6:9.1f} MB  write {rec['write_s']:6.2f}s")
+    print(
+        f"{rec['dataset']:12} {rec['table']:14} {fmt:8} {rec['layout']:7} {rec['bytes'] / 1e6:9.1f} MB  write {rec['write_s']:6.2f}s"
+    )
 
 
 def main():
@@ -41,7 +43,13 @@ def main():
         base = {"dataset": "tpch", "table": t, "layout": "as-is"}
         with (RESULTS / "formats.jsonl").open("a") as f:
             f.write(json.dumps({**base, "format": "parquet", "bytes": src.stat().st_size}) + "\n")
-        copy(con, f"SELECT * FROM '{src}'", DATA / "tpch" / "vortex" / f"{t}.vortex", "vortex", {**base, "format": "vortex"})
+        copy(
+            con,
+            f"SELECT * FROM '{src}'",
+            DATA / "tpch" / "vortex" / f"{t}.vortex",
+            "vortex",
+            {**base, "format": "vortex"},
+        )
 
     for i in range(10):
         src = DATA / "clickbench" / f"hits_{i}.parquet"
@@ -62,13 +70,28 @@ def main():
         base = {"dataset": "tsbs", "table": t}
         with (RESULTS / "formats.jsonl").open("a") as f:
             f.write(json.dumps({**base, "layout": "as-is", "format": "parquet", "bytes": src.stat().st_size}) + "\n")
-        copy(con, f"SELECT * FROM '{src}'", DATA / "tsbs" / "vortex" / f"{t}.vortex", "vortex",
-             {**base, "layout": "as-is", "format": "vortex"})
+        copy(
+            con,
+            f"SELECT * FROM '{src}'",
+            DATA / "tsbs" / "vortex" / f"{t}.vortex",
+            "vortex",
+            {**base, "layout": "as-is", "format": "vortex"},
+        )
         order = "ORDER BY id" if t == "tags" else "ORDER BY tags_id, time"
-        copy(con, f"SELECT * FROM '{src}' {order}", DATA / "tsbs" / "parquet-sorted" / f"{t}.parquet", "parquet",
-             {**base, "layout": "sorted", "format": "parquet"})
-        copy(con, f"SELECT * FROM '{src}' {order}", DATA / "tsbs" / "vortex-sorted" / f"{t}.vortex", "vortex",
-             {**base, "layout": "sorted", "format": "vortex"})
+        copy(
+            con,
+            f"SELECT * FROM '{src}' {order}",
+            DATA / "tsbs" / "parquet-sorted" / f"{t}.parquet",
+            "parquet",
+            {**base, "layout": "sorted", "format": "parquet"},
+        )
+        copy(
+            con,
+            f"SELECT * FROM '{src}' {order}",
+            DATA / "tsbs" / "vortex-sorted" / f"{t}.vortex",
+            "vortex",
+            {**base, "layout": "sorted", "format": "vortex"},
+        )
 
 
 if __name__ == "__main__":

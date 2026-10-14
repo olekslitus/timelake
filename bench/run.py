@@ -101,11 +101,11 @@ for _e in RUST_ENGINES:
     TSBS_DIALECT[_e] = TSBS_DIALECT["datafusion"]
 # v0 benchmark (v0/README.md): the same TSBS tables streamed into each system by v0/ingest.py.
 V0_ENGINES = {
-    "v0-iceberg": "duckdb",          # DuckDB iceberg_scan over PyIceberg-appended tables (S3 Tables pattern)
-    "v0-s3tables": "duckdb",         # the same over real S3 Tables tables (AWS)
-    "v0-lance-duckdb": "duckdb",     # DuckDB over Lance datasets (pyarrow dataset interface)
-    "v0-lance-df": "datafusion",     # DataFusion + Lance's own scanner (FFILanceTableProvider)
-    "v0-timelake": "datafusion",     # Timelake reader (timelake CLI, DataFusion inside)
+    "v0-iceberg": "duckdb",  # DuckDB iceberg_scan over PyIceberg-appended tables (S3 Tables pattern)
+    "v0-s3tables": "duckdb",  # the same over real S3 Tables tables (AWS)
+    "v0-lance-duckdb": "duckdb",  # DuckDB over Lance datasets (pyarrow dataset interface)
+    "v0-lance-df": "datafusion",  # DataFusion + Lance's own scanner (FFILanceTableProvider)
+    "v0-timelake": "datafusion",  # Timelake reader (timelake CLI, DataFusion inside)
     "v0-timelake-duckdb": "duckdb",  # plain DuckDB iceberg_scan over Timelake tables
 }
 for _e, _d in V0_ENGINES.items():
@@ -117,7 +117,11 @@ LAYOUT = "as-is"  # TSBS tables: "as-is" (time order) or "sorted" by (tags_id, t
 
 def load_queries(suite: str, engine: str) -> list[tuple[str, str]]:
     if suite == "clickbench":
-        name = "datafusion-partitioned" if engine in ("datafusion", "polars", *RUST_ENGINES) else "duckdb-parquet-partitioned"
+        name = (
+            "datafusion-partitioned"
+            if engine in ("datafusion", "polars", *RUST_ENGINES)
+            else "duckdb-parquet-partitioned"
+        )
         lines = (QUERIES / "clickbench" / f"{name}_queries.sql").read_text().strip().splitlines()
         return [(f"q{i:02d}", q) for i, q in enumerate(lines)]
     text = (QUERIES / suite / "queries.sql").read_text()
@@ -277,7 +281,9 @@ def v0_state(system: str) -> dict:
 
 
 def setup_v0(engine: str):
-    tables = v0_state({"v0-iceberg": "iceberg", "v0-s3tables": "s3tables", "v0-timelake-duckdb": "timelake"}.get(engine, "lance"))
+    tables = v0_state(
+        {"v0-iceberg": "iceberg", "v0-s3tables": "s3tables", "v0-timelake-duckdb": "timelake"}.get(engine, "lance")
+    )
     if engine in ("v0-iceberg", "v0-s3tables", "v0-timelake-duckdb"):
         import duckdb
 
@@ -348,7 +354,13 @@ def worker(suite: str, engine: str, name: str, runs: int):
             requests.append(after["requests"] - before["requests"])
             nbytes.append(after["bytes"] - before["bytes"])
             if "kinds" in after:  # AWS mode: requests by kind (GET, HEAD, LIST, PUT, ...)
-                kinds.append({k: n - before["kinds"].get(k, 0) for k, n in after["kinds"].items() if n != before["kinds"].get(k, 0)})
+                kinds.append(
+                    {
+                        k: n - before["kinds"].get(k, 0)
+                        for k, n in after["kinds"].items()
+                        if n != before["kinds"].get(k, 0)
+                    }
+                )
     out = {"times": times, "rows": rows, "setup_s": setup_s}
     if counted:
         out.update(requests=requests, bytes=nbytes, ttfb_ms=proxy_stats()["ttfb_ms"])
@@ -369,16 +381,24 @@ def engine_version(engine: str) -> str:
         return "lance" + __import__("lance").__version__
     if engine in V0_ENGINES:
         return "duckdb" + __import__("duckdb").__version__
-    mod = {"duckdb": "duckdb", "duckdb-iceberg": "duckdb", "duckdb-vortex": "duckdb", "datafusion": "datafusion",
-           "polars": "polars"}[engine]
+    mod = {
+        "duckdb": "duckdb",
+        "duckdb-iceberg": "duckdb",
+        "duckdb-vortex": "duckdb",
+        "datafusion": "datafusion",
+        "polars": "polars",
+    }[engine]
     return __import__(mod).__version__
 
 
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--suite", required=True, choices=["tpch", "clickbench", "tsbs_iot", "iot_point"])
-    p.add_argument("--engine", required=True,
-                   choices=["duckdb", "duckdb-iceberg", "duckdb-vortex", "datafusion", "polars", *RUST_ENGINES, *V0_ENGINES])
+    p.add_argument(
+        "--engine",
+        required=True,
+        choices=["duckdb", "duckdb-iceberg", "duckdb-vortex", "datafusion", "polars", *RUST_ENGINES, *V0_ENGINES],
+    )
     p.add_argument("--layout", default="as-is", choices=["as-is", "sorted"], help="TSBS tables only")
     p.add_argument("--runs", type=int, default=3, help="repeat runs after the first run")
     p.add_argument("--timeout", type=int, default=300, help="seconds per query (all runs)")
@@ -423,12 +443,36 @@ def main():
                 cmd += ["--proxy-admin", S3["admin"].removeprefix("http://")]
             stdin = sqls[name]
         elif a.engine in RUST_ENGINES:
-            cmd = [str(RUST_BIN), "--suite", a.suite, "--runs", str(a.runs), "--storage", a.storage,
-                   "--layout", a.layout, *RUST_ENGINES[a.engine]]
+            cmd = [
+                str(RUST_BIN),
+                "--suite",
+                a.suite,
+                "--runs",
+                str(a.runs),
+                "--storage",
+                a.storage,
+                "--layout",
+                a.layout,
+                *RUST_ENGINES[a.engine],
+            ]
             stdin = sqls[name]
         else:
-            cmd = [sys.executable, __file__, "--suite", a.suite, "--engine", a.engine, "--runs", str(a.runs),
-                   "--storage", a.storage, "--layout", a.layout, "--worker", name]
+            cmd = [
+                sys.executable,
+                __file__,
+                "--suite",
+                a.suite,
+                "--engine",
+                a.engine,
+                "--runs",
+                str(a.runs),
+                "--storage",
+                a.storage,
+                "--layout",
+                a.layout,
+                "--worker",
+                name,
+            ]
         rec = {**meta, "query": name}
         if DIRECT:
             rec["direct"] = True
@@ -446,7 +490,9 @@ def main():
         if before and "kinds" in before:
             # Requests by kind over all runs of this query, for engines that don't report them per run (Rust, Timelake CLI).
             after = proxy_stats()
-            total = {k: n - before["kinds"].get(k, 0) for k, n in after["kinds"].items() if n != before["kinds"].get(k, 0)}
+            total = {
+                k: n - before["kinds"].get(k, 0) for k, n in after["kinds"].items() if n != before["kinds"].get(k, 0)
+            }
             if total:
                 rec["kinds_total"] = total
         with out.open("a") as f:
@@ -454,7 +500,9 @@ def main():
         if rec["status"] == "ok":
             first, hot = rec["times"][0], min(rec["times"][1:] or rec["times"])
             reqs = f"  reqs {rec['requests'][0]}/{min(rec['requests'])}" if "requests" in rec else ""
-            print(f"{a.engine:15} {a.suite:10} {name:36} first {first:8.3f}s  best {hot:8.3f}s  rows {rec['rows']}{reqs}")
+            print(
+                f"{a.engine:15} {a.suite:10} {name:36} first {first:8.3f}s  best {hot:8.3f}s  rows {rec['rows']}{reqs}"
+            )
         else:
             print(f"{a.engine:15} {a.suite:10} {name:36} {rec['status'].upper()}: {rec.get('error', '')[:120]}")
 

@@ -10,7 +10,13 @@ RESULTS = BENCH / "results"
 SYSTEMS = ["iceberg", "lance", "timelake"]
 TABLES = ["tags", "readings", "diagnostics"]
 
-S3 = {"endpoint": "localhost:59100", "admin": "http://localhost:59101", "key": "benchkey", "secret": "benchsecret123", "region": "us-east-1"}
+S3 = {
+    "endpoint": "localhost:59100",
+    "admin": "http://localhost:59101",
+    "key": "benchkey",
+    "secret": "benchsecret123",
+    "region": "us-east-1",
+}
 PYICEBERG_S3 = {
     "s3.endpoint": f"http://{S3['endpoint']}",
     "s3.access-key-id": S3["key"],
@@ -76,8 +82,11 @@ def storage_stats(storage: str, system: str) -> dict:
 
     if storage == "s3":
         fs = pafs.S3FileSystem(
-            access_key=S3["key"], secret_key=S3["secret"], region=S3["region"],
-            endpoint_override=f"http://localhost:59000", scheme="http",
+            access_key=S3["key"],
+            secret_key=S3["secret"],
+            region=S3["region"],
+            endpoint_override=f"http://localhost:59000",
+            scheme="http",
         )
         base = f"bench/v0/{system}"
     else:

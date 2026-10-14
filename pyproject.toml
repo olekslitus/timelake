@@ -5,3 +5,36 @@ members = ["bench", "crates/timelake-py"]
 
 [dependency-groups]
 dev = ["ruff>=0.17", "ty>=0.0.87", "pytest>=8", "duckdb>=1.5", "polars>=1.30"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"                              # the package supports Python 3.10+
+extend-exclude = ["bench/data", "**/target", "*.md"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F", "I", "B", "UP", "SIM", "RUF", "PTH", "N", "ANN", "D", "C4", "C90", "PIE", "RET",
+    "PERF", "FURB", "PL", "PT", "S", "BLE", "ARG", "DTZ", "ERA", "TC",
+]
+ignore = [
+    "D105", "D107",                                   # docstrings on magic methods and __init__
+    "PLR2004",                                        # magic values in comparisons
+    "COM812", "ISC001",                               # conflict with the formatter
+]
+allowed-confusables = ["×", "÷", "—", "–"]            # intentional in report output
+
+[tool.ruff.lint.per-file-ignores]
+"bench/**" = ["T201", "S608", "S603", "S607", "PLC0415"]   # CLI scripts: printing, constant SQL, subprocesses, lazy engine imports
+"**/tests/**" = ["S101", "D", "ANN201", "PLR2004"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.mccabe]
+max-complexity = 12
+
+[tool.ty.environment]
+python-version = "3.13"
+
+[tool.ty.src]
+exclude = ["bench/data", "**/target"]
