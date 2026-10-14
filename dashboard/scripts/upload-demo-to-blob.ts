@@ -44,13 +44,16 @@ if (!process.env.BLOB_READ_WRITE_TOKEN) {
   console.error("Set BLOB_READ_WRITE_TOKEN (Vercel → Storage → your Blob store → .env.local).")
   process.exit(1)
 }
-const files = await walk(DIR)
+// Pointers change on every commit; data, manifests, indexes and vN.metadata.json are immutable.
+const MUTABLE = ["version-hint.text", "timelake-head", "timelake-tables.json"]
+const isMutable = (f: string) => MUTABLE.some((name) => f.endsWith(name))
+// Pointers last, so a reader never finds one before the files it points to.
+const files = (await walk(DIR)).sort((a, b) => Number(isMutable(a)) - Number(isMutable(b)))
 let bytes = 0
 for (const f of files) {
   const pathname = path.relative(DIR, f).split(path.sep).join("/")
   const body = await readFile(f)
-  // Pointers change on every commit; data, manifests and indexes are immutable.
-  const mutable = pathname.endsWith("version-hint.text") || pathname.endsWith("timelake-tables.json")
+  const mutable = isMutable(pathname)
   const blob = await put(pathname, body, {
     access: "public",
     addRandomSuffix: false,
