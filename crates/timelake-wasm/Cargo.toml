@@ -8,6 +8,9 @@ repository = "https://github.com/polythings/timelake"
 homepage = "https://timelake.dev"
 publish = false
 
+# Not part of the root workspace: it targets wasm32 with its own release profile and lock file.
+[workspace]
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 

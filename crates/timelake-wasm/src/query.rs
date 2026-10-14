@@ -338,12 +338,15 @@ fn eq_any(col: &ArrayRef, values: &[Json]) -> Result<BooleanArray, Error> {
     let mut acc: Option<BooleanArray> = None;
     for v in values {
         let m = match (col.data_type(), v) {
-            (DataType::Int32, Json::Number(n)) => {
-                arrow_ord::cmp::eq(col, &Int32Array::new_scalar(n.as_i64().unwrap_or(i64::MIN) as i32))
-            }
-            (DataType::Int64, Json::Number(n)) => {
-                arrow_ord::cmp::eq(col, &Int64Array::new_scalar(n.as_i64().unwrap_or(i64::MIN)))
-            }
+            // A value the column can't hold (1.5, or 2^40 for int) matches no row.
+            (DataType::Int32, Json::Number(n)) => match n.as_i64().and_then(|n| i32::try_from(n).ok()) {
+                Some(n) => arrow_ord::cmp::eq(col, &Int32Array::new_scalar(n)),
+                None => Ok(BooleanArray::from(vec![false; col.len()])),
+            },
+            (DataType::Int64, Json::Number(n)) => match n.as_i64() {
+                Some(n) => arrow_ord::cmp::eq(col, &Int64Array::new_scalar(n)),
+                None => Ok(BooleanArray::from(vec![false; col.len()])),
+            },
             (DataType::Utf8, Json::String(s)) => arrow_ord::cmp::eq(col, &StringArray::new_scalar(s.as_str())),
             (_, v) => {
                 let as_str = arrow_cast::cast(col, &DataType::Utf8).map_err(|e| Error(e.to_string()))?;
@@ -566,4 +569,18 @@ pub fn iso(micros: i64) -> String {
     chrono::DateTime::from_timestamp_micros(micros)
         .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true))
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn int_filter_values_the_column_cannot_hold_match_nothing() {
+        let col: ArrayRef = Arc::new(Int32Array::from(vec![0, 1, 2]));
+        let matches = |v: Json| eq_any(&col, &[v]).unwrap().iter().map(|m| m == Some(true)).collect::<Vec<_>>();
+        assert_eq!(matches(serde_json::json!(1)), [false, true, false]);
+        assert_eq!(matches(serde_json::json!(1.5)), [false, false, false]);
+        assert_eq!(matches(serde_json::json!(4_294_967_297_i64)), [false, false, false]);
+    }
 }
