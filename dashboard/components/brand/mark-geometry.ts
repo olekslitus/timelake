@@ -17,5 +17,6 @@ export const WORDMARK = {
   "letterSpacingEm": -0.045,
   "sizeOfMark": 0.7,
   "gapOfMark": 0.24,
+  "markDropOfMark": 0.06,
   "layout": "row"
 } as const

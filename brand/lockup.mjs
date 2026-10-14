@@ -1,7 +1,8 @@
 // Generates the Timelake lockup (mark + "timelake" in Geist Medium, outlined) as SVG.
 //   bun install && bun brand/lockup.mjs     writes brand/logo/timelake-lockup-*.svg
 // Proportions follow WORDMARK in marks.mjs and match the editor: text size and gap are fractions of
-// the mark's height, and the text box is centered on the mark the way CSS centers a line-height: 1 box.
+// the mark's height, and the text box is centered on the mark the way CSS centers a line-height: 1 box, then raised
+// by markDropOfMark.
 import { mkdirSync, writeFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import path from "node:path"
@@ -24,7 +25,8 @@ export function lockupSvg(name, { color }) {
   const upm = font.unitsPerEm
   const asc = font.ascender / upm,
     desc = -font.descender / upm
-  const baseline = 50 - fs / 2 + (fs - (asc + desc) * fs) / 2 + asc * fs
+  // Raising the text has the same effect as lowering the mark, and keeps the mark in the 0–100 box.
+  const baseline = 50 - fs / 2 + (fs - (asc + desc) * fs) / 2 + asc * fs - 100 * WORDMARK.markDropOfMark
   const x0 = 100 + gap
   const textPath = font.getPath(WORDMARK.text, x0, baseline, fs, {
     kerning: true,

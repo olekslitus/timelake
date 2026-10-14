@@ -1,11 +1,21 @@
-import { useId } from "react"
+import { type CSSProperties, useId } from "react"
 
 import { cn } from "@/lib/utils"
 
 import { MARK, WORDMARK } from "./mark-geometry"
 
 /** The Timelake mark, drawn in the current text color. Geometry comes from brand/marks.mjs. */
-export function TimelakeMark({ className, title, size }: { className?: string; title?: string; size?: number }) {
+export function TimelakeMark({
+  className,
+  title,
+  size,
+  style,
+}: {
+  className?: string
+  title?: string
+  size?: number
+  style?: CSSProperties
+}) {
   const clip = useId()
   return (
     <svg
@@ -13,6 +23,7 @@ export function TimelakeMark({ className, title, size }: { className?: string; t
       width={size}
       height={size}
       className={className}
+      style={style}
       role={title ? "img" : undefined}
       aria-hidden={title ? undefined : true}
     >
@@ -43,7 +54,12 @@ export function TimelakeMark({ className, title, size }: { className?: string; t
 export function TimelakeLockup({ size = 28, className }: { size?: number; className?: string }) {
   return (
     <span className={cn("inline-flex items-center", className)} style={{ gap: size * WORDMARK.gapOfMark }}>
-      <TimelakeMark className="shrink-0" size={size} title="Timelake" />
+      <TimelakeMark
+        className="shrink-0"
+        size={size}
+        title="Timelake"
+        style={{ transform: `translateY(${size * WORDMARK.markDropOfMark}px)` }}
+      />
       <span
         aria-hidden
         className="font-sans leading-none"
