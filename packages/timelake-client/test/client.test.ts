@@ -1,141 +1,113 @@
-// Reads the demo warehouse over HTTP and checks results against the Rust engine (timelake CLI).
-//   scripts/build-demo-warehouse.sh            (repo root; builds for http://127.0.0.1:4100/demo)
-//   bun test                                   (starts scripts/serve-range.mjs itself)
+// Reads a generated warehouse over HTTP and checks the results against the Rust engine.
+// Needs the CLI: `cargo build -p timelake-cli` at the repo root (or set TIMELAKE_CLI).
 import { afterAll, beforeAll, expect, test } from "bun:test"
-import { spawn, spawnSync, type ChildProcess } from "node:child_process"
-import path from "node:path"
 
 import { z } from "zod"
 
 import { Lake, readerVersion, zodSource } from "../src/index"
+import { buildFixture, POINTS, SERIES, type Fixture } from "./fixture"
 
-const ROOT = path.resolve(import.meta.dir, "../../..")
-const PORT = 4111
-const BASE_BUILT = "http://127.0.0.1:4100/demo"
-const BASE = `http://127.0.0.1:${PORT}/demo`
-let server: ChildProcess
+let fx: Fixture
+let lake: Lake
 
-beforeAll(async () => {
-  server = spawn(
-    "bun",
-    [path.join(ROOT, "scripts/serve-range.mjs"), path.join(ROOT, "bench/data/demo-site"), String(PORT)],
-    { stdio: "ignore" },
-  )
-  for (let i = 0; i < 50; i++) {
-    try {
-      if ((await fetch(`${BASE}/timelake-tables.json`)).ok) return
-    } catch {}
-    await new Promise((r) => setTimeout(r, 100))
-  }
-  throw new Error("range server did not start")
+beforeAll(() => {
+  fx = buildFixture()
+  lake = new Lake(fx.url)
 })
-afterAll(() => server?.kill())
-
-// The warehouse was built for port 4100; serve it from the test port.
-const lake = new Lake(BASE, { rewriteUrl: (u) => u.replace(BASE_BUILT, BASE) })
-
-function cliSql(sql: string): Record<string, unknown>[] {
-  const r = spawnSync(
-    path.join(ROOT, "target/release/timelake"),
-    [
-      "-w",
-      BASE_BUILT,
-      "-o",
-      `timelake_local_root=${path.join(ROOT, "bench/data/demo-site")}`,
-      "sql",
-      "--format",
-      "json",
-      sql,
-    ],
-    { encoding: "utf8" },
-  )
-  if (r.status !== 0) throw new Error(r.stderr)
-  return r.stdout
-    .trim()
-    .split("\n")
-    .filter(Boolean)
-    .map((l) => JSON.parse(l))
-}
+afterAll(() => fx?.close())
 
 const Reading = z.object({
   time: z.coerce.date(),
-  tags_id: z.number().int().nullable(),
-  latitude: z.number().nullable(),
-  longitude: z.number().nullable(),
-  elevation: z.number().nullable(),
+  tags_id: z.number().int(),
   velocity: z.number().nullable(),
-  heading: z.number().nullable(),
-  grade: z.number().nullable(),
-  fuel_consumption: z.number().nullable(),
+  name: z.string(),
 })
+
+const byTag = (a: { tags_id: number }, b: { tags_id: number }) => a.tags_id - b.tags_id
 
 test("wasm loads", () => {
   expect(readerVersion()).toBe("0.0.1")
 })
 
 test("lists tables and reads info", async () => {
-  expect(await lake.tables()).toEqual(["tsbs.diagnostics", "tsbs.readings", "tsbs.tags"])
-  const info = await lake.table("tsbs.readings").info()
+  expect(await lake.tables()).toEqual(["iot.readings", "iot.tags", "iot.unindexed"])
+  const info = await lake.table("iot.readings").info()
   expect(info.timeColumn).toBe("time")
   expect(info.seriesKey).toEqual(["tags_id"])
-  expect(info.files.reduce((s, f) => s + f.records, 0)).toBe(1156395)
+  expect(info.chunk).toBe("hour")
+  expect(info.files.length).toBe(24)
+  expect(info.files.reduce((s, f) => s + f.records, 0)).toBe(SERIES * POINTS)
 })
 
 test("latest matches the engine", async () => {
-  const t = lake.table("tsbs.readings", Reading)
+  const t = lake.table("iot.readings", Reading)
   const rows = await t.latest()
-  expect(rows.length).toBe(50)
-  expect(rows[0].time).toBeInstanceOf(Date)
-  const expected = cliSql(
-    "SELECT tags_id, velocity FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY tags_id ORDER BY time DESC) rn FROM tsbs.readings) WHERE rn = 1 ORDER BY tags_id",
-  )
-  const got = [...rows]
-    .sort((a, b) => (a.tags_id ?? 0) - (b.tags_id ?? 0))
-    .map((r) => ({ tags_id: r.tags_id, velocity: r.velocity }))
-  expect(got).toEqual(expected as typeof got)
-  const some = await t.latest({ series: [3, 7] })
-  expect(some.map((r) => r.tags_id).sort()).toEqual([3, 7])
   expect(t.lastStats.requests).toBe(1)
+  const expected = fx.sql(
+    "SELECT tags_id, velocity FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY tags_id ORDER BY time DESC) rn FROM iot.readings) WHERE rn = 1 ORDER BY tags_id",
+  )
+  expect(rows.length).toBe(SERIES)
+  expect(rows[0]?.time).toBeInstanceOf(Date)
+  expect(rows.toSorted(byTag).map((r) => ({ tags_id: r.tags_id, velocity: r.velocity }))).toEqual(
+    expected as { tags_id: number; velocity: number | null }[],
+  )
+  const some = await t.latest({ series: [3, 7] })
+  expect(some.map((r) => r.tags_id).toSorted()).toEqual([3, 7])
 })
 
-test("range matches the engine and prunes", async () => {
-  const t = lake.table("tsbs.readings", Reading)
-  const from = "2026-01-03T12:00:00Z"
-  const to = "2026-01-03T13:00:00Z"
+test("range matches the engine and prunes files", async () => {
+  const t = lake.table("iot.readings", Reading)
+  const from = "2026-01-01T12:00:00Z"
+  const to = "2026-01-01T13:00:00Z"
   const rows = await t.range({ series: 7, from, to })
-  const expected = cliSql(
-    `SELECT time, velocity FROM tsbs.readings WHERE tags_id = 7 AND time >= TIMESTAMP '2026-01-03 12:00:00' AND time < TIMESTAMP '2026-01-03 13:00:00' ORDER BY time`,
+  const expected = fx.sql(
+    `SELECT time, velocity FROM iot.readings WHERE tags_id = 7 AND time >= TIMESTAMP '2026-01-01 12:00:00' AND time < TIMESTAMP '2026-01-01 13:00:00' ORDER BY time`,
   )
-  expect(rows.length).toBe(expected.length)
-  expect(rows.map((r) => r.velocity)).toEqual(expected.map((r) => r.velocity) as number[])
-  expect(t.lastStats.files).toBe(1) // one day partition
+  expect(rows.length).toBe(12)
+  expect(rows.map((r) => r.velocity)).toEqual(expected.map((r) => r.velocity) as (number | null)[])
+  expect(t.lastStats.files).toBe(1) // one hour partition
   const desc = await t.range({ series: 7, limit: 1, order: "desc", columns: ["time", "velocity"] })
   expect(desc.length).toBe(1)
+  expect(desc[0]?.time.toISOString()).toBe("2026-01-01T23:55:00.000Z")
+})
+
+test("queries over more files than the concurrency limit finish (B1)", async () => {
+  const [{ n }] = fx.sql("SELECT count(*) AS n FROM iot.readings") as [{ n: number }]
+  for (const concurrency of [1, 2, 16]) {
+    const t = new Lake(fx.url, { concurrency }).table("iot.readings")
+    expect(await t.range()).toHaveLength(n)
+    expect(t.lastStats.files).toBe(24)
+  }
 })
 
 test("bucket aggregates match the engine", async () => {
-  const t = lake.table("tsbs.readings")
+  const t = lake.table("iot.readings")
   const rows = await t.bucket({ series: 7, every: "1h", agg: { velocity: ["avg", "max"], "*": ["count"] } })
-  const expected = cliSql(
-    "SELECT date_bin(INTERVAL '1 hour', time) AS bucket, avg(velocity) AS velocity_avg, max(velocity) AS velocity_max, count(*) AS count FROM tsbs.readings WHERE tags_id = 7 GROUP BY 1 ORDER BY 1",
+  const expected = fx.sql(
+    "SELECT date_bin(INTERVAL '1 hour', time) AS bucket, avg(velocity) AS velocity_avg, max(velocity) AS velocity_max, count(*) AS count FROM iot.readings WHERE tags_id = 7 GROUP BY 1 ORDER BY 1",
   )
+  expect(rows.length).toBe(24)
   expect(rows.length).toBe(expected.length)
   rows.forEach((r, i) => {
-    expect(r.bucket.toISOString().replace(".000Z", "Z")).toBe(String(expected[i].bucket))
-    expect(r.velocity_avg).toBeCloseTo(Number(expected[i].velocity_avg), 9)
-    expect(r.velocity_max).toBe(Number(expected[i].velocity_max))
-    expect(r.count).toBe(Number(expected[i].count))
+    const e = expected[i] ?? {}
+    expect(r.bucket.toISOString().replace(".000Z", "Z")).toBe(String(e.bucket))
+    expect(r.velocity_avg).toBeCloseTo(Number(e.velocity_avg), 9)
+    expect(r.velocity_max).toBe(Number(e.velocity_max))
+    expect(r.count).toBe(Number(e.count))
   })
   const bySeries = await t.bucket({ series: [1, 2], every: "1d", agg: { velocity: ["avg"] }, by: ["tags_id"] })
-  expect(bySeries.length).toBe(6)
-  expect(bySeries[0].tags_id).toBeDefined()
+  expect(bySeries.map((r) => r.tags_id)).toEqual([1, 2])
 })
 
 test("zod source generation", async () => {
-  const src = await lake.table("tsbs.readings").zodSource()
+  const src = await lake.table("iot.readings").zodSource()
   expect(src).toContain("export const Reading = z.object({")
   expect(src).toContain("time: z.coerce.date(),")
   expect(zodSource({ name: "iot.devices", schema: [{ id: 1, name: "id", type: "string", required: true }] })).toContain(
     "export const Device",
   )
+})
+
+test("tests cannot reach the network", async () => {
+  await expect(fetch("https://example.com/")).rejects.toThrow("tests are offline")
 })
