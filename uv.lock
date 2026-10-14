@@ -1312,7 +1312,7 @@ test = [
 [[package]]
 name = "timelake-bench"
 version = "0.0.0"
-source = { virtual = "bench" }
+source = { editable = "bench" }
 dependencies = [
     { name = "boto3" },
     { name = "botocore", extra = ["crt"] },
@@ -1332,13 +1332,13 @@ dependencies = [
 requires-dist = [
     { name = "boto3", specifier = ">=1.43.112" },
     { name = "botocore", extras = ["crt"], specifier = ">=1.43.112" },
-    { name = "datafusion" },
-    { name = "duckdb" },
-    { name = "numpy" },
-    { name = "polars" },
+    { name = "datafusion", specifier = ">=54" },
+    { name = "duckdb", specifier = ">=1.5" },
+    { name = "numpy", specifier = ">=2" },
+    { name = "polars", specifier = ">=1.30" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.3.6" },
-    { name = "pyarrow" },
-    { name = "pyiceberg", extras = ["sql-sqlite", "pyarrow", "pyiceberg-core"] },
+    { name = "pyarrow", specifier = ">=20" },
+    { name = "pyiceberg", extras = ["sql-sqlite", "pyarrow", "pyiceberg-core"], specifier = ">=0.10" },
     { name = "pylance", specifier = ">=13.0.0" },
     { name = "pytz" },
     { name = "timelake", editable = "crates/timelake-py" },

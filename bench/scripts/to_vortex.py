@@ -7,92 +7,106 @@ Writes, and reports size + write time for each:
   data/tsbs/parquet-sorted/<t>.parquet      sorted by (tags_id, time): the layout Timelake writes
   data/tsbs/vortex-sorted/<t>.vortex        sorted by (tags_id, time)
 
-Results are appended to results/formats.jsonl.
+Results are appended to results/formats.jsonl (replaced on each run).
 """
 
-import json
+from __future__ import annotations
+
+import argparse
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING, TypedDict
 
 import duckdb
 
-DATA = Path(__file__).resolve().parent.parent / "data"
-RESULTS = Path(__file__).resolve().parent.parent / "results"
+from benchlib import DATA, RESULTS, TPCH_TABLES, TSBS_TABLES
+from benchlib.results import append_jsonl
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+FORMATS = RESULTS / "formats.jsonl"
 
 
-def copy(con, src_sql: str, dst: Path, fmt: str, rec: dict):
+class FormatRecord(TypedDict, total=False):
+    """One file of one dataset in one format and layout."""
+
+    dataset: str
+    table: str
+    layout: str
+    """``as-is`` (the source's row order) or ``sorted``."""
+    format: str
+    bytes: int
+    write_s: float
+
+
+def record_source(src: Path, rec: FormatRecord) -> None:
+    """Records the size of an existing Parquet file."""
+    append_jsonl(FORMATS, {**rec, "format": "parquet", "bytes": src.stat().st_size})
+
+
+def copy(con: duckdb.DuckDBPyConnection, src_sql: str, dst: Path, rec: FormatRecord) -> None:
+    """Writes a query result to ``dst`` in ``rec["format"]`` and records its size and write time."""
     dst.parent.mkdir(parents=True, exist_ok=True)
+    fmt = rec["format"]
     opts = "FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 1000000" if fmt == "parquet" else "FORMAT vortex"
-    t = time.perf_counter()
+    start = time.perf_counter()
     con.execute(f"COPY ({src_sql}) TO '{dst}' ({opts})")
-    rec.update(write_s=round(time.perf_counter() - t, 3), bytes=dst.stat().st_size)
-    with (RESULTS / "formats.jsonl").open("a") as f:
-        f.write(json.dumps(rec) + "\n")
+    rec.update(write_s=round(time.perf_counter() - start, 3), bytes=dst.stat().st_size)
+    append_jsonl(FORMATS, rec)
     print(
-        f"{rec['dataset']:12} {rec['table']:14} {fmt:8} {rec['layout']:7} {rec['bytes'] / 1e6:9.1f} MB  write {rec['write_s']:6.2f}s"
+        f"{rec['dataset']:12} {rec['table']:14} {fmt:8} {rec['layout']:7} {rec['bytes'] / 1e6:9.1f} MB  "
+        f"write {rec['write_s']:6.2f}s"
     )
 
 
-def main():
-    con = duckdb.connect()
-    con.execute("INSTALL vortex; LOAD vortex; SET TimeZone = 'UTC'")
-    (RESULTS / "formats.jsonl").unlink(missing_ok=True)
-
-    for t in ["lineitem", "orders", "customer", "part", "partsupp", "supplier", "nation", "region"]:
+def convert_tpch(con: duckdb.DuckDBPyConnection) -> None:
+    """TPC-H tables to Vortex, same row order."""
+    for t in TPCH_TABLES:
         src = DATA / "tpch" / f"{t}.parquet"
-        base = {"dataset": "tpch", "table": t, "layout": "as-is"}
-        with (RESULTS / "formats.jsonl").open("a") as f:
-            f.write(json.dumps({**base, "format": "parquet", "bytes": src.stat().st_size}) + "\n")
-        copy(
-            con,
-            f"SELECT * FROM '{src}'",
-            DATA / "tpch" / "vortex" / f"{t}.vortex",
-            "vortex",
-            {**base, "format": "vortex"},
-        )
+        base: FormatRecord = {"dataset": "tpch", "table": t, "layout": "as-is"}
+        record_source(src, base)
+        copy(con, f"SELECT * FROM '{src}'", DATA / "tpch" / "vortex" / f"{t}.vortex", {**base, "format": "vortex"})
 
+
+def convert_clickbench(con: duckdb.DuckDBPyConnection) -> None:
+    """ClickBench partitions to Vortex, same row order."""
     for i in range(10):
         src = DATA / "clickbench" / f"hits_{i}.parquet"
-        base = {"dataset": "clickbench", "table": f"hits_{i}", "layout": "as-is"}
-        with (RESULTS / "formats.jsonl").open("a") as f:
-            f.write(json.dumps({**base, "format": "parquet", "bytes": src.stat().st_size}) + "\n")
+        base: FormatRecord = {"dataset": "clickbench", "table": f"hits_{i}", "layout": "as-is"}
+        record_source(src, base)
         # Read with binary_as_string so string columns are stored as strings in Vortex too.
         copy(
             con,
             f"SELECT * FROM read_parquet('{src}', binary_as_string=True)",
             DATA / "clickbench" / "vortex" / f"hits_{i}.vortex",
-            "vortex",
             {**base, "format": "vortex"},
         )
 
-    for t in ["tags", "readings", "diagnostics"]:
-        src = DATA / "tsbs" / "parquet" / f"{t}.parquet"
-        base = {"dataset": "tsbs", "table": t}
-        with (RESULTS / "formats.jsonl").open("a") as f:
-            f.write(json.dumps({**base, "layout": "as-is", "format": "parquet", "bytes": src.stat().st_size}) + "\n")
-        copy(
-            con,
-            f"SELECT * FROM '{src}'",
-            DATA / "tsbs" / "vortex" / f"{t}.vortex",
-            "vortex",
-            {**base, "layout": "as-is", "format": "vortex"},
-        )
+
+def convert_tsbs(con: duckdb.DuckDBPyConnection) -> None:
+    """TSBS tables to Vortex, and sorted by (tags_id, time) in both formats."""
+    tsbs = DATA / "tsbs"
+    for t in TSBS_TABLES:
+        src = tsbs / "parquet" / f"{t}.parquet"
+        record_source(src, {"dataset": "tsbs", "table": t, "layout": "as-is"})
+        as_is: FormatRecord = {"dataset": "tsbs", "table": t, "layout": "as-is", "format": "vortex"}
+        copy(con, f"SELECT * FROM '{src}'", tsbs / "vortex" / f"{t}.vortex", as_is)
         order = "ORDER BY id" if t == "tags" else "ORDER BY tags_id, time"
-        copy(
-            con,
-            f"SELECT * FROM '{src}' {order}",
-            DATA / "tsbs" / "parquet-sorted" / f"{t}.parquet",
-            "parquet",
-            {**base, "layout": "sorted", "format": "parquet"},
-        )
-        copy(
-            con,
-            f"SELECT * FROM '{src}' {order}",
-            DATA / "tsbs" / "vortex-sorted" / f"{t}.vortex",
-            "vortex",
-            {**base, "layout": "sorted", "format": "vortex"},
-        )
+        for fmt in ("parquet", "vortex"):
+            sorted_rec: FormatRecord = {"dataset": "tsbs", "table": t, "layout": "sorted", "format": fmt}
+            copy(con, f"SELECT * FROM '{src}' {order}", tsbs / f"{fmt}-sorted" / f"{t}.{fmt}", sorted_rec)
+
+
+def main() -> None:
+    """Converts every dataset and rewrites results/formats.jsonl."""
+    con = duckdb.connect()
+    con.execute("INSTALL vortex; LOAD vortex; SET TimeZone = 'UTC'")
+    FORMATS.unlink(missing_ok=True)
+    convert_tpch(con)
+    convert_clickbench(con)
+    convert_tsbs(con)
 
 
 if __name__ == "__main__":
+    argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter).parse_args()
     main()

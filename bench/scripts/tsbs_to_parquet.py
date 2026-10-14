@@ -8,6 +8,9 @@ Produces the same schema TSBS loads into TimescaleDB, so the ported queries stay
 Usage: tsbs_generate_data ... --format=timescaledb | python tsbs_to_parquet.py <out_dir>
 """
 
+from __future__ import annotations
+
+import argparse
 import sys
 from pathlib import Path
 
@@ -22,28 +25,34 @@ BATCH = 1_000_000
 
 
 class TableWriter:
-    def __init__(self, path: Path, value_cols: list[str]):
+    """Buffers rows of one measurement table and writes them as Parquet row groups of ``BATCH`` rows."""
+
+    def __init__(self, path: Path, value_cols: list[str]) -> None:
         self.value_cols = value_cols
         self.schema = pa.schema(
             [("time", pa.timestamp("us", tz="UTC")), ("tags_id", pa.int32())] + [(c, pa.float64()) for c in value_cols]
         )
         self.writer = pq.ParquetWriter(path, self.schema, compression="zstd")
-        self.reset()
         self.rows = 0
+        self.reset()
 
-    def reset(self):
-        self.time, self.tags_id = [], []
-        self.values = [[] for _ in self.value_cols]
+    def reset(self) -> None:
+        """Empties the buffer."""
+        self.time: list[int] = []
+        self.tags_id: list[int] = []
+        self.values: list[list[float | None]] = [[] for _ in self.value_cols]
 
-    def add(self, tags_id: int, fields: list[str]):
+    def add(self, tags_id: int, fields: list[str]) -> None:
+        """Adds one row: TSBS's nanosecond timestamp, then the values (empty = null)."""
         self.time.append(int(fields[0]) // 1000)
         self.tags_id.append(tags_id)
-        for col, raw in zip(self.values, fields[1:]):
+        for col, raw in zip(self.values, fields[1:], strict=True):
             col.append(float(raw) if raw else None)
         if len(self.time) >= BATCH:
             self.flush()
 
-    def flush(self):
+    def flush(self) -> None:
+        """Writes the buffered rows as one row group."""
         if not self.time:
             return
         arrays = [pa.array(self.time, pa.timestamp("us", tz="UTC")), pa.array(self.tags_id, pa.int32())]
@@ -52,12 +61,14 @@ class TableWriter:
         self.rows += len(self.time)
         self.reset()
 
-    def close(self):
+    def close(self) -> None:
+        """Writes what is left and closes the file."""
         self.flush()
         self.writer.close()
 
 
 def parse_tags(line: str) -> dict[str, str | None]:
+    """``tags,name=truck_1,fleet=South,...`` -> ``{"name": "truck_1", ...}``; empty values are None."""
     out: dict[str, str | None] = {}
     for kv in line.split(",")[1:]:
         k, _, v = kv.partition("=")
@@ -65,46 +76,52 @@ def parse_tags(line: str) -> dict[str, str | None]:
     return out
 
 
-def main(out_dir: Path):
+def tags_table(tag_rows: list[dict[str, str | None]], ids: list[int]) -> pa.Table:
+    """The ``tags`` dimension table; ``ids[i]`` is the id of ``tag_rows[i]``."""
+    floats = {c: [float(v) if (v := r.get(c)) else None for r in tag_rows] for c in TAG_FLOATS}
+    return pa.table(
+        {
+            "id": pa.array(ids, pa.int32()),
+            **{c: pa.array([r.get(c) for r in tag_rows], pa.string()) for c in TAG_COLS},
+            **{c: pa.array(v, pa.float64()) for c, v in floats.items()},
+        }
+    )
+
+
+def main(out_dir: Path) -> None:
+    """Reads TSBS output from stdin and writes the three tables to ``out_dir``."""
     out_dir.mkdir(parents=True, exist_ok=True)
-    readings = TableWriter(out_dir / "readings.parquet", READING_COLS)
-    diagnostics = TableWriter(out_dir / "diagnostics.parquet", DIAG_COLS)
+    writers = {
+        "readings": TableWriter(out_dir / "readings.parquet", READING_COLS),
+        "diagnostics": TableWriter(out_dir / "diagnostics.parquet", DIAG_COLS),
+    }
     tag_ids: dict[str, int] = {}
-    tag_rows: list[dict] = []
+    tag_rows: list[dict[str, str | None]] = []
     current = 0
 
-    for line in sys.stdin:
-        line = line.rstrip("\n")
+    for raw_line in sys.stdin:
+        line = raw_line.rstrip("\n")
         if not line:
             continue
         kind, _, rest = line.partition(",")
         if kind == "tags":
             if "=" not in rest:  # header line
                 continue
-            current = tag_ids.get(rest)
-            if current is None:
-                current = len(tag_ids) + 1
-                tag_ids[rest] = current
-                tag_rows.append({"id": current, **parse_tags(line)})
-        elif kind == "readings":
-            if rest[0].isdigit():
-                readings.add(current, rest.split(","))
-        elif kind == "diagnostics":
-            if rest[0].isdigit():
-                diagnostics.add(current, rest.split(","))
+            if rest not in tag_ids:
+                tag_ids[rest] = len(tag_ids) + 1
+                tag_rows.append(parse_tags(line))
+            current = tag_ids[rest]
+        elif kind in writers and rest[0].isdigit():  # rows start with the timestamp; header lines don't
+            writers[kind].add(current, rest.split(","))
 
-    readings.close()
-    diagnostics.close()
-    tags = pa.table(
-        {
-            "id": pa.array([r["id"] for r in tag_rows], pa.int32()),
-            **{c: pa.array([r.get(c) for r in tag_rows], pa.string()) for c in TAG_COLS},
-            **{c: pa.array([float(r[c]) if r.get(c) else None for r in tag_rows], pa.float64()) for c in TAG_FLOATS},
-        }
-    )
-    pq.write_table(tags, out_dir / "tags.parquet", compression="zstd")
-    print(f"tags={len(tag_rows)} readings={readings.rows} diagnostics={diagnostics.rows}", file=sys.stderr)
+    for writer in writers.values():
+        writer.close()
+    pq.write_table(tags_table(tag_rows, list(tag_ids.values())), out_dir / "tags.parquet", compression="zstd")
+    counts = " ".join(f"{k}={w.rows}" for k, w in writers.items())
+    print(f"tags={len(tag_rows)} {counts}", file=sys.stderr)
 
 
 if __name__ == "__main__":
-    main(Path(sys.argv[1]))
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("out_dir", type=Path)
+    main(p.parse_args().out_dir)

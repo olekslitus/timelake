@@ -58,14 +58,7 @@ data() {
   .bin/tsbs_generate_data --use-case=iot --seed=123 --scale=500 \
     --timestamp-start=2026-01-01T00:00:00Z --timestamp-end=2026-01-04T00:00:00Z \
     --log-interval=10s --format=timescaledb | $PY scripts/tsbs_to_parquet.py data/tsbs/parquet
-  $PY - <<'EOF'
-import duckdb
-con = duckdb.connect("/mnt/bench/tpch.duckdb")
-con.execute("INSTALL tpch; LOAD tpch; CALL dbgen(sf=10)")
-for t in ["lineitem", "orders", "customer", "part", "partsupp", "supplier", "nation", "region"]:
-    con.execute(f"COPY {t} TO 'data/tpch/{t}.parquet' (FORMAT parquet, COMPRESSION zstd)")
-EOF
-  rm -f /mnt/bench/tpch.duckdb
+  $PY scripts/tpch_to_parquet.py data/tpch --scale 10 --scratch /mnt/bench/tpch.duckdb
   for i in $(seq 0 9); do
     curl -fsSL -o data/clickbench/hits_$i.parquet \
       https://datasets.clickhouse.com/hits_compatible/athena_partitioned/hits_$i.parquet

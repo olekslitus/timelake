@@ -27,6 +27,9 @@ allowed-confusables = ["×", "÷", "—", "–"]            # intentional in rep
 "bench/**" = ["T201", "S608", "S603", "S607", "PLC0415"]   # CLI scripts: printing, constant SQL, subprocesses, lazy engine imports
 "**/tests/**" = ["S101", "D", "ANN201", "PLR2004"]
 
+[tool.ruff.lint.isort]
+known-first-party = ["timelake", "benchlib"]           # the package and the benchmarks' shared code
+
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
@@ -35,6 +38,7 @@ max-complexity = 12
 
 [tool.ty.environment]
 python-version = "3.13"
+extra-paths = ["bench/v0"]                            # bench/tests import the v0 scripts (as pytest does)
 
 [tool.ty.src]
 exclude = ["bench/data", "**/target"]

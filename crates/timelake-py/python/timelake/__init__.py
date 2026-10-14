@@ -1,16 +1,52 @@
 """Timelake: the open time-series lakehouse.
 
-    import timelake, pyarrow as pa
-    lake = timelake.Lake("s3://bucket/warehouse")           # or a local path
-    t = lake.create_table("iot.readings", schema, time_column="time", series_key=["device_id"])
-    t.append(batch)                                          # Arrow in: pyarrow, polars, ...
-    lake.sql("SELECT * FROM iot.readings WHERE device_id = 7 AND time > now() - INTERVAL '1 hour'")
-    lake.latest("iot.readings")                              # newest row per device, from the index
-    t.maintain()                                             # compaction/retention/expiry (also runs inline)
+Arrow data in, SQL and pyarrow Tables out, stored as plain Iceberg and Parquet on object storage or local disk:
 
-Tables are plain Iceberg + Parquet: `duckdb.sql("SELECT * FROM iceberg_scan('<table location>')")`.
+>>> import datetime as dt
+>>> import pyarrow as pa
+>>> import timelake
+>>> lake = timelake.Lake("warehouse")  # a local path, or a URL such as "s3://bucket/warehouse"
+>>> schema = pa.schema([("time", pa.timestamp("us", tz="UTC")), ("device_id", pa.int32()), ("temp", pa.float64())])
+>>> table = lake.create_table("iot.readings", schema, time_column="time", series_key=["device_id"])
+>>> now = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)
+>>> batch = pa.table({"time": [now, now], "device_id": [1, 2], "temp": [20.5, 21.0]}, schema=schema)
+>>> table.append(batch)["rows"]
+2
+>>> lake.sql("SELECT avg(temp) AS temp FROM iot.readings").to_pylist()
+[{'temp': 20.75}]
+>>> lake.latest("iot.readings").num_rows  # the newest row per device, from the last-value index
+2
+>>> table.maintain()["files_rewritten"]  # compaction, retention and snapshot expiry (also run inline)
+0
+
+Other engines read the same tables, e.g. DuckDB: ``SELECT * FROM iceberg_scan('<table.location>')``.
 """
 
-from ._timelake import Lake, Table
+from importlib.metadata import version
 
-__all__ = ["Lake", "Table"]
+from timelake._timelake import ConflictError, Lake, Table
+from timelake._types import (
+    AppendResult,
+    ArrowArrayExportable,
+    ArrowSchemaExportable,
+    ArrowStreamExportable,
+    HasArrowSchema,
+    MaintainReport,
+    TableInfo,
+)
+
+__version__ = version("timelake")
+
+__all__ = [
+    "AppendResult",
+    "ArrowArrayExportable",
+    "ArrowSchemaExportable",
+    "ArrowStreamExportable",
+    "ConflictError",
+    "HasArrowSchema",
+    "Lake",
+    "MaintainReport",
+    "Table",
+    "TableInfo",
+    "__version__",
+]

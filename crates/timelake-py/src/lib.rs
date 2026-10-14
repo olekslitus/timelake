@@ -1,76 +1,113 @@
 //! Python bindings: `timelake.Lake` and `timelake.Table`, Arrow in and out.
+//!
+//! Every call that does I/O runs on one shared Tokio runtime with the GIL released.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::future::Future;
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
 use arrow_array::ffi_stream::ArrowArrayStreamReader;
 use arrow_pyarrow::{FromPyArrow, IntoPyArrow};
+use pyo3::create_exception;
 use pyo3::exceptions::{PyFileExistsError, PyKeyError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use timelake::arrow::array::{RecordBatch, RecordBatchIterator, RecordBatchReader};
 use timelake::arrow::datatypes::Schema;
-use timelake::datafusion::prelude::SessionConfig;
-use timelake::{AppendOptions, Chunk, MaintainOptions, Session, TableOptions};
+use timelake::arrow::error::ArrowError;
+use timelake::datafusion::prelude::{DataFrame, SessionConfig};
+use timelake::{AppendOptions, Chunk, Error, MaintainOptions, Session, TableOptions};
 
-fn rt() -> &'static tokio::runtime::Runtime {
-    static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
-    RT.get_or_init(|| tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("tokio runtime"))
+create_exception!(
+    timelake,
+    ConflictError,
+    PyRuntimeError,
+    "Another writer committed first and the operation could not be rebased onto its commit."
+);
+
+fn runtime() -> &'static tokio::runtime::Runtime {
+    static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("failed to start the Tokio runtime")
+    })
 }
 
 /// Runs a future on the shared runtime with the GIL released.
-fn run<F, T>(py: Python<'_>, f: F) -> PyResult<T>
-where
-    F: std::future::Future<Output = timelake::Result<T>> + Send,
-    T: Send,
-{
-    py.detach(|| rt().block_on(f)).map_err(to_py)
+fn run<T: Send>(py: Python<'_>, future: impl Future<Output = timelake::Result<T>> + Send) -> PyResult<T> {
+    py.detach(|| runtime().block_on(future)).map_err(to_py_err)
 }
 
-fn to_py(e: timelake::Error) -> PyErr {
-    match e {
-        timelake::Error::NotFound(m) => PyKeyError::new_err(m),
-        timelake::Error::AlreadyExists(m) => PyFileExistsError::new_err(m),
-        timelake::Error::Invalid(m) | timelake::Error::Config(m) => PyValueError::new_err(m),
-        e => PyRuntimeError::new_err(e.to_string()),
+/// Maps engine errors to the closest built-in Python exception.
+fn to_py_err(err: Error) -> PyErr {
+    match err {
+        Error::NotFound(msg) => PyKeyError::new_err(msg),
+        Error::AlreadyExists(msg) => PyFileExistsError::new_err(msg),
+        Error::Conflict(msg) => ConflictError::new_err(msg),
+        Error::Invalid(msg) | Error::Config(msg) => PyValueError::new_err(msg),
+        Error::Format(err) => PyValueError::new_err(err.to_string()),
+        Error::Arrow(err) => arrow_err(err),
+        err => PyRuntimeError::new_err(err.to_string()),
     }
+}
+
+/// Bad input data (a cast that can't be done, a schema that doesn't fit) is a `ValueError`.
+fn arrow_err(err: ArrowError) -> PyErr {
+    match err {
+        ArrowError::CastError(_)
+        | ArrowError::SchemaError(_)
+        | ArrowError::InvalidArgumentError(_)
+        | ArrowError::ParseError(_)
+        | ArrowError::ComputeError(_) => PyValueError::new_err(err.to_string()),
+        err => PyRuntimeError::new_err(err.to_string()),
+    }
+}
+
+/// Locks a handle's state. Poisoning is harmless here: the state is only ever replaced whole.
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// Reads any Arrow-compatible object (pyarrow Table/RecordBatch/RecordBatchReader, polars,
 /// anything with `__arrow_c_stream__`) into record batches.
-fn batches(data: &Bound<'_, PyAny>) -> PyResult<Vec<RecordBatch>> {
-    if let Ok(b) = RecordBatch::from_pyarrow_bound(data) {
-        return Ok(vec![b]);
+fn read_batches(data: &Bound<'_, PyAny>) -> PyResult<Vec<RecordBatch>> {
+    if let Ok(batch) = RecordBatch::from_pyarrow_bound(data) {
+        return Ok(vec![batch]);
     }
-    let reader = ArrowArrayStreamReader::from_pyarrow_bound(data)?;
-    reader
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e: timelake::arrow::error::ArrowError| PyValueError::new_err(e.to_string()))
+    ArrowArrayStreamReader::from_pyarrow_bound(data)?.collect::<Result<_, _>>().map_err(arrow_err)
 }
 
-fn to_pyarrow_table(py: Python<'_>, schema: Arc<Schema>, batches: Vec<RecordBatch>) -> PyResult<Py<PyAny>> {
+/// Reads a pyarrow schema, or the `.schema` of an object that has one, such as a pyarrow Table.
+fn read_schema(schema: &Bound<'_, PyAny>) -> PyResult<Schema> {
+    Schema::from_pyarrow_bound(schema).or_else(|_| Schema::from_pyarrow_bound(&schema.getattr("schema")?))
+}
+
+/// Runs a query and returns its result as a `pyarrow.Table`.
+fn collect(py: Python<'_>, query: impl Future<Output = timelake::Result<DataFrame>> + Send) -> PyResult<Py<PyAny>> {
+    let (schema, batches) = run(py, async move {
+        let df = query.await?;
+        let schema = Arc::new(df.schema().as_arrow().clone());
+        Ok((schema, df.collect().await?))
+    })?;
     let reader: Box<dyn RecordBatchReader + Send> =
         Box::new(RecordBatchIterator::new(batches.into_iter().map(Ok), schema));
-    let r = reader.into_pyarrow(py)?;
-    Ok(r.call_method0("read_all")?.unbind())
+    Ok(reader.into_pyarrow(py)?.call_method0("read_all")?.unbind())
 }
 
 /// A warehouse of Timelake tables on any object store or local disk.
-///
-/// >>> lake = timelake.Lake("s3://bucket/warehouse", storage_options={"aws_region": "us-east-1"})
 #[pyclass(frozen, module = "timelake")]
 struct Lake {
     inner: timelake::Lake,
+    /// One query session per namespace, so catalog caches survive between `sql` calls.
     sessions: Mutex<HashMap<String, Session>>,
 }
 
 impl Lake {
     fn session(&self, namespace: &str) -> Session {
-        let mut s = self.sessions.lock().unwrap();
-        s.entry(namespace.to_string())
+        lock(&self.sessions)
+            .entry(namespace.to_owned())
             .or_insert_with(|| {
-                let cfg = SessionConfig::new().with_default_catalog_and_schema("timelake", namespace);
-                Session::with_config(self.inner.clone(), cfg)
+                let config = SessionConfig::new().with_default_catalog_and_schema("timelake", namespace);
+                Session::with_config(self.inner.clone(), config)
             })
             .clone()
     }
@@ -81,96 +118,80 @@ impl Lake {
     #[new]
     #[pyo3(signature = (location, storage_options=None))]
     fn new(location: &str, storage_options: Option<HashMap<String, String>>) -> PyResult<Self> {
-        let _guard = rt().enter();
-        let inner = timelake::Lake::open(location, storage_options.unwrap_or_default()).map_err(to_py)?;
+        // Opening an object store may spawn tasks, so it needs a runtime context.
+        let _guard = runtime().enter();
+        let inner = timelake::Lake::open(location, storage_options.unwrap_or_default()).map_err(to_py_err)?;
         Ok(Self { inner, sessions: Mutex::default() })
     }
 
+    /// The warehouse URL.
     #[getter]
-    fn location(&self) -> String {
-        self.inner.location().to_string()
+    fn location(&self) -> &str {
+        self.inner.location()
     }
 
     /// Creates a table from a pyarrow schema (or anything with `.schema`).
-    ///
-    /// `time_column` makes it a time-series table: partitioned by `chunk` (hour/day/month), sorted
-    /// by `(series_key…, time_column)`, with a last-value index and automatic maintenance.
-    #[pyo3(signature = (name, schema, time_column=None, series_key=None, chunk=None, retention=None, dedup=None, properties=None))]
-    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        name, schema, time_column=None, series_key=None, chunk=None, retention=None, dedup=None, properties=None
+    ))]
+    #[expect(clippy::too_many_arguments, reason = "mirrors the Python keyword arguments")]
     fn create_table(
         &self,
         py: Python<'_>,
-        name: &str,
+        name: String,
         schema: &Bound<'_, PyAny>,
         time_column: Option<String>,
         series_key: Option<Vec<String>>,
-        chunk: Option<String>,
+        chunk: Option<&str>,
         retention: Option<String>,
         dedup: Option<bool>,
         properties: Option<HashMap<String, String>>,
     ) -> PyResult<Table> {
-        let schema = match Schema::from_pyarrow_bound(schema) {
-            Ok(s) => s,
-            Err(_) => Schema::from_pyarrow_bound(&schema.getattr("schema")?)?,
-        };
-        let opts = TableOptions {
+        let schema = read_schema(schema)?;
+        let options = TableOptions {
             time_column,
             series_key: series_key.unwrap_or_default(),
-            chunk: chunk.as_deref().map(Chunk::parse).transpose().map_err(|e| to_py(e.into()))?,
+            chunk: chunk.map(Chunk::parse).transpose().map_err(|err| to_py_err(err.into()))?,
             dedup,
             retention,
             properties: properties.unwrap_or_default(),
         };
         let lake = self.inner.clone();
-        let name = name.to_string();
-        let t = run(py, async move { lake.create_table(&name, &schema, opts).await })?;
-        Ok(Table { inner: Mutex::new(t) })
+        let table = run(py, async move { lake.create_table(&name, &schema, options).await })?;
+        Ok(Table::new(table))
     }
 
-    /// Opens an existing table.
-    fn table(&self, py: Python<'_>, name: &str) -> PyResult<Table> {
+    /// Opens an existing table at its latest version.
+    fn table(&self, py: Python<'_>, name: String) -> PyResult<Table> {
         let lake = self.inner.clone();
-        let name = name.to_string();
-        let t = run(py, async move { lake.table(&name).await })?;
-        Ok(Table { inner: Mutex::new(t) })
+        let table = run(py, async move { lake.table(&name).await })?;
+        Ok(Table::new(table))
     }
 
     /// Names of all tables as "namespace.table".
     fn tables(&self, py: Python<'_>) -> PyResult<Vec<String>> {
         let lake = self.inner.clone();
-        let v = run(py, async move { lake.all_tables().await })?;
-        Ok(v.into_iter().map(|t| t.to_string()).collect())
+        let names = run(py, async move { lake.all_tables().await })?;
+        Ok(names.iter().map(ToString::to_string).collect())
     }
 
-    fn drop_table(&self, py: Python<'_>, name: &str) -> PyResult<()> {
+    /// Deletes a table and its files.
+    fn drop_table(&self, py: Python<'_>, name: String) -> PyResult<()> {
         let lake = self.inner.clone();
-        let name = name.to_string();
         run(py, async move { lake.drop_table(&name).await })
     }
 
     /// Runs SQL and returns a pyarrow Table. Unqualified names resolve in `namespace`.
     #[pyo3(signature = (query, namespace="default"))]
-    fn sql(&self, py: Python<'_>, query: &str, namespace: &str) -> PyResult<Py<PyAny>> {
+    fn sql(&self, py: Python<'_>, query: String, namespace: &str) -> PyResult<Py<PyAny>> {
         let session = self.session(namespace);
-        let query = query.to_string();
-        let (schema, out) = run(py, async move {
-            let df = session.sql(&query).await?;
-            let schema = Arc::new(df.schema().as_arrow().clone());
-            Ok((schema, df.collect().await?))
-        })?;
-        to_pyarrow_table(py, schema, out)
+        collect(py, async move { session.sql(&query).await })
     }
 
-    /// Newest row of every series of a table, as a pyarrow Table.
-    fn latest(&self, py: Python<'_>, table: &str) -> PyResult<Py<PyAny>> {
-        let session = self.session("default");
-        let table = table.to_string();
-        let (schema, out) = run(py, async move {
-            let df = session.latest(&table).await?;
-            let schema = Arc::new(df.schema().as_arrow().clone());
-            Ok((schema, df.collect().await?))
-        })?;
-        to_pyarrow_table(py, schema, out)
+    /// The newest row of every series of a table, as a pyarrow Table.
+    fn latest(&self, py: Python<'_>, table: String) -> PyResult<Py<PyAny>> {
+        let session = self.session(timelake::DEFAULT_NAMESPACE);
+        collect(py, async move { session.latest(&table).await })
     }
 
     fn __repr__(&self) -> String {
@@ -178,47 +199,55 @@ impl Lake {
     }
 }
 
-/// A Timelake table. Methods that commit (append, maintain) advance this handle to the new
-/// version.
+/// A Timelake table. Methods that commit (append, maintain) advance this handle to the new version.
 #[pyclass(frozen, module = "timelake")]
 struct Table {
     inner: Mutex<timelake::Table>,
 }
 
 impl Table {
-    fn get(&self) -> timelake::Table {
-        self.inner.lock().unwrap().clone()
+    fn new(table: timelake::Table) -> Self {
+        Self { inner: Mutex::new(table) }
     }
-    fn set(&self, t: timelake::Table) {
-        *self.inner.lock().unwrap() = t;
+
+    /// A snapshot of the handle, so the lock isn't held while a call runs.
+    fn get(&self) -> timelake::Table {
+        lock(&self.inner).clone()
+    }
+
+    fn set(&self, table: timelake::Table) {
+        *lock(&self.inner) = table;
     }
 }
 
 #[pymethods]
 impl Table {
+    /// The full name, "namespace.table".
     #[getter]
     fn name(&self) -> String {
-        self.get().name.to_string()
+        lock(&self.inner).name.to_string()
     }
 
+    /// The table's root URL.
     #[getter]
     fn location(&self) -> String {
-        self.get().location
+        lock(&self.inner).location.clone()
     }
 
+    /// The version this handle is at.
     #[getter]
     fn version(&self) -> u64 {
-        self.get().version
+        lock(&self.inner).version
     }
 
     /// The table's pyarrow schema.
     #[getter]
     fn schema(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        Ok(self.get().schema().as_ref().clone().into_pyarrow(py)?.unbind())
+        let schema = lock(&self.inner).schema();
+        Ok(Arc::unwrap_or_clone(schema).into_pyarrow(py)?.unbind())
     }
 
-    /// Appends Arrow data (pyarrow Table/RecordBatch/reader, polars DataFrame, …) as one commit.
-    /// `batch_id` makes the append idempotent. Returns commit statistics.
+    /// Appends Arrow data as one commit and returns commit statistics.
     #[pyo3(signature = (data, batch_id=None, maintain=None))]
     fn append<'py>(
         &self,
@@ -227,95 +256,141 @@ impl Table {
         batch_id: Option<String>,
         maintain: Option<bool>,
     ) -> PyResult<Bound<'py, PyDict>> {
-        let batches = batches(data)?;
-        let t = self.get();
-        let opts = AppendOptions { batch_id, maintain, ..Default::default() };
-        let (t, r) = run(py, async move { t.append(&batches, opts).await })?;
-        self.set(t.clone());
-        let d = PyDict::new(py);
-        d.set_item("rows", r.rows)?;
-        d.set_item("files", r.files)?;
-        d.set_item("bytes", r.bytes)?;
-        d.set_item("version", t.version)?;
-        d.set_item("commit_ms", r.commit.duration.as_secs_f64() * 1000.0)?;
-        d.set_item("attempts", r.commit.attempts)?;
-        d.set_item("duplicate", r.commit.duplicate)?;
-        if let Some(m) = r.maintenance {
-            d.set_item("maintenance", report(py, &m)?)?;
+        let batches = read_batches(data)?;
+        let table = self.get();
+        let options = AppendOptions { batch_id, maintain, ..AppendOptions::default() };
+        let (table, result) = run(py, async move { table.append(&batches, options).await })?;
+        let summary = AppendSummary {
+            rows: result.rows,
+            files: result.files,
+            bytes: result.bytes,
+            version: table.version,
+            commit_ms: result.commit.duration.as_secs_f64() * 1000.0,
+            attempts: result.commit.attempts,
+            duplicate: result.commit.duplicate,
+        };
+        self.set(table);
+        // `maintenance` is only present when inline maintenance ran.
+        let dict = summary.into_pyobject(py)?;
+        if let Some(report) = &result.maintenance {
+            dict.set_item("maintenance", MaintainSummary::from(report))?;
         }
-        Ok(d)
+        Ok(dict)
     }
 
-    /// Compaction (sort + dedup), retention, snapshot expiry. Returns what was done.
+    /// Compaction (sort + dedup), retention and snapshot expiry. Returns what was done.
     #[pyo3(signature = (compact=true, retention=true, expire=true))]
-    fn maintain<'py>(
-        &self,
-        py: Python<'py>,
-        compact: bool,
-        retention: bool,
-        expire: bool,
-    ) -> PyResult<Bound<'py, PyDict>> {
-        let t = self.get();
-        let opts = MaintainOptions { compact, retention, expire, ..Default::default() };
-        let (t, r) = run(py, async move { t.maintain(opts).await })?;
-        self.set(t);
-        report(py, &r)
+    fn maintain(&self, py: Python<'_>, compact: bool, retention: bool, expire: bool) -> PyResult<MaintainSummary> {
+        let table = self.get();
+        let options = MaintainOptions { compact, retention, expire, ..MaintainOptions::default() };
+        let (table, report) = run(py, async move { table.maintain(options).await })?;
+        self.set(table);
+        Ok(MaintainSummary::from(&report))
     }
 
     /// Reloads the latest committed version.
     fn refresh(&self, py: Python<'_>) -> PyResult<()> {
-        let t = self.get();
-        let t = run(py, async move { t.refresh().await })?;
-        self.set(t);
+        let table = self.get();
+        let table = run(py, async move { table.refresh().await })?;
+        self.set(table);
         Ok(())
     }
 
     /// Contract, size and layout of the current version.
-    fn info<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let t = self.get();
-        let t2 = t.clone();
-        let (files, manifests) = run(py, async move { Ok((t2.files().await?, t2.manifests().await?.len())) })?;
-        let c = &t.contract;
-        let d = PyDict::new(py);
-        d.set_item("name", t.name.to_string())?;
-        d.set_item("version", t.version)?;
-        d.set_item("location", &t.location)?;
-        d.set_item("time_column", &c.time_column)?;
-        d.set_item("series_key", &c.series_key)?;
-        d.set_item("chunk", c.chunk.map(|c| c.as_str()))?;
-        d.set_item("dedup", c.dedup)?;
-        d.set_item("rows", files.iter().map(|f| f.data_file.record_count()).sum::<u64>())?;
-        d.set_item("files", files.len())?;
-        d.set_item("bytes", files.iter().map(|f| f.data_file.file_size_in_bytes()).sum::<u64>())?;
-        d.set_item("snapshots", t.metadata.snapshots().len())?;
-        d.set_item("manifests", manifests)?;
-        d.set_item("last_value_index", t.last_value_index())?;
-        Ok(d)
+    fn info(&self, py: Python<'_>) -> PyResult<TableInfo> {
+        let table = self.get();
+        let (files, manifests) = run(py, {
+            let table = table.clone();
+            async move { Ok((table.files().await?, table.manifests().await?.len())) }
+        })?;
+        let contract = &table.contract;
+        Ok(TableInfo {
+            name: table.name.to_string(),
+            version: table.version,
+            location: table.location.clone(),
+            time_column: contract.time_column.clone(),
+            series_key: contract.series_key.clone(),
+            chunk: contract.chunk.map(Chunk::as_str),
+            dedup: contract.dedup,
+            rows: files.iter().map(|f| f.data_file.record_count()).sum(),
+            files: files.len(),
+            bytes: files.iter().map(|f| f.data_file.file_size_in_bytes()).sum(),
+            snapshots: table.metadata.snapshots().len(),
+            manifests,
+            last_value_index: table.last_value_index(),
+        })
     }
 
     fn __repr__(&self) -> String {
-        let t = self.get();
-        format!("Table({}, v{})", t.name, t.version)
+        let table = lock(&self.inner);
+        format!("Table({}, v{})", table.name, table.version)
     }
 }
 
-fn report<'py>(py: Python<'py>, r: &timelake::MaintainReport) -> PyResult<Bound<'py, PyDict>> {
-    let d = PyDict::new(py);
-    d.set_item("partitions_compacted", r.partitions_compacted)?;
-    d.set_item("files_rewritten", r.files_rewritten)?;
-    d.set_item("files_written", r.files_written)?;
-    d.set_item("rows_rewritten", r.rows_rewritten)?;
-    d.set_item("duplicates_removed", r.duplicates_removed)?;
-    d.set_item("partitions_dropped", r.partitions_dropped)?;
-    d.set_item("snapshots_expired", r.snapshots_expired)?;
-    d.set_item("objects_deleted", r.objects_deleted)?;
-    d.set_item("seconds", r.duration.as_secs_f64())?;
-    Ok(d)
+/// `Table.append` result (a dict in Python; keys are part of the documented API).
+#[derive(IntoPyObject)]
+struct AppendSummary {
+    rows: usize,
+    files: usize,
+    bytes: u64,
+    version: u64,
+    commit_ms: f64,
+    attempts: usize,
+    duplicate: bool,
+}
+
+/// `Table.maintain` result, also `maintenance` in an append result.
+#[derive(IntoPyObject)]
+struct MaintainSummary {
+    partitions_compacted: usize,
+    files_rewritten: usize,
+    files_written: usize,
+    rows_rewritten: u64,
+    duplicates_removed: u64,
+    partitions_dropped: usize,
+    snapshots_expired: usize,
+    objects_deleted: usize,
+    seconds: f64,
+}
+
+impl From<&timelake::MaintainReport> for MaintainSummary {
+    fn from(report: &timelake::MaintainReport) -> Self {
+        Self {
+            partitions_compacted: report.partitions_compacted,
+            files_rewritten: report.files_rewritten,
+            files_written: report.files_written,
+            rows_rewritten: report.rows_rewritten,
+            duplicates_removed: report.duplicates_removed,
+            partitions_dropped: report.partitions_dropped,
+            snapshots_expired: report.snapshots_expired,
+            objects_deleted: report.objects_deleted,
+            seconds: report.duration.as_secs_f64(),
+        }
+    }
+}
+
+/// `Table.info` result.
+#[derive(IntoPyObject)]
+struct TableInfo {
+    name: String,
+    version: u64,
+    location: String,
+    time_column: Option<String>,
+    series_key: Vec<String>,
+    chunk: Option<&'static str>,
+    dedup: bool,
+    rows: u64,
+    files: usize,
+    bytes: u64,
+    snapshots: usize,
+    manifests: usize,
+    last_value_index: Option<String>,
 }
 
 #[pymodule]
 fn _timelake(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Lake>()?;
     m.add_class::<Table>()?;
+    m.add("ConflictError", m.py().get_type::<ConflictError>())?;
     Ok(())
 }
