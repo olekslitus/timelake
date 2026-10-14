@@ -1,3 +1,5 @@
+import Link from "next/link"
+
 import { TimelakeLockup } from "@/components/brand/timelake-mark"
 import { SiteHeader } from "@/components/site-header"
 import { LICENSE_URL, REPO_URL } from "@/lib/site"
@@ -15,7 +17,10 @@ export default function SiteLayout({ children }: LayoutProps<"/">) {
           </div>
           <div className="flex flex-col gap-1 text-xs text-muted-foreground sm:items-end">
             <span className="label-mono">
-              v0 ·{" "}
+              <Link href="/docs/changelog" className="hover:text-foreground">
+                v0
+              </Link>{" "}
+              ·{" "}
               <a href={LICENSE_URL} className="hover:text-foreground">
                 Apache 2.0
               </a>{" "}

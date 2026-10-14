@@ -18,7 +18,8 @@ New here? Read [How it works](https://timelake.dev/docs/how-it-works) and the
 4. **One definition of each thing.** Before writing a helper, constant or type, look for an existing one. Copying is
    how the last cleanup started.
 5. **Behaviour, docs and tests change together.** A pull request that changes what users see also updates the docs
-   ([dashboard/app/(site)/docs](dashboard/app/(site)/docs)) and adds or updates tests.
+   ([dashboard/app/(site)/docs](dashboard/app/(site)/docs)), adds or updates tests, and adds a line to
+   [CHANGELOG.md](CHANGELOG.md).
 
 ## Comments and docs
 
@@ -111,6 +112,21 @@ After changing `crates/timelake-wasm` or `crates/timelake-format`, rebuild the e
   `Client: …`, `Site: …`, `Docs: …`, `bench: …` or `SPEC: …`. Add a body when the why isn't obvious.
 - **Scope:** one logical change per commit. Formatting-only commits go in `.git-blame-ignore-revs`.
 - **Secrets:** never commit credentials or `.env*` files (`.env.example` is the exception).
+
+## Changelog
+
+[CHANGELOG.md](CHANGELOG.md) is for users, not a list of commits. The website renders it at
+[timelake.dev/docs/changelog](https://timelake.dev/docs/changelog), so links in it use full URLs.
+
+- **What gets a line:** anything a user can notice: a feature, a behaviour or API change, a bug fix, a performance gain
+  big enough to mention, a change to the files a table writes. Refactors, CI and docs-only changes don't.
+- **Where:** under `## Unreleased`, in `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed` or `Security`, in the same
+  commit as the change.
+- **How:** one line, written for someone using Timelake. Say what changed for them and, for a breaking change, what to
+  do. For example, "Commits make one round trip fewer and take about half as long", not "Engine: parallel uploads".
+- **Releasing:** rename `Unreleased` to `## 0.1.0 – 2026-11-02`, bump the version in `Cargo.toml`,
+  `crates/timelake-py/pyproject.toml`, `crates/timelake-wasm/Cargo.toml` and `packages/timelake-client/package.json`,
+  commit, and tag it `v0.1.0`.
 
 ## License
 

@@ -18,9 +18,9 @@ Next.js website (`dashboard/`) and benchmarks (`bench/`).
 - **Fix the code, not the checks.** Don't loosen lint, type or format configs. Don't add `#[allow]`, `noqa`,
   `type: ignore` or `oxlint-disable` to get a check passing. Use `#[expect(..., reason = "...")]` or a targeted ignore
   with a reason only when the tool is genuinely wrong.
-- **Keep things in sync:** a change in behaviour updates the docs and tests in the same commit. A change to the Python
-  bindings updates `_timelake.pyi`. A change to `timelake-wasm` or `timelake-format` gets a rebuilt WASM bundle
-  (`bun run build:wasm` in `packages/timelake-client`).
+- **Keep things in sync:** a change in behaviour updates the docs, the tests and `CHANGELOG.md` (under `Unreleased`) in
+  the same commit. A change to the Python bindings updates `_timelake.pyi`. A change to `timelake-wasm` or
+  `timelake-format` gets a rebuilt WASM bundle (`bun run build:wasm` in `packages/timelake-client`).
 - **Don't run Prettier or ESLint.** Formatting is oxfmt, linting oxlint, Python ruff, Rust rustfmt and clippy.
 - **Never commit secrets** or `.env*` files. Don't touch AWS, Vercel settings, Docker containers or other services
   unless asked.

@@ -135,7 +135,7 @@ uv run pytest crates/timelake-py/tests                   # Python package
 uv run pytest bench/tests                                # benchmark helpers
 cargo build -p timelake-cli && (cd packages/timelake-client && bun test)   # TS client + WASM vs the engine
 ```
-See [Development](https://timelake.dev/docs/development) for each part, the tools and CI, and [CONTRIBUTING.md](CONTRIBUTING.md) for the code guide.
+See [Development](https://timelake.dev/docs/development) for each part, the tools and CI, [CONTRIBUTING.md](CONTRIBUTING.md) for the code guide, and [CHANGELOG.md](CHANGELOG.md) for what changed.
 
 ## License
 Licensed under the [Apache License, Version 2.0](LICENSE). Unless you state otherwise, any contribution you submit for inclusion in Timelake is licensed under the same terms, without additional conditions (Apache 2.0, §5).

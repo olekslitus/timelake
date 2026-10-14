@@ -1,3 +1,5 @@
+import { createRequire } from "node:module"
+
 import createMDX from "@next/mdx"
 import type { NextConfig } from "next"
 import { createCssVariablesTheme } from "shiki"
@@ -26,13 +28,17 @@ const nextConfig: NextConfig = {
 
 // Turbopack takes plugins by name with JSON options. Code is highlighted at build time; the colors are CSS
 // variables (--shiki-*, in globals.css), so one render follows the light and dark themes.
+// Plugins are passed as absolute paths: the loader resolves names next to each file, and CHANGELOG.md (rendered at
+// /docs/changelog) sits outside dashboard/.
+const plugin = createRequire(import.meta.url).resolve
 const withMDX = createMDX({
+  extension: /\.mdx?$/,
   options: {
-    remarkPlugins: ["remark-gfm"],
+    remarkPlugins: [plugin("remark-gfm")],
     rehypePlugins: [
-      "rehype-slug",
-      ["rehype-autolink-headings", { behavior: "wrap" }],
-      ["rehype-pretty-code", { theme: createCssVariablesTheme({ name: "site" }), keepBackground: false }],
+      plugin("rehype-slug"),
+      [plugin("rehype-autolink-headings"), { behavior: "wrap" }],
+      [plugin("rehype-pretty-code"), { theme: createCssVariablesTheme({ name: "site" }), keepBackground: false }],
     ],
   },
 })

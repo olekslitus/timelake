@@ -28,6 +28,7 @@ export const DOCS_NAV: { title: string; items: { href: string; label: string }[]
       { href: "/docs/development", label: "Development" },
       { href: "/docs/benchmarks", label: "Benchmarks" },
       { href: "/docs/roadmap", label: "Roadmap & limitations" },
+      { href: "/docs/changelog", label: "Changelog" },
     ],
   },
 ]
