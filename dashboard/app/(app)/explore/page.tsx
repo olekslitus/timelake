@@ -1,4 +1,5 @@
 import { Database, HardDrive, History, Rows3 } from "lucide-react"
+import type { Metadata } from "next"
 import { Suspense } from "react"
 
 import { ErrorState } from "@/components/error-state"
@@ -7,6 +8,8 @@ import { StatCard, StatGrid, StatGridSkeleton } from "@/components/stat-card"
 import { TablesList, TablesListSkeleton } from "@/components/tables-list"
 import { formatBytes, formatCompact, formatNumber } from "@/lib/format"
 import { attempt, loadTables } from "@/lib/lake"
+
+export const metadata: Metadata = { title: "Explorer" }
 
 export default function OverviewPage() {
   return (

@@ -1,3 +1,5 @@
+import type { Bucket } from "@/lib/buckets"
+
 export type Row = Record<string, unknown>
 
 export type TableInfo = {
@@ -31,15 +33,33 @@ export type TableInfo = {
   }[]
 }
 
-/** One series of a time-series table, bucketed: avg, min, max and count per bucket. */
-export type SeriesQuery = { table: string; column: string; bucket: string; series: string | null }
+const NUMERIC_TYPE = /^(Int|UInt|Float|Decimal)/
+
+/** Whether a column type (its Arrow name, as in `TableInfo.schema`) is a number. */
+export function isNumericType(type: string): boolean {
+  return NUMERIC_TYPE.test(type)
+}
+
+/** A chart request: one numeric column of one series (or of all series), bucketed. */
+export type SeriesQuery = { table: string; column: string; bucket: Bucket; series: string | null }
+
+/** A series query checked against the table's schema, ready for a backend to run. */
+export type SeriesPlan = {
+  table: string
+  timeColumn: string
+  column: string
+  bucket: Bucket
+  /** The series-key filter, typed like the key column; null for all series. */
+  key: { column: string; value: string | number } | null
+}
+
+/** One bucket of a series: avg, min, max and row count. `t` is the bucket start (ISO 8601). */
 export type SeriesPoint = { t: string; avg: number | null; min: number | null; max: number | null; n: number }
 export type SeriesResult = { rows: SeriesPoint[]; ms: number; query: string }
 
 /**
- * What every lake implementation provides. The CLI implementation (lib/lake/cli.ts) runs the
- * `timelake` binary against a local or object-store warehouse; a WASM implementation can sit next
- * to it for hosted deployments.
+ * What every lake implementation provides: the CLI (lib/lake/cli.ts) runs the `timelake` binary against a local or
+ * object-store warehouse; the WASM reader (lib/lake/wasm.ts) reads a warehouse over HTTPS for hosted deployments.
  */
 export interface LakeBackend {
   /** "cli": the timelake binary (full SQL); "wasm": @timelake/client over HTTPS (hosted). */
@@ -53,5 +73,5 @@ export interface LakeBackend {
   tableInfo(name: string): Promise<TableInfo>
   latest(name: string): Promise<Row[]>
   sql(query: string): Promise<{ rows: Row[]; ms: number }>
-  series(q: SeriesQuery): Promise<SeriesResult>
+  series(plan: SeriesPlan): Promise<SeriesResult>
 }

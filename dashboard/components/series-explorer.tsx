@@ -2,22 +2,45 @@
 
 import { LoaderCircle } from "lucide-react"
 import { useEffect, useState } from "react"
-import { Area, CartesianGrid, ComposedChart, Line, XAxis, YAxis } from "recharts"
+import { Area, CartesianGrid, ComposedChart, Line, XAxis, YAxis, type TooltipContentProps } from "recharts"
 
+import { ChartTooltipCard } from "@/components/chart-tooltip-card"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { ChartContainer, ChartTooltip, type ChartConfig } from "@/components/ui/chart"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { BUCKETS, type Bucket } from "@/lib/buckets"
-import { formatValue } from "@/lib/format"
+import { BUCKET_LABELS, DEFAULT_BUCKET, type Bucket } from "@/lib/buckets"
+import { formatUtc, formatValue } from "@/lib/format"
+import type { SeriesPoint, SeriesResult } from "@/lib/lake/types"
 
-type Point = { t: string; avg: number | null; min: number | null; max: number | null; n: number }
-type Result = { rows: Point[]; ms: number; query: string } | { error: string }
+type Result = SeriesResult | { error: string }
+type ChartPoint = SeriesPoint & { ts: number; range: [number | null, number | null] }
 
 const config = {
   avg: { label: "Average", color: "var(--chart-1)" },
   range: { label: "Min–max", color: "var(--chart-1)" },
 } satisfies ChartConfig
+
+/** Wait this long after the last input change before fetching. */
+const DEBOUNCE_MS = 250
+/** Most series values offered as suggestions in the input. */
+const MAX_SUGGESTIONS = 1000
+
+function PointTooltip({ active, payload }: TooltipContentProps) {
+  const point = active ? (payload[0]?.payload as ChartPoint | undefined) : undefined
+  if (!point) return null
+  return (
+    <ChartTooltipCard
+      title={`${formatUtc(point.ts, "minutes")} UTC`}
+      rows={[
+        ["avg", formatValue(point.avg)],
+        ["min", formatValue(point.min)],
+        ["max", formatValue(point.max)],
+        ["rows", formatValue(point.n)],
+      ]}
+    />
+  )
+}
 
 export function SeriesExplorer({
   table,
@@ -32,7 +55,7 @@ export function SeriesExplorer({
 }) {
   const [series, setSeries] = useState(seriesValues[0] ?? "")
   const [column, setColumn] = useState(columns[0] ?? "")
-  const [bucket, setBucket] = useState<Bucket>("1 hour")
+  const [bucket, setBucket] = useState<Bucket>(DEFAULT_BUCKET)
   const query = new URLSearchParams({ table, column, bucket, series }).toString()
   // The latest response and the query it answers; loading = it answers an older query.
   const [response, setResponse] = useState<{ query: string; result: Result } | null>(null)
@@ -46,18 +69,18 @@ export function SeriesExplorer({
       fetch(`/api/series?${query}`, { signal: ctl.signal })
         .then((r) => r.json())
         .then((r: Result) => setResponse({ query, result: r }))
-        .catch((e) => e.name !== "AbortError" && setResponse({ query, result: { error: String(e) } }))
-    }, 250)
+        .catch((e: unknown) => {
+          if (!ctl.signal.aborted) setResponse({ query, result: { error: String(e) } })
+        })
+    }, DEBOUNCE_MS)
     return () => {
       clearTimeout(timer)
       ctl.abort()
     }
   }, [query, column])
 
-  const points =
-    result && "rows" in result
-      ? result.rows.map((r) => ({ ...r, ts: Date.parse(r.t), range: [r.min, r.max] as [number | null, number | null] }))
-      : []
+  const points: ChartPoint[] =
+    result && "rows" in result ? result.rows.map((r) => ({ ...r, ts: Date.parse(r.t), range: [r.min, r.max] })) : []
   const short = bucket === "1 day"
   const fmtTick = (ts: number) =>
     new Date(ts).toLocaleString(
@@ -95,7 +118,7 @@ export function SeriesExplorer({
                 placeholder={seriesKey}
               />
               <datalist id="series-values">
-                {seriesValues.slice(0, 1000).map((v) => (
+                {seriesValues.slice(0, MAX_SUGGESTIONS).map((v) => (
                   <option key={v} value={v} />
                 ))}
               </datalist>
@@ -118,7 +141,7 @@ export function SeriesExplorer({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {BUCKETS.map((b) => (
+              {BUCKET_LABELS.map((b) => (
                 <SelectItem key={b} value={b}>
                   {b}
                 </SelectItem>
@@ -157,30 +180,7 @@ export function SeriesExplorer({
                 domain={["auto", "auto"]}
                 tickFormatter={(v: number) => formatValue(Number(v.toPrecision(3)))}
               />
-              <ChartTooltip
-                cursor={{ strokeWidth: 1 }}
-                content={({ active, payload }) => {
-                  const p = active && payload?.[0]?.payload
-                  if (!p) return null
-                  return (
-                    <div className="rounded-lg border bg-background px-3 py-2 text-xs shadow-sm">
-                      <div className="mb-1 font-medium">
-                        {new Date(p.ts).toISOString().replace("T", " ").slice(0, 16)} UTC
-                      </div>
-                      <div className="grid grid-cols-[auto_auto] gap-x-4 font-mono tabular-nums">
-                        <span className="text-muted-foreground">avg</span>
-                        <span className="text-right">{formatValue(p.avg)}</span>
-                        <span className="text-muted-foreground">min</span>
-                        <span className="text-right">{formatValue(p.min)}</span>
-                        <span className="text-muted-foreground">max</span>
-                        <span className="text-right">{formatValue(p.max)}</span>
-                        <span className="text-muted-foreground">rows</span>
-                        <span className="text-right">{formatValue(p.n)}</span>
-                      </div>
-                    </div>
-                  )
-                }}
-              />
+              <ChartTooltip cursor={{ strokeWidth: 1 }} content={PointTooltip} />
               <Area
                 dataKey="range"
                 stroke="none"

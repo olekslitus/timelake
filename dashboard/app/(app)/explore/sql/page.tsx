@@ -1,3 +1,4 @@
+import type { Metadata } from "next"
 import { Suspense } from "react"
 
 import { ErrorState } from "@/components/error-state"
@@ -6,6 +7,8 @@ import { SqlConsole } from "@/components/sql-console"
 import { SqlUnavailable } from "@/components/sql-unavailable"
 import { Skeleton } from "@/components/ui/skeleton"
 import { attempt, ensureConfigured, SUPPORTS_SQL } from "@/lib/lake"
+
+export const metadata: Metadata = { title: "SQL console" }
 
 export default function SqlPage() {
   return (
