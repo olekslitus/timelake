@@ -210,7 +210,7 @@ jobs:
         name: Already on npm?
         run: echo "published=$(npm view "@timelake/client@$VERSION" version > /dev/null 2>&1 && echo true || echo false)" >> "$GITHUB_OUTPUT"
       - if: env.DRY_RUN == 'true'
-        run: npm publish package/*.tgz --dry-run
+        run: npm publish ./package/*.tgz --dry-run
       # Provenance is added automatically: the repository and package are public.
       - if: env.DRY_RUN == 'false' && steps.published.outputs.published == 'false'
-        run: npm publish package/*.tgz
+        run: npm publish ./package/*.tgz
