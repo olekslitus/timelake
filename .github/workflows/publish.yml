@@ -6,7 +6,8 @@
 # Every registry uses trusted publishing: the job proves it is this workflow in this repository with a
 # short-lived OIDC token, so no registry token is stored anywhere. See CONTRIBUTING.md, "Versions and releases".
 #
-# Run it by hand (Actions → Publish → Run workflow) to build everything and dry-run each publish.
+# Run it by hand (Actions → Publish → Run workflow) to build everything and dry-run each publish; a manual run
+# doesn't use the registries' environments, so it needs no approval.
 # Publishing is idempotent: a version a registry already has is skipped, so a failed run can be re-run.
 # No build caches: a release is built from a clean checkout, so a poisoned cache can't end up in it.
 name: Publish
@@ -139,7 +140,7 @@ jobs:
     name: Publish to PyPI
     needs: [version, wheels, sdist, npm-package]
     runs-on: ubuntu-latest
-    environment: pypi
+    environment: ${{ github.event_name == 'push' && 'pypi' || '' }}
     permissions:
       id-token: write
     steps:
@@ -158,7 +159,7 @@ jobs:
     name: Publish to crates.io
     needs: [version, wheels, sdist, npm-package]
     runs-on: ubuntu-latest
-    environment: crates-io
+    environment: ${{ github.event_name == 'push' && 'crates-io' || '' }}
     permissions:
       id-token: write
     env:
@@ -189,7 +190,7 @@ jobs:
     name: Publish to npm
     needs: [version, wheels, sdist, npm-package]
     runs-on: ubuntu-latest
-    environment: npm
+    environment: ${{ github.event_name == 'push' && 'npm' || '' }}
     permissions:
       id-token: write
     env:
