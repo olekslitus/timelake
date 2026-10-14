@@ -9,6 +9,9 @@ homepage = "https://timelake.dev"
 publish = false
 
 # Not part of the root workspace: it targets wasm32 with its own release profile and lock file.
+# Build it with packages/timelake-client/scripts/build-wasm.sh. zstd is C, so that needs a clang
+# with the WebAssembly target and llvm-ar: Homebrew's `llvm` on macOS, `clang` and `llvm` on Linux.
+# Set CC_wasm32_unknown_unknown and AR_wasm32_unknown_unknown to use others.
 [workspace]
 
 [lib]
@@ -16,21 +19,26 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 timelake-format = { path = "../timelake-format" }
-wasm-bindgen = "0.2"
+# The wasm-bindgen CLI must be this exact version (build-wasm.sh checks).
+wasm-bindgen = "=0.2.129"
 js-sys = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde-wasm-bindgen = "0.6"
+thiserror = "2"
 apache-avro = { version = "0.21", default-features = false }
 bytes = "1"
+arrow-arith = "58"
 arrow-array = "58"
+arrow-cast = "58"
+arrow-json = "58"
+arrow-ord = "58"
+arrow-row = "58"
 arrow-schema = "58"
 arrow-select = "58"
-arrow-cast = "58"
-arrow-ord = "58"
-arrow-json = "58"
 parquet = { version = "58", default-features = false, features = ["arrow", "zstd", "snap"] }
 chrono = { version = "0.4", default-features = false, features = ["alloc"] }
+# Random numbers come from the JavaScript host (crypto.getRandomValues) on wasm32.
 getrandom = { version = "0.3", features = ["wasm_js"] }
 getrandom02 = { package = "getrandom", version = "0.2", features = ["js"] }
 
@@ -38,3 +46,23 @@ getrandom02 = { package = "getrandom", version = "0.2", features = ["js"] }
 opt-level = "s"
 lto = true
 codegen-units = 1
+
+# The root workspace's lints, except unsafe_code: wasm-bindgen's macros generate unsafe code.
+[lints.rust]
+unsafe_code = "deny"
+unreachable_pub = "warn"
+missing_debug_implementations = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+similar_names = "allow"
+struct_excessive_bools = "allow"
+cast_precision_loss = "allow"
+allow_attributes = "warn"
+dbg_macro = "warn"
+todo = "warn"
+unwrap_used = "warn"
