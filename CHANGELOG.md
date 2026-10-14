@@ -8,6 +8,8 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
 
 ## Unreleased
 
+## 0.4.0 – 2026-10-14
+
 ### Added
 
 - **Install from the usual registries:** `pip install timelake`, `cargo install timelake-cli` (or the `timelake`

@@ -1101,7 +1101,7 @@ dependencies = [
 
 [[package]]
 name = "timelake-format"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "arrow-array",
  "arrow-ipc",
@@ -1115,7 +1115,7 @@ dependencies = [
 
 [[package]]
 name = "timelake-wasm"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "apache-avro",
  "arrow-arith",
