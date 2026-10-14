@@ -16,14 +16,14 @@ export const NOW: RoadmapItem[] = [
     status: "next",
   },
   {
-    title: "Faster commits",
-    description: "Upload everything a commit needs at once, then publish it in one step.",
-    status: "next",
-  },
-  {
     title: "Industrial IoT benchmark",
     description: "Timelake against InfluxDB, TimescaleDB, ClickHouse and QuestDB, with the monthly cost of each.",
     status: "next",
+  },
+  {
+    title: "Faster commits",
+    description: "Everything a commit needs is uploaded at once, then published in one step: twice as fast.",
+    status: "done",
   },
   {
     title: "Open tables on any object store",

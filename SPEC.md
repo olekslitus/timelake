@@ -952,8 +952,8 @@ Open from v0:
 | 8 | Agent access with permission sets (F1) and static read models for dashboards (F2) (§21) |
 | Later | Computed metrics from user-defined Python functions (F4, §21.4) |
 
-### 19.1 Performance plan (planned, not started)
-**Status:** planned, next. The codebase and CI/CD cleanup it waited for is done (2026-10-13; the audit and plan are in git history at `2d66939`). Gains below are estimates until measured.
+### 19.1 Performance plan (in progress)
+**Status:** P4 done (2026-10-13); P1–P3 designed (§19.2), to discuss. The codebase and CI/CD cleanup it waited for is done (2026-10-13; the audit and plan are in git history at `2d66939`). Gains below are estimates until measured; measurements are in [`bench/results/PERFORMANCE.md`](bench/results/PERFORMANCE.md).
 
 **Where time goes today** (Timelake reader, laptop → AWS S3 us-east-2, after maintenance, [`bench/results/S3.md`](bench/results/S3.md)):
 
@@ -966,7 +966,7 @@ Open from v0:
 
 - **Small queries:** first runs are dominated by round trips that each wait for the previous one: version hint → `vN.metadata.json` (and a HEAD on `vN+1`) → manifest list → manifests → last-value index or Parquet footers → data. That is 6–7 dependent steps at about 90 ms each from a laptop.
 - **Heavy queries:** bound by bytes read; warm runs are barely faster.
-- **Commits:** p50 is 483 ms, from about 5 serial stages: data, then manifests and index, then manifest list, then the conditional metadata write, then the hint.
+- **Commits:** p50 was 483 ms, from 5 serial stages: data, then manifests and index, then manifest list, then the conditional metadata write, then the hint. P4 made it 2 stages and 243 ms.
 - **Warm queries:** every query re-reads the version hint to stay current. That re-read is most of `last-loc`'s 68 ms.
 
 **Steps, in order:**
@@ -976,13 +976,42 @@ Open from v0:
 | P1 | **One-request table state.** Each commit also writes a small head object: version, live files with column bounds, and the last-value index (inline when small, else a pointer). Readers fetch it with one GET instead of 4 dependent ones. Iceberg metadata is still written as today for other engines. | Cold small queries 0.6–0.8 s → about 0.15–0.25 s from a laptop; tens of ms in-region |
 | P2 | **Footers in the head object.** Store the Parquet footers and page indexes of live files next to the file list, so scans skip the footer round trip. | One fewer round trip and fewer requests per scan |
 | P3 | **Connection pre-warm.** Open the scan's connections while the head object is in flight. | Hides TLS setup on cold queries |
-| P4 | **Two-step commit.** Upload data, manifest, index and manifest list in parallel (all are known locally), then make the one conditional write. Update the hint asynchronously. | Commit p50 483 ms → about 200 ms |
+| P4 | **Done.** **Two-step commit.** Upload data, manifest, index and manifest list in parallel (all are known locally), then make the one conditional write. Update the hint asynchronously. | Commit p50 483 ms → 243 ms measured (whole v0 ingest 1,307 s → 795 s) |
 | P5 | **Local disk cache across processes** for metadata, footers and recent data (§12.2 item 6). | Repeat queries at best-run speed |
 | P6 | **Optional staleness bound** (e.g. "at most 1 s old") to skip the per-query version check, and the head pointer on S3 Express where available. | Warm `last-loc` 68 ms → a few ms |
 | P7 | **Caggs (§11.1).** TSBS daily queries read hourly or daily rollups instead of raw data. | Likely 10–100× on bandwidth-bound dashboard queries |
 | P8 | **Scan tuning:** late materialization (`pushdown_filters`, now off), Q4's hidden `_series_id`, fewer and larger parallel range reads. | Less data decoded and fetched on selective scans |
 
 **How we measure:** the same v0 suites through `tools/s3proxy` (request counts by kind) on local disk, S3 from a laptop, and S3 in-region. Each step lands only if it improves first-run latency or requests without slowing other queries, and plain DuckDB still reads every table.
+
+### 19.2 Design draft: one-request table state (P1–P3)
+
+**Status:** draft for discussion, not built. Open questions are marked **Decide**.
+
+**Goal:** a cold query learns everything it needs to plan in one GET, so a small query takes two dependent round trips (table state, then data or the last-value index) instead of six or seven.
+
+**The head object.** After each commit, the writer also writes `<table>/metadata/timelake-head` with the state of the current snapshot:
+- version `N`, snapshot id, and the parts of `vN.metadata.json` planning needs: current schema, partition spec, sort order, properties (the contract) and the snapshot summary. The snapshot history stays in `vN.metadata.json`.
+- the live data files: path, partition, row count, size, and min/max per column (what the manifests hold today).
+- the last-value index: inline when it is small (**Decide:** up to about 1 MB), otherwise its path.
+- P2: the Parquet footers and page indexes of the live files, inline while their total fits a budget (**Decide:** about 1 MB; maintenance keeps file counts low, so most tables fit). Larger tables omit them and scans read footers as today.
+
+**Format (Decide):** Arrow IPC, one batch per section (files, index, footers) with the scalar fields as schema metadata. The Rust reader and the WASM reader already decode Arrow, and it is much smaller and faster to parse than JSON for thousands of files.
+
+**Writing it.** Iceberg metadata is written exactly as today and `vN+1.metadata.json` stays the commit point, so DuckDB, Spark and PyIceberg see no change. The head is a cache of that commit, written in the background like the version hint (P4), so commits don't get slower. Where the store supports it (S3, GCS, Azure), it is written with a conditional update so it never moves back to an older version when two writers race.
+
+**Reading it.** `GET timelake-head`, plan, and read data. A head can be behind: right after a commit, while its background write is in flight, or until the next commit if a writer crashed in between. **Decide:**
+- **Validate (recommended):** check `HEAD vN+1.metadata.json` at the same time as the data reads. If it exists, the head was stale: redo the load the slow way. Results are always current, as today. The cost is one cheap request per query and no extra latency in the common case.
+- **Trust it:** skip the check. One request fewer, but a query can return the previous version for a short time. This is P6's opt-in staleness bound, not the default.
+
+**P3, warm connections.** While the head GET is in flight, the reader opens a few connections to the store (small `HEAD` requests on the head object), so the data reads that follow don't pay TCP and TLS setup. Cost: a few cheap requests per cold query.
+
+**Compatibility and failure cases:**
+- No head (a table written by another engine or an older Timelake, or a head deleted by Spark's orphan-file cleanup): the reader uses today's chain, and the next Timelake commit writes a head.
+- The TypeScript client and the WASM reader use the head too, which speeds up a browser's first query the most.
+- Cost per commit: one more PUT, of tens of KB to about 2 MB depending on the footer budget.
+
+**Expected effect:** cold `one-truck-latest` and `last-loc` from a laptop go from 0.6–0.7 s to about 0.2 s; in-region, to tens of ms. Measured with the v0 suites before it lands (see "How we measure").
 
 ---
 

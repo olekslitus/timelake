@@ -24,6 +24,7 @@
 #![warn(missing_docs)]
 
 mod append;
+mod background;
 mod cache;
 mod commit;
 mod error;
@@ -41,6 +42,7 @@ mod testing;
 mod write;
 
 pub use append::{AppendOptions, AppendResult};
+pub use background::flush;
 pub use commit::CommitInfo;
 pub use error::{Error, Result};
 pub use lake::Lake;

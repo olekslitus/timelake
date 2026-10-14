@@ -29,3 +29,9 @@ Nothing has been released yet. This section describes what is on `main`.
 - **WebAssembly reader and TypeScript client** (`@timelake/client`): reads tables over HTTPS in the browser or Node,
   with latest, range and time-bucket queries and Zod-typed rows.
 - **Open format:** plain DuckDB, Spark and PyIceberg read every table. `timelake duckdb <table>` prints the SQL.
+
+### Changed
+
+- **Faster commits:** an append uploads its data files and metadata all at once, then makes the one conditional
+  write, so it waits for two round trips to storage instead of five. The version hint is now updated in the
+  background; Rust programs should call `timelake::flush()` before exiting (the CLI and the Python package do).

@@ -5,6 +5,8 @@ from __future__ import annotations
 import ast
 import doctest
 import inspect
+import subprocess
+import sys
 from importlib.resources import files
 from typing import TYPE_CHECKING
 
@@ -81,3 +83,15 @@ def test_stub_member_matches_runtime(cls: str, name: str) -> None:
 def test_stub_constructor_matches_runtime() -> None:
     new = next(f for f in stub_classes()["Lake"].body if isinstance(f, ast.FunctionDef) and f.name == "__new__")
     assert stub_signature(new) == runtime_signature(_timelake.Lake)
+
+
+def test_version_hint_is_written_before_exit(tmp_path: Path) -> None:
+    """Commits update the version hint in the background; the package waits for it at exit."""
+    script = f"""
+import pyarrow as pa, timelake
+lake = timelake.Lake({str(tmp_path)!r})
+table = lake.create_table("iot.r", pa.schema([("v", pa.int64())]))
+table.append(pa.table({{"v": [1]}}))
+"""
+    subprocess.run([sys.executable, "-c", script], check=True)  # noqa: S603 (this interpreter, a fixed script)
+    assert (tmp_path / "iot" / "r" / "metadata" / "version-hint.text").read_text() == "2"

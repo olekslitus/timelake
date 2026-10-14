@@ -390,10 +390,18 @@ struct TableInfo {
     last_value_index: Option<String>,
 }
 
+/// Waits for background writes (version hints) to land; registered with `atexit`.
+#[pyfunction]
+fn flush_background_writes(py: Python<'_>) {
+    py.detach(|| runtime().block_on(timelake::flush()));
+}
+
 #[pymodule]
 fn _timelake(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Lake>()?;
     m.add_class::<Table>()?;
     m.add("ConflictError", m.py().get_type::<ConflictError>())?;
+    let flush = wrap_pyfunction!(flush_background_writes, m)?;
+    m.py().import("atexit")?.call_method1("register", (flush,))?;
     Ok(())
 }

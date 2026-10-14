@@ -18,6 +18,7 @@ use crate::contract::Contract;
 use crate::error::{Error, Result};
 use crate::schema::align_batch;
 use crate::sort::{ASCENDING, columns, stable_sort_indices};
+use crate::storage::Uploads;
 use crate::table::Table;
 
 /// ZSTD level for data files and last-value indexes: fast to write, close to the best ratio.
@@ -122,12 +123,14 @@ pub fn file_partition(df: &DataFile) -> Option<i32> {
     }
 }
 
-/// Writes already-sorted batches of one partition, rolling to a new file at the target size.
+/// Writes already-sorted batches of one partition, rolling to a new file at the target size. The
+/// end of each file's upload is queued in `uploads`, to be sent with the commit's metadata.
 pub(crate) async fn write_partition(
     table: &Table,
     partition: Option<i32>,
     batches: impl IntoIterator<Item = RecordBatch>,
     props: &WriterProperties,
+    uploads: &Uploads,
 ) -> Result<Vec<DataFile>> {
     let contract = table.contract();
     let metadata = table.metadata();
@@ -146,13 +149,11 @@ pub(crate) async fn write_partition(
         if batch.num_rows() == 0 {
             continue;
         }
-        let mut writer = match open.take() {
-            Some(w) => w,
-            None => {
-                builder
-                    .build(table.lake().storage().output_file(&format!("{dir}/{}.parquet", uuid::Uuid::now_v7())))
-                    .await?
-            }
+        let mut writer = if let Some(w) = open.take() {
+            w
+        } else {
+            let uri = format!("{dir}/{}.parquet", uuid::Uuid::now_v7());
+            builder.build(table.lake().storage().deferred_output_file(&uri, uploads)).await?
         };
         writer.write(&batch).await?;
         if writer.current_written_size() >= target {

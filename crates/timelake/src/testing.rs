@@ -1,9 +1,11 @@
-//! Test support: an in-memory object store that fails chosen operations, and table fixtures.
+//! Test support: an in-memory object store that fails chosen operations or adds latency, and table
+//! fixtures.
 
 use std::collections::HashMap;
 use std::fmt;
 use std::ops::Range;
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use arrow::array::{Float64Array, Int32Array, RecordBatch, TimestampMicrosecondArray};
 use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
@@ -19,7 +21,7 @@ use object_store::{
 };
 
 use crate::commit::{Change, commit};
-use crate::storage::Storage;
+use crate::storage::{Storage, Uploads};
 use crate::write::{sort_and_split, write_partition, writer_properties};
 use crate::{Lake, Table, TableOptions};
 
@@ -41,14 +43,29 @@ pub(crate) struct Fault {
     pub pattern: String,
 }
 
-/// An in-memory store with switchable faults.
+/// An in-memory store with switchable faults and latency.
 #[derive(Debug, Default)]
 pub(crate) struct FaultyStore {
     inner: InMemory,
     faults: Mutex<Vec<Fault>>,
+    latency: Mutex<Duration>,
 }
 
 impl FaultyStore {
+    /// Delays every request by `latency`, like a round trip to a remote store. With Tokio's clock
+    /// paused, a test's elapsed time divided by `latency` is the number of requests made one after
+    /// another.
+    pub(crate) fn set_latency(&self, latency: Duration) {
+        *self.latency.lock().unwrap_or_else(PoisonError::into_inner) = latency;
+    }
+
+    async fn round_trip(&self) {
+        let latency = *self.latency.lock().unwrap_or_else(PoisonError::into_inner);
+        if !latency.is_zero() {
+            tokio::time::sleep(latency).await;
+        }
+    }
+
     pub(crate) fn fail(&self, op: Op, pattern: &str) {
         self.faults().push(Fault { op, pattern: pattern.to_string() });
     }
@@ -97,6 +114,7 @@ impl ObjectStore for FaultyStore {
         payload: PutPayload,
         opts: PutOptions,
     ) -> object_store::Result<PutResult> {
+        self.round_trip().await;
         self.check(Op::Put, location)?;
         if opts.mode == PutMode::Create {
             self.check(Op::LoseCreate, location)?;
@@ -109,16 +127,19 @@ impl ObjectStore for FaultyStore {
         location: &Path,
         opts: PutMultipartOptions,
     ) -> object_store::Result<Box<dyn MultipartUpload>> {
+        self.round_trip().await;
         self.check(Op::Put, location)?;
         self.inner.put_multipart_opts(location, opts).await
     }
 
     async fn get_opts(&self, location: &Path, options: GetOptions) -> object_store::Result<GetResult> {
+        self.round_trip().await;
         self.check(Op::Get, location)?;
         self.inner.get_opts(location, options).await
     }
 
     async fn get_ranges(&self, location: &Path, ranges: &[Range<u64>]) -> object_store::Result<Vec<Bytes>> {
+        self.round_trip().await;
         self.check(Op::Get, location)?;
         self.inner.get_ranges(location, ranges).await
     }
@@ -146,11 +167,12 @@ impl ObjectStore for FaultyStore {
 /// Appends rows the way another Iceberg writer would: without a last-value index.
 pub(crate) async fn append_without_index(table: &Table, batches: &[RecordBatch]) -> Table {
     let props = writer_properties(table).unwrap();
+    let uploads = Uploads::default();
     let mut files = vec![];
     for (partition, batch) in sort_and_split(table, batches).unwrap() {
-        files.extend(write_partition(table, partition, [batch], &props).await.unwrap());
+        files.extend(write_partition(table, partition, [batch], &props, &uploads).await.unwrap());
     }
-    commit(table, Change::Append { files, latest: None }, HashMap::new()).await.unwrap().0
+    commit(table, Change::Append { files, latest: None }, HashMap::new(), uploads).await.unwrap().0
 }
 
 /// A lake on a [`FaultyStore`].

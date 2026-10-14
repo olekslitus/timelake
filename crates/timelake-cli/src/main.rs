@@ -128,7 +128,10 @@ fn parse_kv(s: &str) -> Result<(String, String), String> {
 
 #[tokio::main]
 async fn main() {
-    if let Err(e) = run(Cli::parse()).await {
+    let result = run(Cli::parse()).await;
+    // Version hints are updated in the background: let them land before exiting.
+    timelake::flush().await;
+    if let Err(e) = result {
         eprintln!("Error: {e:#}");
         std::process::exit(1);
     }

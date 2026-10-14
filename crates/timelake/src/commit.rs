@@ -5,6 +5,10 @@
 //! scan doesn't fetch one manifest per commit. This module writes manifests, manifest lists,
 //! snapshots and table metadata directly, then commits through the object-store catalog with
 //! optimistic retries.
+//!
+//! A commit takes two round trips: every new file (data, manifests, manifest list, last-value
+//! index) is encoded locally and uploaded at once, then the new metadata is written with
+//! put-if-absent. The version hint is updated in the background.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -22,9 +26,9 @@ use iceberg::spec::{
 
 use crate::error::{Error, Result};
 use crate::lake::{hint_uri, metadata_uri};
-use crate::lvi;
-use crate::summary;
+use crate::storage::Uploads;
 use crate::table::{LiveEntry, Table};
+use crate::{background, lvi, summary};
 
 /// Above this many manifests, an append merges the existing ones into one, keeping scan planning
 /// to a handful of reads no matter how many commits a table has seen.
@@ -87,11 +91,24 @@ pub struct CommitInfo {
 }
 
 /// Commits `change` on top of the latest version, rebasing and retrying when another writer
-/// commits first. `props` go into the snapshot summary.
+/// commits first. `props` go into the snapshot summary. `data` holds the uploads of the files
+/// `change` adds: they are sent with the first attempt's metadata, or dropped if nothing commits.
 pub(crate) async fn commit(
     table: &Table,
     change: Change,
     props: HashMap<String, String>,
+    data: Uploads,
+) -> Result<(Table, CommitInfo)> {
+    let result = commit_with(table, &change, &props, &data).await;
+    data.abort().await;
+    result
+}
+
+async fn commit_with(
+    table: &Table,
+    change: &Change,
+    props: &HashMap<String, String>,
+    data: &Uploads,
 ) -> Result<(Table, CommitInfo)> {
     let started = Instant::now();
     let mut base = table.clone();
@@ -101,7 +118,7 @@ pub(crate) async fn commit(
             tokio::time::sleep(Duration::from_millis(rand::random_range(BACKOFF_MILLIS) * attempt)).await;
             base = base.refresh().await?;
         }
-        if is_duplicate(&base, &change, &props) {
+        if is_duplicate(&base, change, props) {
             let snapshot_id = base.metadata().current_snapshot_id().unwrap_or_default();
             let info = CommitInfo {
                 snapshot_id,
@@ -112,8 +129,8 @@ pub(crate) async fn commit(
             };
             return Ok((base, info));
         }
-        let writer = SnapshotWriter::new(&base, &change);
-        match writer.commit(&props).await {
+        let writer = SnapshotWriter::new(&base, change);
+        match writer.commit(props, data).await {
             Ok(Attempt::Committed(table)) => {
                 let table = *table;
                 let info = CommitInfo {
@@ -150,12 +167,25 @@ pub(crate) async fn publish(base: &Table, metadata: TableMetadata) -> Result<Opt
     if !storage.write_if_absent(&metadata_uri(base.location(), version), bytes).await? {
         return Ok(None);
     }
-    // The commit is done: readers probe past a stale hint, so failing to update it must not turn
-    // a committed snapshot into an error (the caller would delete files the snapshot uses).
-    let _ = storage.write(&hint_uri(base.location()), Bytes::from(version.to_string())).await;
     let table = Table::new(base.lake().clone(), base.name().clone(), base.location().to_string(), version, metadata)?;
     base.lake().remember(&table);
+    update_hint(&table);
     Ok(Some(table))
+}
+
+/// Points the version hint at `table`'s version, in the background. The commit is done: readers
+/// probe past a stale hint, so a failed update is ignored rather than turning a committed snapshot
+/// into an error (the caller would delete files the snapshot uses).
+fn update_hint(table: &Table) {
+    let (lake, name, version) = (table.lake().clone(), table.name().clone(), table.version());
+    let uri = hint_uri(table.location());
+    background::spawn(async move {
+        // A newer commit from this process writes its own hint.
+        if lake.caches().tables.get(&name).is_some_and(|(_, t)| t.version() > version) {
+            return;
+        }
+        let _ = lake.storage().write(&uri, Bytes::from(version.to_string())).await;
+    });
 }
 
 enum Attempt {
@@ -173,6 +203,8 @@ struct SnapshotWriter<'a> {
     snapshot_id: i64,
     sequence_number: i64,
     written: Mutex<Vec<String>>,
+    /// Files of this attempt, encoded and waiting to be sent.
+    uploads: Uploads,
 }
 
 /// Manifests of the new snapshot.
@@ -205,13 +237,13 @@ impl<'a> SnapshotWriter<'a> {
             }
         };
         let sequence_number = metadata.next_sequence_number();
-        Self { base, change, snapshot_id, sequence_number, written: Mutex::default() }
+        Self { base, change, snapshot_id, sequence_number, written: Mutex::default(), uploads: Uploads::default() }
     }
 
-    async fn commit(&self, props: &HashMap<String, String>) -> Result<Attempt> {
+    async fn commit(&self, props: &HashMap<String, String>, data: &Uploads) -> Result<Attempt> {
         let base_summary =
             self.base.current_snapshot().map(|s| s.summary().additional_properties.clone()).unwrap_or_default();
-        // Manifests and the last-value index don't depend on each other: write them concurrently.
+        // Manifests and the last-value index don't depend on each other: prepare them concurrently.
         let (manifests, index) = futures::join!(self.write_manifests(), self.write_index(&base_summary));
         let (manifests, index) = (manifests?, index?);
         let removing = self.change.removed().len();
@@ -225,6 +257,8 @@ impl<'a> SnapshotWriter<'a> {
 
         let list: Vec<ManifestFile> = manifests.new.into_iter().chain(manifests.carried).collect();
         let list_uri = self.write_manifest_list(&list).await?;
+        // One round of uploads: the data files (on the first attempt) and this attempt's files.
+        futures::try_join!(data.send(), self.uploads.send())?;
         let mut summary = props.clone();
         if let Some(location) = &index.location {
             summary.insert(summary::LAST_VALUE_INDEX.into(), location.clone());
@@ -263,6 +297,7 @@ impl<'a> SnapshotWriter<'a> {
     /// Deletes everything this attempt wrote. Leftovers are unreferenced, so a failed cleanup
     /// only wastes space; it is ignored rather than hiding the attempt's own outcome.
     async fn discard(self) {
+        self.uploads.abort().await;
         let written = self.written.into_inner().unwrap_or_else(PoisonError::into_inner);
         let _ = self.base.lake().storage().delete_many(written).await;
     }
@@ -277,7 +312,7 @@ impl<'a> SnapshotWriter<'a> {
         self.track(&uri);
         let metadata = self.base.metadata();
         let writer = ManifestWriterBuilder::new(
-            self.base.lake().storage().output_file(&uri),
+            self.base.lake().storage().deferred_output_file(&uri, &self.uploads),
             Some(self.snapshot_id),
             metadata.current_schema().clone(),
             metadata.default_partition_spec().as_ref().clone(),
@@ -388,7 +423,7 @@ impl<'a> SnapshotWriter<'a> {
         let Some(index) = new else { return Ok(LastValueIndex { location: None, written: None }) };
         let location = lvi::new_uri(base, self.snapshot_id);
         self.track(&location);
-        lvi::write(base, &location, &index).await?;
+        self.uploads.put(base.lake().storage(), &location, lvi::encode(&index)?)?;
         Ok(LastValueIndex { location: Some(location), written: Some(index) })
     }
 
@@ -396,7 +431,7 @@ impl<'a> SnapshotWriter<'a> {
         let base = self.base;
         let uri = format!("{}/metadata/snap-{}-{}.avro", base.location(), self.snapshot_id, uuid::Uuid::new_v4());
         self.track(&uri);
-        let output = base.lake().storage().output_file(&uri).writer().await?;
+        let output = base.lake().storage().deferred_output_file(&uri, &self.uploads).writer().await?;
         let parent = base.metadata().current_snapshot_id();
         let mut w = ManifestListWriter::v2(output, self.snapshot_id, parent, self.sequence_number);
         w.add_manifests(manifests.iter().cloned())?;
@@ -455,6 +490,8 @@ impl<'a> SnapshotWriter<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use crate::testing::{Op, T0, batch, faulty_lake, opts, schema};
     use crate::{AppendOptions, Error};
 
@@ -502,6 +539,18 @@ mod tests {
         assert_eq!(reloaded.files().await.unwrap().len(), 1);
     }
 
+    /// The commit doesn't wait for the version hint; it is written in the background.
+    #[tokio::test]
+    async fn hint_is_updated_in_the_background() {
+        let (lake, store) = faulty_lake();
+        let t = lake.create_table("iot.r", &schema(), opts()).await.unwrap();
+        let (t, _) = t.append(&[batch(&[(T0, 1, 1.0)])], no_maintenance()).await.unwrap();
+        crate::flush().await;
+        let hint = lake.storage().read(&crate::lake::hint_uri(t.location())).await.unwrap();
+        assert_eq!(hint.as_ref(), b"2");
+        assert!(store.paths().await.iter().any(|p| p.ends_with("v2.metadata.json")));
+    }
+
     /// A writer that keeps losing the commit race gives up with a conflict and leaves nothing behind.
     #[tokio::test]
     async fn gives_up_after_max_attempts() {
@@ -513,6 +562,26 @@ mod tests {
         let err = t.append(&[batch(&[(T0, 1, 1.0)])], no_maintenance()).await.unwrap_err();
         assert!(matches!(err, Error::Conflict(_)), "{err}");
         assert_eq!(store.paths().await, before);
+    }
+
+    /// Round trips an append waits for, one after another, on a store where each request takes
+    /// 100 ms of (paused, simulated) time.
+    async fn append_round_trips(maintain: bool) -> u128 {
+        const RTT: Duration = Duration::from_millis(100);
+        let (lake, store) = faulty_lake();
+        let t = lake.create_table("iot.r", &schema(), opts()).await.unwrap();
+        let o = AppendOptions { maintain: Some(maintain), ..Default::default() };
+        let (t, _) = t.append(&[batch(&[(T0, 1, 1.0)])], o.clone()).await.unwrap();
+        store.set_latency(RTT);
+        let started = tokio::time::Instant::now();
+        t.append(&[batch(&[(T0 + 1, 1, 2.0), (T0 + 1, 2, 3.0)])], o).await.unwrap();
+        started.elapsed().as_millis() / RTT.as_millis()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn append_takes_two_round_trips() {
+        assert_eq!(append_round_trips(false).await, 2);
+        assert_eq!(append_round_trips(true).await, 2);
     }
 
     /// Snapshot summaries carry Iceberg's running totals.

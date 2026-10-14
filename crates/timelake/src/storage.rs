@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::ops::Range;
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -250,12 +250,18 @@ impl Storage {
 
     /// This store as an iceberg-rust `Storage`.
     pub fn iceberg_storage(&self) -> Arc<dyn iceberg::io::Storage> {
-        Arc::new(IcebergStorage { inner: Some(self.clone()) })
+        Arc::new(IcebergStorage { inner: Some(self.clone()), uploads: None })
     }
 
     /// An iceberg-rust output file at `uri`.
     pub fn output_file(&self, uri: &str) -> OutputFile {
         OutputFile::new(self.iceberg_storage(), uri.to_string())
+    }
+
+    /// An output file whose upload completes in [`Uploads::send`] rather than when it is closed.
+    pub(crate) fn deferred_output_file(&self, uri: &str, uploads: &Uploads) -> OutputFile {
+        let storage = IcebergStorage { inner: Some(self.clone()), uploads: Some(uploads.clone()) };
+        OutputFile::new(Arc::new(storage), uri.to_string())
     }
 }
 
@@ -268,6 +274,77 @@ pub struct ListedObject {
     pub size: u64,
     /// Last modification time.
     pub last_modified: chrono::DateTime<chrono::Utc>,
+}
+
+/// Uploads prepared now and sent later, all at once. A commit encodes its data files, manifests,
+/// manifest list and index first, then waits for one round of concurrent uploads instead of one
+/// round per stage (SPEC §19.1, P4). A large file's earlier parts are uploaded while it is written;
+/// only its last part waits here. Cheap to clone; clones share the queue.
+#[derive(Clone, Default)]
+pub(crate) struct Uploads(Arc<Mutex<Vec<Pending>>>);
+
+enum Pending {
+    Put {
+        store: Arc<dyn ObjectStore>,
+        path: Path,
+        bytes: Bytes,
+    },
+    /// A file written through [`Storage::deferred_output_file`]: closing it completes the upload.
+    Writer(BufWriter),
+}
+
+/// How many queued uploads are sent at once.
+const UPLOAD_CONCURRENCY: usize = 32;
+
+impl Uploads {
+    /// Queues writing `bytes` to `uri`.
+    pub(crate) fn put(&self, storage: &Storage, uri: &str, bytes: Bytes) -> Result<()> {
+        self.push(Pending::Put { store: storage.store.clone(), path: storage.path(uri)?, bytes });
+        Ok(())
+    }
+
+    fn push(&self, pending: Pending) {
+        self.queue().push(pending);
+    }
+
+    fn queue(&self) -> std::sync::MutexGuard<'_, Vec<Pending>> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Sends everything queued so far, concurrently.
+    pub(crate) async fn send(&self) -> Result<()> {
+        let pending = std::mem::take(&mut *self.queue());
+        futures::stream::iter(pending)
+            .map(|p| async move {
+                match p {
+                    Pending::Put { store, path, bytes } => {
+                        store.put(&path, PutPayload::from_bytes(bytes)).await?;
+                    }
+                    Pending::Writer(mut w) => w.shutdown().await?,
+                }
+                Ok::<_, Error>(())
+            })
+            .buffer_unordered(UPLOAD_CONCURRENCY)
+            .try_collect::<()>()
+            .await
+    }
+
+    /// Drops everything queued, aborting multipart uploads already started.
+    pub(crate) async fn abort(&self) {
+        let pending = std::mem::take(&mut *self.queue());
+        for p in pending {
+            if let Pending::Writer(mut w) = p {
+                // An upload that can't be aborted is left to the bucket's lifecycle rules.
+                let _ = w.abort().await;
+            }
+        }
+    }
+}
+
+impl std::fmt::Debug for Uploads {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Uploads({} queued)", self.queue().len())
+    }
 }
 
 // --- iceberg-rust adapter -----------------------------------------------------------------------
@@ -294,7 +371,7 @@ struct IcebergStorageFactory {
 impl StorageFactory for IcebergStorageFactory {
     fn build(&self, _config: &StorageConfig) -> iceberg::Result<Arc<dyn iceberg::io::Storage>> {
         let inner = self.inner.clone().ok_or_else(detached)?;
-        Ok(Arc::new(IcebergStorage { inner: Some(inner) }))
+        Ok(Arc::new(IcebergStorage { inner: Some(inner), uploads: None }))
     }
 }
 
@@ -302,6 +379,9 @@ impl StorageFactory for IcebergStorageFactory {
 struct IcebergStorage {
     #[serde(skip)]
     inner: Option<Storage>,
+    /// Set for deferred output files: writes are queued here instead of sent.
+    #[serde(skip)]
+    uploads: Option<Uploads>,
 }
 
 impl IcebergStorage {
@@ -334,11 +414,15 @@ impl iceberg::io::Storage for IcebergStorage {
     }
 
     async fn write(&self, path: &str, bs: Bytes) -> iceberg::Result<()> {
-        self.s()?.write(path, bs).await.map_err(ice_err)
+        match &self.uploads {
+            Some(uploads) => uploads.put(self.s()?, path, bs).map_err(ice_err),
+            None => self.s()?.write(path, bs).await.map_err(ice_err),
+        }
     }
 
     async fn writer(&self, path: &str) -> iceberg::Result<Box<dyn FileWrite>> {
-        Ok(Box::new(ObjectWrite { inner: Some(BufWriter::new(self.s()?.store.clone(), self.p(path)?)) }))
+        let inner = Some(BufWriter::new(self.s()?.store.clone(), self.p(path)?));
+        Ok(Box::new(ObjectWrite { inner, uploads: self.uploads.clone() }))
     }
 
     async fn delete(&self, path: &str) -> iceberg::Result<()> {
@@ -358,11 +442,13 @@ impl iceberg::io::Storage for IcebergStorage {
     }
 
     fn new_input(&self, path: &str) -> iceberg::Result<InputFile> {
-        Ok(InputFile::new(Arc::new(IcebergStorage { inner: self.inner.clone() }), path.to_string()))
+        let storage = IcebergStorage { inner: self.inner.clone(), uploads: None };
+        Ok(InputFile::new(Arc::new(storage), path.to_string()))
     }
 
     fn new_output(&self, path: &str) -> iceberg::Result<OutputFile> {
-        Ok(OutputFile::new(Arc::new(IcebergStorage { inner: self.inner.clone() }), path.to_string()))
+        let storage = IcebergStorage { inner: self.inner.clone(), uploads: self.uploads.clone() };
+        Ok(OutputFile::new(Arc::new(storage), path.to_string()))
     }
 }
 
@@ -382,6 +468,7 @@ impl FileRead for ObjectRead {
 #[derive(Debug)]
 struct ObjectWrite {
     inner: Option<BufWriter>,
+    uploads: Option<Uploads>,
 }
 
 #[async_trait]
@@ -399,7 +486,13 @@ impl FileWrite for ObjectWrite {
             .inner
             .take()
             .ok_or_else(|| iceberg::Error::new(iceberg::ErrorKind::Unexpected, "file already closed"))?;
-        w.shutdown().await.map_err(ice_err)
+        match &self.uploads {
+            Some(uploads) => {
+                uploads.push(Pending::Writer(w));
+                Ok(())
+            }
+            None => w.shutdown().await.map_err(ice_err),
+        }
     }
 }
 
@@ -414,4 +507,52 @@ pub fn warehouse_url(location: &str) -> Result<Url> {
     let abs = p.canonicalize()?;
     let url = Url::from_directory_path(&abs).map_err(|()| Error::config(format!("bad local path {location}")))?;
     Url::parse(url.as_str().trim_end_matches('/')).map_err(|e| Error::config(format!("bad local path {location}: {e}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Larger than `BufWriter`'s buffer, so the file is uploaded in parts.
+    const LARGE: usize = 11 << 20;
+
+    fn memory() -> (Storage, Arc<InMemory>) {
+        let store = Arc::new(InMemory::new());
+        (Storage::from_store(store.clone(), "memory://test"), store)
+    }
+
+    async fn write_deferred(storage: &Storage, uri: &str, uploads: &Uploads, len: usize) {
+        let mut w = storage.deferred_output_file(uri, uploads).writer().await.unwrap();
+        w.write(Bytes::from(vec![7u8; len])).await.unwrap();
+        w.close().await.unwrap();
+    }
+
+    /// Deferred files, small and multipart, appear only when the queue is sent.
+    #[tokio::test]
+    async fn deferred_files_are_written_on_send() {
+        let (storage, _) = memory();
+        let uploads = Uploads::default();
+        write_deferred(&storage, "memory://test/small", &uploads, 10).await;
+        write_deferred(&storage, "memory://test/large", &uploads, LARGE).await;
+        uploads.put(&storage, "memory://test/put", Bytes::from_static(b"x")).unwrap();
+        for uri in ["memory://test/small", "memory://test/large", "memory://test/put"] {
+            assert!(!storage.exists(uri).await.unwrap(), "{uri} written before send");
+        }
+
+        uploads.send().await.unwrap();
+        assert_eq!(storage.read("memory://test/small").await.unwrap().len(), 10);
+        assert_eq!(storage.read("memory://test/large").await.unwrap().len(), LARGE);
+        assert_eq!(storage.read("memory://test/put").await.unwrap().as_ref(), b"x");
+    }
+
+    #[tokio::test]
+    async fn aborted_files_are_never_written() {
+        let (storage, store) = memory();
+        let uploads = Uploads::default();
+        write_deferred(&storage, "memory://test/large", &uploads, LARGE).await;
+        uploads.put(&storage, "memory://test/put", Bytes::from_static(b"x")).unwrap();
+        uploads.abort().await;
+        uploads.send().await.unwrap();
+        assert_eq!(store.list(None).count().await, 0);
+    }
 }

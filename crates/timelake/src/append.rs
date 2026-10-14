@@ -12,6 +12,7 @@ use crate::commit::{Change, CommitInfo, commit};
 use crate::error::Result;
 use crate::lvi::latest_per_series;
 use crate::maintain::{MaintainOptions, MaintainReport};
+use crate::storage::Uploads;
 use crate::summary;
 use crate::table::Table;
 use crate::write::{row_groups, sort_and_split, write_partition, writer_properties};
@@ -68,7 +69,8 @@ impl Table {
             self.contract(),
             &partitions.iter().map(|(_, b)| b.clone()).collect::<Vec<_>>(),
         )?;
-        let files = self.write_partitions(partitions).await?;
+        let uploads = Uploads::default();
+        let files = self.write_partitions(partitions, &uploads).await?;
         if files.is_empty() {
             let commit = CommitInfo {
                 snapshot_id: 0,
@@ -86,7 +88,7 @@ impl Table {
         if let Some(id) = &opts.batch_id {
             props.insert(summary::BATCH_ID.into(), id.clone());
         }
-        let committed = commit(self, Change::Append { files, latest }, props).await;
+        let committed = commit(self, Change::Append { files, latest }, props, uploads).await;
         if !matches!(&committed, Ok((_, info)) if !info.duplicate) {
             // Nothing references the data files: a failed cleanup only wastes space, and the
             // commit's own outcome is what the caller needs to see.
@@ -114,14 +116,20 @@ impl Table {
     }
 
     /// Writes each partition's rows to Parquet, a few partitions at a time.
-    async fn write_partitions(&self, partitions: Vec<(Option<i32>, RecordBatch)>) -> Result<Vec<DataFile>> {
+    async fn write_partitions(
+        &self,
+        partitions: Vec<(Option<i32>, RecordBatch)>,
+        uploads: &Uploads,
+    ) -> Result<Vec<DataFile>> {
         let props = writer_properties(self)?;
         let rows_per_group = self.contract().row_group_rows;
         // The futures are created up front (not in a stream closure) so the returned future stays
         // `Send` and callers can spawn it.
         let writes: Vec<_> = partitions
             .into_iter()
-            .map(|(partition, rows)| write_partition(self, partition, row_groups(rows, rows_per_group), &props))
+            .map(|(partition, rows)| {
+                write_partition(self, partition, row_groups(rows, rows_per_group), &props, uploads)
+            })
             .collect();
         let files: Vec<Vec<DataFile>> =
             futures::stream::iter(writes).buffered(CONCURRENT_PARTITION_WRITES).try_collect().await?;

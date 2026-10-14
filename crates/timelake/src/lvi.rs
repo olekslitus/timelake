@@ -57,13 +57,14 @@ pub(crate) fn new_uri(table: &Table, snapshot_id: i64) -> String {
     format!("{}/metadata/lvi-{snapshot_id}-{}.parquet", table.location(), uuid::Uuid::new_v4())
 }
 
-pub(crate) async fn write(table: &Table, uri: &str, batch: &RecordBatch) -> Result<()> {
+/// The index as a Parquet file.
+pub(crate) fn encode(batch: &RecordBatch) -> Result<Bytes> {
     let props = WriterProperties::builder().set_compression(Compression::ZSTD(ZstdLevel::try_new(3)?)).build();
     let mut buf = vec![];
     let mut w = ArrowWriter::try_new(&mut buf, batch.schema(), Some(props))?;
     w.write(batch)?;
     w.close()?;
-    table.lake().storage().write(uri, Bytes::from(buf)).await
+    Ok(Bytes::from(buf))
 }
 
 /// The index for a new snapshot: the base snapshot's index merged with the newest rows of the

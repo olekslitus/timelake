@@ -29,11 +29,13 @@ This is Iceberg’s Hadoop-catalog convention, which is why DuckDB’s `iceberg_
 ## Commit protocol
 
 1. Load the current version: read `version-hint.text`, then read `vN.metadata.json` while checking whether `vN+1` already exists (the hint is written after a commit and may lag).
-2. Write data files, a manifest for them, the last-value index, and a new manifest list.
+2. Encode data files, a manifest for them, the last-value index, and a new manifest list, then upload them all at once. A large data file’s earlier parts are uploaded while it is written.
 3. Create `vN+1.metadata.json` with put-if-absent. If it already exists, another writer won: delete this attempt’s manifests, reload, and retry on top of the new version (up to 10 attempts, with jittered backoff). Data files are reused across retries.
-4. Overwrite `version-hint.text` with `N+1`.
+4. Overwrite `version-hint.text` with `N+1` in the background. The commit doesn’t wait for it; the CLI and the Python package wait for it before the process exits (`timelake::flush` in Rust).
 
-Appends carrying a batch id first check whether any retained snapshot already has that id; if so, the append is a no-op and its data files are deleted.
+So a commit waits for two round trips to the store: the uploads, then the conditional write.
+
+Appends carrying a batch id first check whether any retained snapshot already has that id; if so, the append is a no-op and its data files are never uploaded.
 
 Timelake writes its own commits rather than using iceberg-rust’s transaction API, which only supports fast appends. Three operations exist: **append**, **replace** (compaction: remove files, add files with the same rows) and **delete** (retention: remove files). Once a table has more than eight manifests, an append merges the existing ones into one, so planning a scan stays a few reads however many commits the table has seen.
 

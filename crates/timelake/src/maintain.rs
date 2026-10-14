@@ -18,6 +18,7 @@ use crate::error::{Error, Result};
 use crate::lake::metadata_uri;
 use crate::schema::align_batch;
 use crate::sort::{last_per_group, stable_sort};
+use crate::storage::Uploads;
 use crate::summary;
 use crate::table::{LiveEntry, Table};
 use crate::write::{file_partition, row_groups, write_partition, writer_properties};
@@ -139,7 +140,8 @@ async fn retention(table: &Table, report: &mut MaintainReport) -> Result<Table> 
     }
     report.partitions_dropped += removed.iter().map(|e| file_partition(&e.data_file)).collect::<HashSet<_>>().len();
     report.files_dropped += removed.len();
-    let (table, _) = commit(table, Change::Delete { removed, lvi_cutoff: Some(cutoff) }, HashMap::new()).await?;
+    let change = Change::Delete { removed, lvi_cutoff: Some(cutoff) };
+    let (table, _) = commit(table, change, HashMap::new(), Uploads::default()).await?;
     Ok(table)
 }
 
@@ -151,6 +153,7 @@ async fn compact(table: &Table, opts: &MaintainOptions, report: &mut MaintainRep
         return Ok(table.clone());
     }
     let props = writer_properties(table)?;
+    let uploads = Uploads::default();
     let (mut removed, mut added) = (vec![], vec![]);
     let mut outcome = Ok(());
     for (partition, mut files) in plan {
@@ -158,7 +161,7 @@ async fn compact(table: &Table, opts: &MaintainOptions, report: &mut MaintainRep
         files.sort_by(|a, b| {
             (a.sequence_number, a.data_file.file_path()).cmp(&(b.sequence_number, b.data_file.file_path()))
         });
-        match rewrite_partition(table, partition, &files, &props, report).await {
+        match rewrite_partition(table, partition, &files, &props, &uploads, report).await {
             Ok(written) => {
                 added.extend(written);
                 removed.extend(files);
@@ -172,8 +175,11 @@ async fn compact(table: &Table, opts: &MaintainOptions, report: &mut MaintainRep
     report.files_written += added.len();
     let paths: Vec<String> = added.iter().map(|f| f.file_path().to_string()).collect();
     let committed = match outcome {
-        Ok(()) => commit(table, Change::Replace { removed, added }, HashMap::new()).await,
-        Err(e) => Err(e),
+        Ok(()) => commit(table, Change::Replace { removed, added }, HashMap::new(), uploads).await,
+        Err(e) => {
+            uploads.abort().await;
+            Err(e)
+        }
     };
     if committed.is_err() {
         // Unreferenced: a failed cleanup only wastes space, and the original error matters more.
@@ -188,6 +194,7 @@ async fn rewrite_partition(
     partition: Option<i32>,
     files: &[LiveEntry],
     props: &WriterProperties,
+    uploads: &Uploads,
     report: &mut MaintainReport,
 ) -> Result<Vec<DataFile>> {
     let batches = read_files(table, files).await?;
@@ -197,7 +204,7 @@ async fn rewrite_partition(
     report.rows_rewritten += rows_in as u64;
     report.partitions_compacted += 1;
     report.files_rewritten += files.len();
-    write_partition(table, partition, row_groups(merged, table.contract().row_group_rows), props).await
+    write_partition(table, partition, row_groups(merged, table.contract().row_group_rows), props, uploads).await
 }
 
 /// Which files of which partitions to rewrite.
