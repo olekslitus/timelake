@@ -6,10 +6,12 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-publish.workspace = true
+readme = "README.md"
+keywords = ["time-series", "iceberg", "lakehouse", "object-storage", "parquet"]
+categories = ["database-implementations", "database"]
 
 [dependencies]
-timelake-format = { path = "../timelake-format", features = ["head"] }
+timelake-format = { workspace = true, features = ["head"] }
 iceberg.workspace = true
 datafusion.workspace = true
 arrow.workspace = true

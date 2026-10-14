@@ -152,7 +152,20 @@ uv run python scripts/release.py 0.4.0 --push  # the same, then pushes and creat
 
 The script runs `cargo semver-checks` on the library crates against the previous tag, so a patch release can't
 break the API, then sets the version in every package, turns `## Unreleased` into the release's section, rebuilds
-the WASM bundle, runs the checks, commits and tags. Publishing to crates.io, PyPI and npm is not set up yet.
+the WASM bundle, runs the checks, commits and tags.
+
+Pushing the tag starts the [Release workflow](.github/workflows/release.yml). It builds the Python wheels (Linux,
+macOS, Windows) and source distribution, the CLI binaries and the npm package, and once all of them build, publishes
+`timelake-format`, `timelake` and `timelake-cli` to crates.io, `timelake` to PyPI and `@timelake/client` to npm, and
+attaches the binaries to the GitHub release. It uses trusted publishing: each registry accepts a short-lived token
+that GitHub issues to this workflow, so no registry token is stored. A version a registry already has is skipped,
+so a failed run can be re-run. Run the workflow by hand (Actions → Release → Run workflow) to build everything and
+dry-run each publish without a tag.
+
+Only crates in `[workspace.dependencies]` with a version (`timelake`, `timelake-format`) and `timelake-cli` are
+published to crates.io; `timelake-py` goes to PyPI, and `timelake-wasm` ships inside the npm package. The npm
+package is built into `packages/timelake-client/dist` by `bun run build:npm`: in this repository the client is used
+from its TypeScript source.
 
 ## License
 

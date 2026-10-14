@@ -3,6 +3,9 @@ r"""Cuts a release: one version for every package, a CHANGELOG section, a commit
     uv run python scripts/release.py 0.4.0            # prepare: bump, changelog, checks, commit, tag
     uv run python scripts/release.py 0.4.0 --push     # then push the commit and tag, and create the GitHub release
 
+Pushing the tag starts .github/workflows/release.yml, which publishes to crates.io, PyPI and npm and attaches the
+CLI binaries to the GitHub release.
+
 Before tagging, `cargo semver-checks` compares the public API of the library crates (`timelake`, `timelake-format`)
 with the previous tag, following https://doc.rust-lang.org/cargo/reference/semver.html: a patch release must not
 break the API; before 1.0, a minor release may (Cargo treats 0.y -> 0.(y+1) as a major change). Install it with
@@ -67,6 +70,8 @@ def replace(path: Path, pattern: str, value: str) -> None:
 def bump(version: str) -> None:
     """Sets `version` in every package: Rust workspace, WASM crate, Python package, npm packages."""
     replace(ROOT / "Cargo.toml", r'^version = "[^"]+"', f'version = "{version}"')
+    for crate in LIBRARIES:  # the published crates' dependencies on each other
+        replace(ROOT / "Cargo.toml", rf'^({crate} = {{ path = "[^"]+", version = )"[^"]+"', rf'\g<1>"{version}"')
     replace(ROOT / "crates/timelake-wasm/Cargo.toml", r'^version = "[^"]+"', f'version = "{version}"')
     replace(ROOT / "crates/timelake-py/pyproject.toml", r'^version = "[^"]+"', f'version = "{version}"')
     for package in ("packages/timelake-client/package.json", "dashboard/package.json"):

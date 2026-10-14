@@ -10,9 +10,11 @@ edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/polythings/timelake"
 homepage = "https://timelake.dev"
-publish = false
 
 [workspace.dependencies]
+# The published crates depend on each other by version too; scripts/release.py keeps these in step.
+timelake = { path = "crates/timelake", version = "0.3.0" }
+timelake-format = { path = "crates/timelake-format", version = "0.3.0" }
 # iceberg 0.10.1 is on Arrow 58, so DataFusion 54.x (Arrow 58, object_store 0.13) is the newest matching engine.
 iceberg = "=0.10.1"
 datafusion = "54.1"

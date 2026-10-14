@@ -6,7 +6,9 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-publish.workspace = true
+readme = "README.md"
+keywords = ["time-series", "iceberg", "lakehouse"]
+categories = ["database-implementations"]
 
 [features]
 # The head object's container and codecs (Arrow IPC and JSON), for the engine and the WASM reader.

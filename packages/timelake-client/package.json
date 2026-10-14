@@ -24,7 +24,8 @@
     "build:wasm": "bash scripts/build-wasm.sh",
     "check:wasm": "bash scripts/build-wasm.sh --check",
     "test": "bun test",
-    "typecheck": "tsc -p tsconfig.json && tsc -p test/tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json && tsc -p test/tsconfig.json",
+    "build:npm": "bun scripts/build-npm.mjs"
   },
   "peerDependencies": {
     "zod": "^4"

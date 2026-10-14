@@ -8,6 +8,7 @@ version = "0.3.0"
 description = "The open time-series lakehouse: fast queries on your own object storage, with no database and no maintenance jobs"
 requires-python = ">=3.10"
 license = "Apache-2.0"
+readme = "README.md"
 dependencies = ["pyarrow>=14"]
 
 [project.urls]
