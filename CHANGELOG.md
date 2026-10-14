@@ -8,6 +8,8 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
 
 ## Unreleased
 
+## 0.3.0 – 2026-10-14
+
 ### Added
 
 - **Table format version:** tables record `timelake.format-version` (2 for tables created now; tables without it are
