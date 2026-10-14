@@ -116,6 +116,7 @@ def main() -> None:
                 "check-release",
                 "-p",
                 package,
+                "--all-features",
                 "--baseline-rev",
                 previous,
                 "--release-type",
