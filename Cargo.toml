@@ -43,6 +43,14 @@ tempfile = "3"
 [profile.release]
 debug = "line-tables-only"
 
+# What users download (wheels, CLI binaries; .github/workflows/release.yml). Without debug info: line tables alone
+# made the Linux builds 160 MB, over PyPI's 100 MB limit. Symbol names stay, so panics still name functions.
+[profile.dist]
+inherits = "release"
+debug = false
+strip = "debuginfo"
+lto = "thin"
+
 # Dependencies (DataFusion, Arrow, …) are huge with full debug info; keep it for our own crates only.
 [profile.dev.package."*"]
 debug = false

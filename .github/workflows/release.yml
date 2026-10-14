@@ -74,7 +74,12 @@ jobs:
         with:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux || 'auto' }}
-          args: --release --locked --out dist -m crates/timelake-py/Cargo.toml
+          args: --profile dist --locked --out dist -m crates/timelake-py/Cargo.toml
+      - name: Wheel fits PyPI's 100 MB file limit
+        shell: bash
+        run: |
+          ls -l dist
+          if [ -n "$(find dist -name '*.whl' -size +95M)" ]; then echo "::error::wheel over 95 MB"; exit 1; fi
       - name: Smoke test
         # The x86_64 macOS wheel is cross-compiled on an arm64 runner and can't be imported there.
         if: matrix.name != 'macos-x86_64'
@@ -124,7 +129,7 @@ jobs:
         with:
           persist-credentials: false
       - run: rustup toolchain install && rustup target add ${{ matrix.target }}
-      - run: cargo build --release --locked -p timelake-cli --target ${{ matrix.target }}
+      - run: cargo build --profile dist --locked -p timelake-cli --target ${{ matrix.target }}
       - name: Archive
         shell: bash
         env:
@@ -135,10 +140,10 @@ jobs:
           mkdir -p "$name" out
           cp LICENSE crates/timelake-cli/README.md "$name/"
           if [[ "$TARGET" == *windows* ]]; then
-            cp "target/$TARGET/release/timelake.exe" "$name/"
+            cp "target/$TARGET/dist/timelake.exe" "$name/"
             7z a "out/$name.zip" "$name" > /dev/null
           else
-            cp "target/$TARGET/release/timelake" "$name/"
+            cp "target/$TARGET/dist/timelake" "$name/"
             tar czf "out/$name.tar.gz" "$name"
           fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
