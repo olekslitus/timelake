@@ -52,8 +52,8 @@ project where it's implemented.
 
 ### IceGate
 
-[icegatetech/icegate](https://github.com/icegatetech/icegate) · Apache-2.0 · Rust · studied 2026-10-15 (README and
-crate docs, not a full code read)
+[icegatetech/icegate](https://github.com/icegatetech/icegate) · Apache-2.0 · Rust · studied 2026-10-15: README and
+docs, then the code of ingest, the WAL queue, the query engine, maintenance and the catalog (commit `ef6b362`)
 
 An observability lake: OpenTelemetry logs, traces and events (metrics planned) in Iceberg + Parquet on object storage,
 queried through Loki-, Tempo- and Flight SQL-compatible APIs, with a DataFusion engine. A prototype. It shares
@@ -88,8 +88,63 @@ columns such as `trace_id`, which aren't in the sort order.
 - [ ] Compaction converges: merge a group only if it lowers the file count. Check that our size tiers
   (`maintain.rs`) guarantee the same, in a test.
 - [ ] Opt-in bloom filters for high-cardinality columns outside the sort key, written by compaction only. Our sort
-  order already prunes series-key lookups by min/max.
+  order already prunes series-key lookups by min/max ([#33](https://github.com/polythings/timelake/issues/33)).
 - [ ] Later: Prometheus- or Grafana-compatible read APIs for observability users.
+
+**From the code.** Ranked by value to Timelake. Issue numbers mark ideas already tracked.
+
+*Correctness*
+- [ ] Expiry must stop, not delete, when a manifest list of a snapshot it keeps is missing. IceGate's garbage
+  collection deletes nothing if the set of files still in use can't be read in full. Our `reachable()`
+  (`maintain.rs`) skips a missing list for kept snapshots too, so with [#21](https://github.com/polythings/timelake/issues/21) expiry would delete live data files.
+- [ ] Carry state that must survive onto every commit, compaction included. IceGate's compaction once dropped the
+  WAL offset from its replace snapshots and the shifter restarted from zero; now every commit copies it forward and
+  readers refuse to start without it. Our compaction commits with empty snapshot properties, so the SPEC §8.3 WAL
+  mark would be lost the same way.
+- [ ] Batch-id idempotency ends when snapshots expire: `is_duplicate` only walks the snapshots still kept (1 h and at
+  least 5 by default), so a late retry on a busy table writes twice. IceGate uses one increasing offset per writer
+  ("committed ≥ mine" means done), which never expires. Keep a bounded list of recent ids, or a per-writer sequence,
+  independent of expiry, and say what the window is in the docs.
+- [ ] Check a rewrite before committing it: rows out (plus duplicates removed) equal rows in, and the min and max of
+  the sort columns are unchanged, read from the new files' statistics at no extra cost.
+- [ ] Orphan cleanup (promised in SPEC §10): list the table prefix, delete only unreferenced files older than a grace
+  period, keep anything with an unknown layout, offer a dry run. Normalise listed keys and referenced paths with the
+  same function: IceGate deleted a live file over percent-escaped partition values.
+- [ ] A dropped and recreated table can receive a commit from a writer that still had the old one open. Give each
+  table creation its own location, or a table id the commit checks.
+
+*Write path and maintenance*
+- [ ] Compact with a streaming k-way merge of the already-sorted inputs, holding only overlapping groups in memory
+  ([#14](https://github.com/polythings/timelake/issues/14)). Equal keys ordered by input position keep "latest write wins".
+- [ ] Commit each compaction group on its own, with a byte budget per group, so a Lambda timeout keeps the work
+  already done; a group whose inputs disappeared is skipped, not an error.
+- [ ] Plan compaction output so files have disjoint key ranges ([#12](https://github.com/polythings/timelake/issues/12)), and rewrite a closed partition whole once it's
+  past its end plus a grace period.
+- [ ] Record each WAL segment's sort-key range in its footer metadata, so the flush and readers skip segments by
+  series without reading them. Take time ranges from column statistics, not from the composite key's ends.
+- [ ] Never advance the WAL offset for a flush that produced no rows or files.
+- [ ] Ingest backpressure: refuse at once when the queue is full (nothing enqueued, a retry is safe); cap the wait for
+  a durable write below the client's timeout and say the write may still land; check the tenant before decompressing;
+  limit the decompressed size.
+- [ ] Delta encoding for monotonic integer counters (meters), after a benchmark.
+
+*Read path*
+- [ ] Load each table once when many queries arrive together: one task reloads, the others wait and reuse the
+  result. A dashboard opening sends 10–20 cold queries at once; `Lake::table_recent` doesn't merge concurrent loads.
+- [ ] Answer "list the series" (`SELECT DISTINCT <series key>`) from the last-value index, like the latest-value
+  rewrite.
+- [ ] For the local cache (§19.1 P5): a sparse byte-range cache on disk that fetches only the missing gaps, plus
+  write-through for files this process wrote. Our files never change, so entries never need invalidating.
+- [ ] Report per query: files pruned, footers from the head versus fetched, GETs and bytes ([#17](https://github.com/polythings/timelake/issues/17)).
+- [ ] Count storage requests by kind inside the library (wrap the store once per process), so a maintenance run
+  reports what it cost.
+- [ ] Re-apply tenant filters to rows when permissions arrive (§14, F1): pushdown into our provider only prunes.
+- [ ] Cap the number of time buckets a query may produce.
+
+**What to avoid.** IceGate reloads every table every 15 s whether used or not, scans Iceberg as one partition and
+ignores `LIMIT`, lists every WAL segment per scan, drops casts when converting filters (wrong pruning), caches HEAD
+results with a TTL, re-commits on retry without re-checking the offset, expires snapshots only inside commits (idle
+tables never shrink), and has no fault-injection tests. Timelake already avoids each of these; keep it that way.
 
 ### Earlier studies
 
