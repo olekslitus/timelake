@@ -36,7 +36,7 @@ What lives where, which technologies are used and why, and how a write and a que
 | `crates/timelake-wasm` | Rust | A small read-only engine for browsers and JavaScript, compiled to WebAssembly. It does no network I/O itself. |
 | `packages/timelake-client` | TypeScript | @timelake/client: fetches files over HTTPS and hands them to the WASM reader. Rows can be typed with Zod. |
 | `dashboard` | TypeScript (Next.js) | The website timelake.dev: landing page, docs, benchmark charts and the Explorer. |
-| `bench` | Python, Go, shell | Benchmarks: the `timelake-bench` runner with its workloads and system adapters, the run history, AWS scripts and a request-counting S3 proxy. |
+| `bench` | Python, Go, shell | Benchmarks: the `timebench` runner with its workloads and system adapters, the run history, AWS scripts and a request-counting S3 proxy. |
 | `brand` | JavaScript | Logo and wordmark sources and the mark editor. |
 | `scripts` | shell, JavaScript | Builds the demo warehouse for the website; a static file server with Range support for testing. |
 | `spikes/iceberg-write` | Markdown | Findings of an early experiment with iceberg-rust's write support (the code is in git history). |
@@ -145,6 +145,7 @@ The WASM module never makes network requests. The TypeScript client fetches byte
 | `dashboard/app/api` | Two route handlers used by the Explorer: `/api/sql` and `/api/series`. |
 | `dashboard/lib/lake` | The Explorer's data layer, with two backends behind one interface: `wasm.ts` reads a public warehouse with `@timelake/client` (used on timelake.dev, no SQL), `cli.ts` runs the `timelake` binary (local, full SQL). `index.ts` picks one by environment variable. |
 | `dashboard/lib/benchmarks.ts` | Reads the run files in `dashboard/data/runs` (a copy of `bench/results/runs`, made by `bun run sync-results`) and computes the numbers for the charts and the history. |
+| `dashboard/lib/benchmark-catalog.ts` | Every benchmark we run, plan or skip: status, why, links to the original, and the methodology pages' text. |
 | `dashboard/components` | Page pieces (diagrams, charts, tables); `components/ui` holds shadcn/ui components. |
 
 Vercel builds and deploys the site on every push to `main` (project root `dashboard/`). The demo data on timelake.dev is a small warehouse on Vercel Blob, built by `scripts/build-demo-warehouse.sh` and uploaded with `bun run upload-demo`.
@@ -153,15 +154,15 @@ Vercel builds and deploys the site on every push to `main` (project root `dashbo
 
 | Path | What |
 | --- | --- |
-| `bench/benchlib/cli.py` | `timelake-bench`: runs a workload (`run`), a set of runs (`profile weekly`), and prints one run (`report`) or the history (`history`). |
-| `bench/benchlib/harness.py` | One run: streams the workload into each system, runs its maintenance, and runs every query in a fresh process (`worker.py`) at each checkpoint. Writes `bench/results/runs/<run>.jsonl`. |
-| `bench/benchlib/workloads` | Workloads: data at a named scale, the order rows arrive in, and the queries. `tsbs_iot.py` is TSBS IoT. |
-| `bench/benchlib/systems` | One adapter per system under test: Timelake, Iceberg (PyIceberg), S3 Tables, Lance, plain Parquet files, TimescaleDB. Each writes the tables and opens its readers. |
+| `bench/timebench/cli.py` | `timebench`: runs a workload (`run`), a set of runs (`profile weekly`), and prints one run (`report`) or the history (`history`). |
+| `bench/timebench/harness.py` | One run: streams the workload into each system, runs its maintenance, and runs every query in a fresh process (`worker.py`) at each checkpoint. Writes `bench/results/runs/<run>.jsonl`. |
+| `bench/timebench/workloads` | Workloads: data at a named scale, the order rows arrive in, and the queries. `tsbs_iot.py` is TSBS IoT. |
+| `bench/timebench/systems` | One adapter per system under test: Timelake, Iceberg (PyIceberg), S3 Tables, Lance, plain Parquet files, TimescaleDB. Each writes the tables and opens its readers. |
 | `bench/results/runs` | The benchmark history: one file per run, with the commit, machine, versions and every measurement. |
 | `bench/run.py` | The Phase 0 engine comparison: one query suite on one engine over static files (Parquet, Vortex, Iceberg), records to `bench/results/*.jsonl`. |
 | `bench/queries` | The TSBS IoT and single-truck queries, written once per engine. |
 | `bench/scripts` | Data preparation: TSBS output to Parquet, Iceberg and Vortex; TPC-H to Parquet. |
-| `bench/benchlib` | The runner and the code the scripts share: query files and dialects, result records and reports, S3 settings for each engine, storage targets. |
+| `bench/timebench` | The runner and the code the scripts share: query files and dialects, result records and reports, S3 settings for each engine, storage targets. |
 | `bench/tools/s3proxy` | Go. Sits between the engines and storage, counts requests and bytes, and can add a fixed delay. In AWS mode it signs requests for the real bucket. |
 | `bench/infra` | AWS: one CloudFormation stack (buckets, optional instance), scripts to create, use and delete it, and the weekly run (`weekly.sh`). |
 | `bench/run_aws.sh` | Runs TSBS IoT against AWS S3 and S3 Tables from your machine. |

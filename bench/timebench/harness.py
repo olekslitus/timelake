@@ -18,19 +18,19 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from benchlib import RUNS, meta
-from benchlib.queries import apply_dialect
-from benchlib.results import EndRecord, IngestRecord, QueryRecord, RunRecord, append_jsonl, best_time, first_time
-from benchlib.s3 import PROXY, ProxyStats
-from benchlib.systems import DIALECTS, System, systems
-from benchlib.targets import Place
-from benchlib.worker import request_kinds
+from timebench import RUNS, meta
+from timebench.queries import apply_dialect
+from timebench.results import EndRecord, IngestRecord, QueryRecord, RunRecord, append_jsonl, best_time, first_time
+from timebench.s3 import PROXY, ProxyStats
+from timebench.systems import DIALECTS, System, systems
+from timebench.targets import Place
+from timebench.worker import request_kinds
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from benchlib.targets import Target
-    from benchlib.workloads import Query, Workload
+    from timebench.targets import Target
+    from timebench.workloads import Query, Workload
 
 CHECKPOINTS = ("ingested", "maintained")
 
@@ -244,7 +244,7 @@ def measure(spec: RunSpec, system: System, reader: str, query: Query, checkpoint
         cmd = type(system).reader_command(reader, place, place.load_state(), spec.runs)
     else:
         job = {"system": system.name, "reader": reader, "target": place.target.name, "dataset": place.dataset}
-        cmd = [sys.executable, "-m", "benchlib.worker", json.dumps({**job, "runs": spec.runs})]
+        cmd = [sys.executable, "-m", "timebench.worker", json.dumps({**job, "runs": spec.runs})]
     before = PROXY.stats() if counted(system) else None
     try:
         # A failing query is a result to record, not a reason to stop: no check=True.

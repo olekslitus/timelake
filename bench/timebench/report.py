@@ -5,8 +5,8 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any, cast
 
-from benchlib import RUNS
-from benchlib.results import QueryRecord, best_time, first_time, geomean, read_jsonl
+from timebench import RUNS
+from timebench.results import QueryRecord, best_time, first_time, geomean, read_jsonl
 
 if TYPE_CHECKING:
     from pathlib import Path

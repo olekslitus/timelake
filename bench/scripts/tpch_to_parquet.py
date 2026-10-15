@@ -10,7 +10,7 @@ from pathlib import Path
 
 import duckdb
 
-from benchlib import TPCH_TABLES
+from timebench import TPCH_TABLES
 
 
 def main(out_dir: Path, scale: float, scratch: Path) -> None:

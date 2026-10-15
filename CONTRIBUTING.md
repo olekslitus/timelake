@@ -90,7 +90,7 @@ ideas we took and the projects we're studying.
 - **Paths and time:** use `pathlib` for paths, and timezone-aware UTC for anything stored.
 - **Bindings:** the native module's types live in `crates/timelake-py/python/timelake/_timelake.pyi`. Update the stub
   with every change to `src/lib.rs`; `tests/test_package.py` checks that they match.
-- **Shared benchmark helpers** go in `bench/benchlib`.
+- **Shared benchmark helpers** go in `bench/timebench`.
 
 ## TypeScript
 
@@ -110,7 +110,7 @@ ideas we took and the projects we're studying.
   dir, or commit small ones under `tests/fixtures/`. Fixtures stay byte-exact.
 - **Test behaviour, not implementation**: query results, files on disk, errors. Avoid matching `EXPLAIN` strings or
   log text.
-- **Benchmarks are not tests.** They run by hand (`timelake-bench`) or in the weekly run on AWS, never in CI.
+- **Benchmarks are not tests.** They run by hand (`timebench`) or in the weekly run on AWS, never in CI.
 
 ## Checks
 

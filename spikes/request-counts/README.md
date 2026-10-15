@@ -4,7 +4,7 @@
 regressions on every push: an extra metadata read, a lost pruning step, a commit that writes more objects. That only
 works if identical runs give (nearly) identical counts.
 
-**Setup (2026-10-15).** `timelake-bench run tsbs-iot --scale small --target s3 --ttfb-ms 0 --systems
+**Setup (2026-10-15).** `timebench run tsbs-iot --scale small --target s3 --ttfb-ms 0 --systems
 timelake,iceberg,parquet`, three times on a laptop, against a local RustFS behind `tools/s3proxy`. Each run streams
 1,728 commits per system, runs maintenance, and runs 17 queries on 5 readers twice (after ingest, after maintenance),
 each a first run plus two repeats. The three run files are in [`runs/`](runs/); `compare.py` compares them:

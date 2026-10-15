@@ -18,8 +18,8 @@ from typing import TYPE_CHECKING, TypedDict
 
 import duckdb
 
-from benchlib import DATA, RESULTS, TPCH_TABLES, TSBS_TABLES
-from benchlib.results import append_jsonl
+from timebench import DATA, RESULTS, TPCH_TABLES, TSBS_TABLES
+from timebench.results import append_jsonl
 
 if TYPE_CHECKING:
     from pathlib import Path

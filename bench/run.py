@@ -1,7 +1,7 @@
 """Phase 0 engine comparison (SPEC.md §17.5): query engines over the same static Parquet, Vortex and Iceberg files.
 
-Workloads that write tables (ingest, maintenance, then queries per system) run with ``timelake-bench`` instead
-(``benchlib/cli.py``). This runs a query suite on one engine. Each query runs in a fresh subprocess: one "first"
+Workloads that write tables (ingest, maintenance, then queries per system) run with ``timebench`` instead
+(``timebench/cli.py``). This runs a query suite on one engine. Each query runs in a fresh subprocess: one "first"
 run, then `--runs` repeat runs. Each run fully materializes the result as Arrow. Results are appended to
 results/<suite>[.<tag>].jsonl.
 
@@ -27,8 +27,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from benchlib import BENCH, DATA, RESULTS, TPCH_TABLES, TSBS_TABLES
-from benchlib.queries import (
+from timebench import BENCH, DATA, RESULTS, TPCH_TABLES, TSBS_TABLES
+from timebench.queries import (
     DATAFUSION,
     DUCKDB,
     POLARS,
@@ -40,8 +40,8 @@ from benchlib.queries import (
     clickbench_sql,
     raw_queries,
 )
-from benchlib.results import QueryRecord, append_jsonl, best_time, first_time, utc_timestamp
-from benchlib.s3 import BUCKET, PROXY, ProxyStats
+from timebench.results import QueryRecord, append_jsonl, best_time, first_time, utc_timestamp
+from timebench.s3 import BUCKET, PROXY, ProxyStats
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -9,12 +9,12 @@ import pyarrow as pa
 import pyarrow.csv as pacsv
 import pytest
 
-from benchlib import harness, targets
-from benchlib.report import Run, markdown
-from benchlib.results import QueryRecord, read_jsonl
-from benchlib.systems.timescaledb import csv_chunks, pg_type
-from benchlib.targets import Target
-from benchlib.workloads import Batch, Query, TableSpec, Workload
+from timebench import harness, targets
+from timebench.report import Run, markdown
+from timebench.results import QueryRecord, read_jsonl
+from timebench.systems.timescaledb import csv_chunks, pg_type
+from timebench.targets import Target
+from timebench.workloads import Batch, Query, TableSpec, Workload
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

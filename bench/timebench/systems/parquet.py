@@ -14,13 +14,13 @@ import pyarrow.compute as pc
 import pyarrow.fs as pafs
 import pyarrow.parquet as pq
 
-from benchlib.meta import version
-from benchlib.s3 import BUCKET, PROXY
-from benchlib.systems import Runner, System, duckdb_connection, duckdb_runner
+from timebench.meta import version
+from timebench.s3 import BUCKET, PROXY
+from timebench.systems import Runner, System, duckdb_connection, duckdb_runner
 
 if TYPE_CHECKING:
-    from benchlib.targets import Place
-    from benchlib.workloads import TableSpec
+    from timebench.targets import Place
+    from timebench.workloads import TableSpec
 
 DAY_US = 86_400_000_000
 

@@ -1,6 +1,6 @@
 # Benchmarks on AWS
 
-Runs `timelake-bench` and the Phase 0 suites on real S3 (SPEC §17.4), including the weekly regression run. One CloudFormation stack in one zone holds:
+Runs `timebench` and the Phase 0 suites on real S3 (SPEC §17.4), including the weekly regression run. One CloudFormation stack in one zone holds:
 - an S3 Standard bucket;
 - an S3 Express One Zone bucket;
 - an S3 Tables table bucket;
@@ -11,7 +11,7 @@ Runs `timelake-bench` and the Phase 0 suites on real S3 (SPEC §17.4), including
 aws login --profile timelake        # the scripts use profile timelake, region us-east-2
 bench/infra/up.sh                   # buckets only
 bench/run_aws.sh                    # several hours; results in bench/results/runs
-uv run timelake-bench report latest
+uv run timebench report latest
 bench/infra/down.sh                 # empties all buckets and deletes the stack
 ```
 Latency then includes the trip from the laptop to us-east-2. Request counts, bytes and request cost don't depend on where the client runs, and every system takes the same path, so the comparisons hold. Only TSBS IoT runs this way: TPC-H and ClickBench scan hundreds of MB per query, and pulling that over the internet is slow and costs egress.
@@ -41,7 +41,7 @@ bench/infra/ssm.sh 'grep "^==" /mnt/bench/logs/all.log; tail -3 /mnt/bench/logs/
 bench/infra/fetch.sh                            # results → bench/results/runs and bench/results/*aws*.jsonl
 bench/infra/down.sh                             # empties the buckets and deletes the stack
 ```
-- **Stages:** `remote.sh` runs build → data → queries on each target → direct → `bench` (timelake-bench) on each target. Each stage can also run on its own, e.g. `remote.sh queries s3x`. To run new code, check it out first: `ssm.sh 'git fetch -q && git checkout -q origin/main'`.
+- **Stages:** `remote.sh` runs build → data → queries on each target → direct → `bench` (timebench) on each target. Each stage can also run on its own, e.g. `remote.sh queries s3x`. To run new code, check it out first: `ssm.sh 'git fetch -q && git checkout -q origin/main'`.
 - **Auto-stop:** the instance stops itself after 12 hours (`AutoStopMinutes`). Stopping wipes an NVMe SSD. Results are copied to `s3://<data bucket>/_out/` after every stage.
 - **Duration and cost:** on `m7i-flex.large`, the Rust builds alone take about 1.5 hours, and a full run takes about 8 hours. At about $0.10/h, that's about $1. Storage and requests add cents.
 - **Cleanup:** every resource carries the tag `project=timelake-bench`.
@@ -52,7 +52,7 @@ GitHub Actions on `main` can assume to start it, run commands on it, read its re
 Every Monday `.github/workflows/bench-weekly.yml` runs `weekly.sh`:
 1. start the instance and mount its NVMe SSD (stopping wipes it);
 2. check out the commit and run `remote.sh weekly`: build, start TimescaleDB in a container, then
-   `timelake-bench profile weekly` on the local disk and on S3;
+   `timebench profile weekly` on the local disk and on S3;
 3. copy the run files into `bench/results/runs`, stop the instance, and commit them to `main`.
 
 The instance runs about 2–3 hours a week; stopped, it costs only its 100 GB EBS volume. Same machine, workloads and

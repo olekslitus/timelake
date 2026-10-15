@@ -5,7 +5,7 @@
 #   remote.sh data               generate the Phase 0 datasets, upload to S3, write Iceberg on S3, copy to S3 Express
 #   remote.sh queries <target>   Phase 0 suites on local | s3 | s3x  (results tag aws-<target>)
 #   remote.sh direct             plain DuckDB straight to S3 (no proxy), to measure the proxy's overhead
-#   remote.sh bench <target>     timelake-bench: TSBS IoT streamed into every lake system, queries before and after
+#   remote.sh bench <target>     timebench: TSBS IoT streamed into every lake system, queries before and after
 #                                maintenance (results/runs)
 #   remote.sh all                everything above, in order
 #   remote.sh weekly             the weekly regression run (profiles/weekly.toml), started by weekly.sh
@@ -105,7 +105,7 @@ bench() {
   # Lance 13 finds the latest version from listing order, and S3 Express listings are unsorted, so it reads stale
   # versions there (an append is invisible to a fresh reader). Not benchmarked on s3x.
   [ "$1" = s3x ] && systems=timelake,iceberg,parquet
-  uv run timelake-bench run tsbs-iot --target "$name" --systems "$systems" --ttfb-ms 0
+  uv run timebench run tsbs-iot --target "$name" --systems "$systems" --ttfb-ms 0
 }
 
 # TimescaleDB for the weekly run, in a container on this instance (its data on the instance's disk). The version is
@@ -123,9 +123,9 @@ weekly() {
   sudo shutdown -h +360  # a safety net: weekly.sh stops the instance when the run is done
   build
   timescaledb
-  uv run timelake-bench profile weekly --target local
+  uv run timebench profile weekly --target local
   target s3
-  uv run timelake-bench profile weekly --target aws-s3
+  uv run timebench profile weekly --target aws-s3
   docker rm -f bench-timescaledb > /dev/null
 }
 

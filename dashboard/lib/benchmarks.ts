@@ -67,12 +67,10 @@ export type Run = {
   finished: string | null
 }
 
+/** The query suites of each timebench workload, as the detail pages group them. */
 export const WORKLOADS = [
   {
     id: "tsbs-iot",
-    title: "TSBS IoT",
-    summary:
-      "A fleet of trucks reporting location and diagnostics every 10 seconds, streamed in 5-minute batches, then queried the way a fleet dashboard would.",
     suites: [
       { id: "tsbs_iot", label: "TSBS IoT (12 queries)" },
       { id: "iot_point", label: "Single truck (5 queries)" },
@@ -274,4 +272,56 @@ export function s3TablesDelay(run: Run): [number, number] | null {
   const m = run.phases.find((p) => p.system === "s3tables" && p.kind === "maintain")
   const s = Object.values(m?.compaction_after_ingest_s ?? {})
   return s.length ? [Math.min(...s) / 3600, Math.max(...s) / 3600] : null
+}
+
+export type Rank = { key: string; label: string; system: string; value: number; timelake: boolean }
+export type Ranking = { title: string; note: string; unit: "seconds" | "milliseconds"; rows: Rank[] }
+
+/**
+ * The top-level results of a run: query time after maintenance and right after ingest (geometric mean of first runs
+ * over every query all readers completed), then median commit time. Fastest first.
+ */
+export function rankings(run: Run): Ranking[] {
+  const out: Ranking[] = []
+  for (const [checkpoint, label] of Object.entries(CHECKPOINTS).toReversed()) {
+    const ok = run.queries.filter((q) => q.checkpoint === checkpoint && q.status === "ok")
+    const engines = [...new Set(ok.map(engineOf))]
+    if (engines.length < 2) continue
+    const by = new Map(ok.map((q) => [`${engineOf(q)}|${q.suite}|${q.query}`, q]))
+    const all = [...new Set(run.queries.filter((q) => q.checkpoint === checkpoint).map((q) => `${q.suite}|${q.query}`))]
+    const common = all.filter((q) => engines.every((e) => by.has(`${e}|${q}`)))
+    if (common.length === 0) continue
+    out.push({
+      title: `Queries, ${label.toLowerCase()}`,
+      note: `first run, geometric mean of ${common.length} queries`,
+      unit: "seconds",
+      rows: engines
+        .map((e) => ({
+          key: e,
+          label: engineLabel(e),
+          system: e.split("+", 1)[0] ?? e,
+          value: gm(common.flatMap((q) => by.get(`${e}|${q}`)?.times[0] ?? [])),
+          timelake: e === "timelake+timelake",
+        }))
+        .sort((a, b) => a.value - b.value),
+    })
+  }
+  const ingest = run.phases.filter((p) => p.kind === "ingest" && p.status === "ok" && p.commit_ms_p50 != null)
+  if (ingest.length > 1) {
+    out.push({
+      title: "Commit",
+      note: "median time per commit while streaming",
+      unit: "milliseconds",
+      rows: ingest
+        .map((p) => ({
+          key: p.system,
+          label: SYSTEMS[p.system] ?? p.system,
+          system: p.system,
+          value: p.commit_ms_p50 ?? 0,
+          timelake: p.system === "timelake",
+        }))
+        .sort((a, b) => a.value - b.value),
+    })
+  }
+  return out
 }

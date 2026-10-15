@@ -13,8 +13,8 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
-from benchlib import BENCH
-from benchlib.workloads import Batch, TableSpec, Workload
+from timebench import BENCH
+from timebench.workloads import Batch, TableSpec, Workload
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

@@ -7,7 +7,7 @@ import os
 import platform
 import subprocess
 
-from benchlib import BENCH
+from timebench import BENCH
 
 
 def git(*args: str) -> str:

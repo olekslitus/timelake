@@ -1,6 +1,6 @@
 """Result records (one JSON object per line) and the statistics the reports use.
 
-A run of ``timelake-bench`` writes ``results/runs/<run id>.jsonl``: a ``run`` record first, then one ``ingest`` and
+A run of ``timebench`` writes ``results/runs/<run id>.jsonl``: a ``run`` record first, then one ``ingest`` and
 ``maintain`` record per system and one ``query`` record per query and reader, and an ``end`` record last. The older
 ``results/<suite>.<tag>.jsonl`` files hold the Phase 0 and v0 runs, one query record per line without a ``kind``.
 """

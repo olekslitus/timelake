@@ -13,8 +13,8 @@ import argparse
 from collections import defaultdict
 from dataclasses import dataclass
 
-from benchlib import RESULTS
-from benchlib.results import (
+from timebench import RESULTS
+from timebench.results import (
     QueryRecord,
     best_time,
     first_time,

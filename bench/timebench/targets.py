@@ -6,8 +6,8 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypedDict
 
-from benchlib import LAKES
-from benchlib.s3 import BUCKET, SETUP_PROXY
+from timebench import LAKES
+from timebench.s3 import BUCKET, SETUP_PROXY
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -8,18 +8,18 @@ import time
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, override
 
-from benchlib.meta import version
-from benchlib.s3 import PROXY
-from benchlib.systems import Runner, System, duckdb_connection, duckdb_runner
+from timebench.meta import version
+from timebench.s3 import PROXY
+from timebench.systems import Runner, System, duckdb_connection, duckdb_runner
 
 if TYPE_CHECKING:
     import pyarrow as pa
     from pyiceberg.catalog import Catalog
     from pyiceberg.table import Table as IcebergTable
 
-    from benchlib.results import IngestRecord
-    from benchlib.targets import Place, StorageStats
-    from benchlib.workloads import TableSpec
+    from timebench.results import IngestRecord
+    from timebench.targets import Place, StorageStats
+    from timebench.workloads import TableSpec
 
 
 class Iceberg(System):

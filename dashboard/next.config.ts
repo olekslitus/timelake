@@ -11,7 +11,7 @@ const nextConfig: NextConfig = {
   // Files read from disk at runtime: benchmark runs (when /benchmarks revalidates) and the OG image fonts.
   outputFileTracingIncludes: {
     "/benchmarks": ["./data/runs/**"],
-    "/benchmarks/[workload]": ["./data/runs/**"],
+    "/benchmarks/[id]": ["./data/runs/**"],
     "/opengraph-image": ["./assets/fonts/**"],
   },
   partialPrefetching: true,

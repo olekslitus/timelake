@@ -21,8 +21,8 @@ import pyarrow.parquet as pq
 from pyiceberg.catalog.sql import SqlCatalog
 from pyiceberg.transforms import DayTransform, IdentityTransform
 
-from benchlib import DATA, TSBS_TABLES
-from benchlib.s3 import BUCKET, SETUP_PROXY
+from timebench import DATA, TSBS_TABLES
+from timebench.s3 import BUCKET, SETUP_PROXY
 
 TSBS = DATA / "tsbs"
 

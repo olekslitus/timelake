@@ -8,8 +8,8 @@ resolution-markers = [
 
 [manifest]
 members = [
+    "timebench",
     "timelake",
-    "timelake-bench",
 ]
 
 [manifest.dependency-groups]
@@ -1285,32 +1285,7 @@ wheels = [
 ]
 
 [[package]]
-name = "timelake"
-version = "0.4.0"
-source = { editable = "crates/timelake-py" }
-dependencies = [
-    { name = "pyarrow" },
-]
-
-[package.dev-dependencies]
-test = [
-    { name = "duckdb" },
-    { name = "polars" },
-    { name = "pytest" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "pyarrow", specifier = ">=14" }]
-
-[package.metadata.requires-dev]
-test = [
-    { name = "duckdb", specifier = ">=1.5" },
-    { name = "polars", specifier = ">=1.30" },
-    { name = "pytest", specifier = ">=8" },
-]
-
-[[package]]
-name = "timelake-bench"
+name = "timebench"
 version = "0.0.0"
 source = { editable = "bench" }
 dependencies = [
@@ -1342,6 +1317,31 @@ requires-dist = [
     { name = "pylance", specifier = ">=13.0.0" },
     { name = "pytz" },
     { name = "timelake", editable = "crates/timelake-py" },
+]
+
+[[package]]
+name = "timelake"
+version = "0.4.0"
+source = { editable = "crates/timelake-py" }
+dependencies = [
+    { name = "pyarrow" },
+]
+
+[package.dev-dependencies]
+test = [
+    { name = "duckdb" },
+    { name = "polars" },
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pyarrow", specifier = ">=14" }]
+
+[package.metadata.requires-dev]
+test = [
+    { name = "duckdb", specifier = ">=1.5" },
+    { name = "polars", specifier = ">=1.30" },
+    { name = "pytest", specifier = ">=8" },
 ]
 
 [[package]]

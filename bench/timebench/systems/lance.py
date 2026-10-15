@@ -6,15 +6,15 @@ import datetime as dt
 import os
 from typing import TYPE_CHECKING, Any, override
 
-from benchlib.meta import version
-from benchlib.s3 import PROXY, SETUP_PROXY
-from benchlib.systems import Runner, System, duckdb_connection, duckdb_runner
+from timebench.meta import version
+from timebench.s3 import PROXY, SETUP_PROXY
+from timebench.systems import Runner, System, duckdb_connection, duckdb_runner
 
 if TYPE_CHECKING:
     import pyarrow as pa
 
-    from benchlib.targets import Place
-    from benchlib.workloads import TableSpec
+    from timebench.targets import Place
+    from timebench.workloads import TableSpec
 
 
 class Lance(System):

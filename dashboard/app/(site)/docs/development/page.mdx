@@ -103,8 +103,8 @@ The Explorer runs the local CLI against `TIMELAKE_WAREHOUSE` (default: the v0 be
 uv sync                                       # at the repo root; the same environment as above
 cargo build --release -p timelake-cli         # the Timelake reader
 GOBIN=$PWD/bench/.bin go install github.com/timescale/tsbs/cmd/tsbs_generate_data@latest
-uv run timelake-bench run tsbs-iot --scale small
-uv run timelake-bench report latest
+uv run timebench run tsbs-iot --scale small
+uv run timebench report latest
 ```
 
 Then follow `bench/README.md` (workloads, systems, storage targets, adding your own) or `bench/infra/README.md` (AWS and the weekly run). Benchmark data lives in `bench/data` (git-ignored, several GB). Commit a run file from `bench/results/runs` only when it should join the history on the website.

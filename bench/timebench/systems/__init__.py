@@ -1,7 +1,7 @@
 """The systems under test: one adapter per table format or database, each used the way its docs suggest.
 
 A system writes a workload's tables (``create``, ``append`` per commit, ``maintain``) and has one or more readers,
-the query engines that read those tables. Each query runs in a fresh process: ``benchlib.worker`` opens the reader
+the query engines that read those tables. Each query runs in a fresh process: ``timebench.worker`` opens the reader
 with ``System.open_reader``, or a reader in ``System.commands`` is its own binary (``reader_command``).
 
 Adding a system: subclass ``System`` in a module here and add it to ``SYSTEMS``.
@@ -13,14 +13,14 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from benchlib.queries import DATAFUSION, DUCKDB, POLARS, TIMESCALEDB, Dialect
+from timebench.queries import DATAFUSION, DUCKDB, POLARS, TIMESCALEDB, Dialect
 
 if TYPE_CHECKING:
     import pyarrow as pa
 
-    from benchlib.results import IngestRecord
-    from benchlib.targets import Place, StorageStats, Target
-    from benchlib.workloads import TableSpec
+    from timebench.results import IngestRecord
+    from timebench.targets import Place, StorageStats, Target
+    from timebench.workloads import TableSpec
 
 Runner = Callable[[str], int]
 """Runs one query, fully materializing the result; returns the number of rows."""
@@ -111,7 +111,7 @@ def duckdb_connection(target: Target) -> Any:  # noqa: ANN401 (duckdb is importe
     """A DuckDB connection in UTC, with S3 access through the counting proxy when the target is S3."""
     import duckdb
 
-    from benchlib.s3 import PROXY
+    from timebench.s3 import PROXY
 
     con = duckdb.connect()
     con.execute("SET TimeZone = 'UTC'")  # bucket by UTC days like the other engines (and avoid ICU calendar math)
@@ -128,10 +128,10 @@ def duckdb_runner(con: Any) -> Runner:  # noqa: ANN401
 
 def systems() -> dict[str, type[System]]:
     """All systems by name."""
-    from benchlib.systems.iceberg import Iceberg, S3Tables
-    from benchlib.systems.lance import Lance
-    from benchlib.systems.parquet import ParquetFiles
-    from benchlib.systems.timelake import Timelake
-    from benchlib.systems.timescaledb import TimescaleDB
+    from timebench.systems.iceberg import Iceberg, S3Tables
+    from timebench.systems.lance import Lance
+    from timebench.systems.parquet import ParquetFiles
+    from timebench.systems.timelake import Timelake
+    from timebench.systems.timescaledb import TimescaleDB
 
     return {s.name: s for s in (Timelake, Iceberg, S3Tables, Lance, ParquetFiles, TimescaleDB)}

@@ -6,6 +6,6 @@
 | `tpch` | [TPC-H](https://www.tpc.org/tpch/) queries 1–22 as shipped in [DuckDB](https://github.com/duckdb/duckdb)'s `tpch` extension | MIT, [LICENSE-duckdb.txt](tpch/LICENSE-duckdb.txt). Results are not TPC-H results. |
 | `iot_point` | Timelake | Apache-2.0 |
 
-ClickBench's SQL isn't kept here: its license (CC BY-NC-SA 4.0) doesn't fit an Apache-2.0 repository. `benchlib.queries`
+ClickBench's SQL isn't kept here: its license (CC BY-NC-SA 4.0) doesn't fit an Apache-2.0 repository. `timebench.queries`
 downloads it from [ClickBench](https://github.com/ClickHouse/ClickBench) at a pinned commit (`CLICKBENCH_COMMIT`) into
 `data/clickbench/sql` on first use.

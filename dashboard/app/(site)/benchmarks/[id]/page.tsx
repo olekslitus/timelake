@@ -1,4 +1,4 @@
-import { ChevronLeft } from "lucide-react"
+import { ArrowRight, ArrowUpRight, ChevronLeft } from "lucide-react"
 import type { Metadata } from "next"
 import Link from "next/link"
 import { notFound } from "next/navigation"
@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { BENCHMARKS, benchmark } from "@/lib/benchmark-catalog"
 import {
   SYSTEMS,
   SYSTEM_COLORS,
@@ -28,49 +29,24 @@ import {
 import { formatBytes, formatNumber } from "@/lib/format"
 import { REPO_URL } from "@/lib/site"
 
-type Props = { params: Promise<{ workload: string }> }
+type Props = { params: Promise<{ id: string }> }
+
+/** Benchmarks with results; the others have only a methodology page. */
+const withResults = () => BENCHMARKS.filter((b) => b.workload && WORKLOADS.some((w) => w.id === b.workload))
 
 export function generateStaticParams() {
-  return WORKLOADS.map((w) => ({ workload: w.id }))
+  return withResults().map((b) => ({ id: b.id }))
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const { workload: id } = await params
-  const w = WORKLOADS.find((x) => x.id === id)
-  return { title: w ? `${w.title} benchmark` : "Benchmarks" }
+  const b = benchmark((await params).id)
+  return { title: b ? `${b.name} results` : "Benchmarks" }
 }
 
-/** What the workload is, in a few facts. Specific to each workload. */
-const ABOUT: Record<string, { label: string; text: string }[]> = {
-  "tsbs-iot": [
-    {
-      label: "Data",
-      text: "TSBS IoT: readings and diagnostics of 500 trucks every 10 seconds over 3 days, 11.7M rows each, with missing and late points by design. A tags table describes the trucks.",
-    },
-    {
-      label: "Ingest",
-      text: "864 five-minute batches per table, 1,728 commits in all: what a Firehose stream with its default buffer writes. Every system gets identical rows.",
-    },
-    {
-      label: "Queries",
-      text: "The 12 TSBS IoT queries (latest location, low fuel, driving sessions, daily activity, …) and 5 queries about a single truck.",
-    },
-  ],
-}
-
-/** Notes that hold for every run on a target. */
-const TARGET_NOTES: Record<string, string> = {
-  "aws-s3":
-    "Times include the trip to S3 and back: from the laptop in early runs, from an instance in the same region in the weekly runs.",
-  local: "Tables on the machine's own disk. The operating system's file cache stays warm between queries.",
-  "tiger-cloud":
-    "TimescaleDB on Tiger Cloud's smallest tier (shared CPU), loaded in one go rather than streamed. Times are measured from a laptop and include a 30 ms round trip.",
-}
-
-export default async function WorkloadPage({ params }: Props) {
-  const { workload: id } = await params
-  const workload = WORKLOADS.find((w) => w.id === id)
-  if (!workload) notFound()
+export default async function BenchmarkPage({ params }: Props) {
+  const b = benchmark((await params).id)
+  const workload = WORKLOADS.find((w) => w.id === b?.workload)
+  if (!b || !workload) notFound()
   return (
     <div className="mx-auto max-w-6xl space-y-12 px-4 py-12">
       <header className="max-w-3xl space-y-3">
@@ -80,40 +56,26 @@ export default async function WorkloadPage({ params }: Props) {
         >
           <ChevronLeft className="size-4" /> Benchmarks
         </Link>
-        <h1 className="text-3xl font-semibold tracking-tight">{workload.title}</h1>
-        <p className="text-muted-foreground">{workload.summary}</p>
+        <h1 className="text-3xl font-semibold tracking-tight">{b.name}</h1>
+        <p className="text-muted-foreground">{b.summary}</p>
+        <nav className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+          <Link href={`/benchmarks/${b.id}/methodology`} className="flex items-center gap-1 hover:underline">
+            Methodology <ArrowRight className="size-3.5" />
+          </Link>
+          {b.origin && (
+            <a
+              href={b.origin.url}
+              className="flex items-center gap-1 text-muted-foreground hover:text-foreground hover:underline"
+            >
+              {b.origin.label} <ArrowUpRight className="size-3.5" />
+            </a>
+          )}
+        </nav>
       </header>
-
-      <section className="grid gap-4 md:grid-cols-3">
-        {(ABOUT[workload.id] ?? []).map((a) => (
-          <Card key={a.label}>
-            <CardHeader>
-              <CardTitle className="text-base">{a.label}</CardTitle>
-              <CardDescription>{a.text}</CardDescription>
-            </CardHeader>
-          </Card>
-        ))}
-      </section>
 
       <Suspense fallback={<div className="h-96 animate-pulse rounded-xl bg-muted" />}>
         <Results workload={workload} />
       </Suspense>
-
-      <section className="max-w-3xl space-y-3 text-sm text-muted-foreground">
-        <h2 className="text-xl font-semibold tracking-tight text-foreground">Run it yourself</h2>
-        <pre className="overflow-x-auto rounded-lg border bg-muted/40 p-4 font-mono text-xs text-foreground">
-          {`uv sync && cargo build --release -p timelake-cli
-uv run timelake-bench run ${workload.id} --scale small    # minutes; --scale standard is this page
-uv run timelake-bench report latest`}
-        </pre>
-        <p>
-          Setup, systems and options are in{" "}
-          <a className="underline" href={`${REPO_URL}/tree/main/bench`}>
-            bench/README.md
-          </a>
-          .
-        </p>
-      </section>
     </div>
   )
 }
@@ -259,7 +221,6 @@ function RunResults({ run, workload }: { run: Run; workload: Workload }) {
             .join(" · ")}
         </span>
       </div>
-      {TARGET_NOTES[h.target] && <p className="max-w-3xl text-sm text-muted-foreground">{TARGET_NOTES[h.target]}</p>}
 
       <BenchCharts panels={panels(run, workload)} suites={workload.suites} />
       {delay && (

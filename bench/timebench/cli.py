@@ -1,11 +1,11 @@
-"""``timelake-bench``: run benchmarks and read their history (bench/README.md).
+"""``timebench``: run benchmarks and read their history (bench/README.md).
 
-uv run timelake-bench list
-uv run timelake-bench run tsbs-iot --scale small --systems timelake,iceberg
-uv run timelake-bench run tsbs-iot --target s3 --ttfb-ms 20        # local RustFS behind tools/s3proxy
-uv run timelake-bench profile weekly                                # bench/profiles/weekly.toml
-uv run timelake-bench report latest
-uv run timelake-bench history --workload tsbs-iot
+uv run timebench list
+uv run timebench run tsbs-iot --scale small --systems timelake,iceberg
+uv run timebench run tsbs-iot --target s3 --ttfb-ms 20        # local RustFS behind tools/s3proxy
+uv run timebench profile weekly                                # bench/profiles/weekly.toml
+uv run timebench report latest
+uv run timebench history --workload tsbs-iot
 """
 
 from __future__ import annotations
@@ -14,12 +14,12 @@ import argparse
 
 import tomllib
 
-from benchlib import BENCH, RUNS
-from benchlib.harness import CHECKPOINTS, RunSpec, run
-from benchlib.report import Run, history, markdown, runs
-from benchlib.systems import systems
-from benchlib.targets import Target
-from benchlib.workloads import Workload, workloads
+from timebench import BENCH, RUNS
+from timebench.harness import CHECKPOINTS, RunSpec, run
+from timebench.report import Run, history, markdown, runs
+from timebench.systems import systems
+from timebench.targets import Target
+from timebench.workloads import Workload, workloads
 
 PROFILES = BENCH / "profiles"
 
@@ -120,7 +120,7 @@ def cmd_history(args: argparse.Namespace) -> None:
 def main() -> None:
     """Parses the command line and runs the command."""
     p = argparse.ArgumentParser(
-        prog="timelake-bench", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+        prog="timebench", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     commands = p.add_subparsers(dest="command", required=True)
 

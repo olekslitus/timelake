@@ -1,7 +1,7 @@
 """Workloads: a dataset at a named scale, the order its rows arrive in, and the queries asked of it.
 
 Adding a workload: subclass ``Workload`` in a module here and add it to ``workloads()``. Its queries live in
-``queries/<suite>/queries.sql``, written once with the dialect placeholders of ``benchlib.queries``.
+``queries/<suite>/queries.sql``, written once with the dialect placeholders of ``timebench.queries``.
 """
 
 from __future__ import annotations
@@ -10,8 +10,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
-from benchlib import DATA
-from benchlib.queries import raw_queries
+from timebench import DATA
+from timebench.queries import raw_queries
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -106,6 +106,6 @@ class Workload(ABC):
 
 def workloads() -> dict[str, type[Workload]]:
     """All workloads by name."""
-    from benchlib.workloads.tsbs_iot import TsbsIot
+    from timebench.workloads.tsbs_iot import TsbsIot
 
     return {w.name: w for w in (TsbsIot,)}

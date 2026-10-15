@@ -4,7 +4,7 @@
 # depend on where the client runs. Needs: aws login --profile timelake.
 #   bench/run_aws.sh                 everything (several hours; keeps the machine awake)
 #   bench/run_aws.sh bench-s3        one step: data | queries | bench-local | bench-s3
-# Results: results/runs/ (timelake-bench) and results/*.laptop-*.jsonl (Phase 0 suites, compare_aws.py).
+# Results: results/runs/ (timebench) and results/*.laptop-*.jsonl (Phase 0 suites, compare_aws.py).
 set -euo pipefail
 cd "$(dirname "$0")"
 source infra/env.sh
@@ -45,10 +45,10 @@ step() {
   case $1 in
     data) proxy; data ;;
     queries) proxy; queries ;;
-    bench-local) uv run timelake-bench run tsbs-iot --target local --systems timelake,iceberg,lance,parquet ;;
+    bench-local) uv run timebench run tsbs-iot --target local --systems timelake,iceberg,lance,parquet ;;
     # S3 Tables first: its managed compaction runs on its own schedule, so its clock starts early. Maintenance
     # waits until it has run (hours).
-    bench-s3) proxy; uv run timelake-bench run tsbs-iot --target aws-s3 --ttfb-ms 0 \
+    bench-s3) proxy; uv run timebench run tsbs-iot --target aws-s3 --ttfb-ms 0 \
       --systems s3tables,timelake,iceberg,lance,parquet ;;
     *) echo "unknown step $1"; exit 2 ;;
   esac

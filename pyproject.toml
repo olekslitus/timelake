@@ -28,7 +28,7 @@ allowed-confusables = ["×", "÷", "—", "–"]            # intentional in rep
 "**/tests/**" = ["S101", "D", "ANN201", "PLR2004"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["timelake", "benchlib"]           # the package and the benchmarks' shared code
+known-first-party = ["timelake", "timebench"]          # the package and the benchmarks' shared code
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

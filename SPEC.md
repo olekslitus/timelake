@@ -21,7 +21,7 @@
 | D12 | Open core: the lake, ingestion, rollups, import of open formats/DBs, and the DuckDB extension are open source. Industrial historian connectors are a **premium** offering (§20). | Proposed |
 | D13 | Timelake owns its commit layer (append, replace, row-delta, overwrite, branch commits, rewrite-manifests) on iceberg-rust's public types. Forking and maintaining our own iceberg-rust is acceptable if needed. Upstreaming is welcome but low priority. Iceberg Java, iceberg-cpp, and iceberg-go serve as **reference implementations** to learn from (never to copy) and as **conformance oracles** in tests (Phase 0 finding, `spikes/iceberg-write`) | **Accepted** |
 | D14 | Rust for the core, even where we must implement Iceberg operations ourselves. Python is the client/API layer (PyO3), not the engine. | **Accepted** |
-| D15 | `timelake-bench`: TSBS IoT as the base workload plus lake extensions, run against every alternative in §16 (§17) | **Accepted** |
+| D15 | `timebench`: TSBS IoT as the base workload plus lake extensions, run against every alternative in §16 (§17) | **Accepted** |
 | D16 | Parquet stays the lake's source of truth (Iceberg-compatible). Vortex is used where Timelake owns the read path and data is local: reader SSD cache, hot tier, edge. Re-evaluate when Iceberg supports Vortex files or Vortex object-store I/O matures (`bench/results/VORTEX.md`). | Proposed |
 | D17 | v0 catalog layout is Hadoop-catalog compatible: `<table>/metadata/vN.metadata.json` committed with put-if-absent, plus `version-hint.text`. Plain DuckDB `iceberg_scan('<table dir>')` and Spark's HadoopCatalog read tables with no catalog service. A REST endpoint can serve the same layout later (§5.2). | **Accepted (v0)** |
 | D18 | The last-value index is a per-snapshot **Parquet sidecar** referenced from the snapshot summary (`timelake.last-value-index`), not a Puffin blob: any engine can read it, and it is rewritten incrementally on each append (previous index ⊕ newest rows of the batch). | **Accepted (v0)** |
@@ -744,11 +744,11 @@ TimescaleDB, InfluxDB 3, QuestDB, TDengine, GreptimeDB. They are fast and featur
 
 Both keep the database as the entry point, which is the trade-off Timelake avoids. The benchmark of tiered storage was `bench/v0/tsdb_cloud.py` (in git history at `b99aae9`; results in `bench/results/TIMESCALE.md`).
 
-*All Timelake columns are design targets until measured by `timelake-bench` (§17).*
+*All Timelake columns are design targets until measured by `timebench` (§17).*
 
 ---
 
-## 17. Benchmark: `timelake-bench` (R7, R14)
+## 17. Benchmark: `timebench` (R7, R14)
 
 One reproducible suite, run against Timelake **and every alternative** in §16, using each system's idiomatic tooling.
 
@@ -813,12 +813,12 @@ PyIceberg appends are the naive baseline (what v0 compares against today). Publi
 - **Cold and warm runs reported separately:** cold means no local caches.
 - **Results include:** p50/p99 latency, bytes read, **object-store request counts**, and **estimated $** (per query, per GB ingested, per month of storage).
 - **Configurations:** Every system's configuration and version is committed. Each system is tuned per its own docs, and vendors are invited to review.
-- **Harness (built 2026-10-15):** `timelake-bench` in `bench/benchlib`. Our own benchmark system, extended over time with new workloads and systems: public benchmarks miss most of what a time-series lake has to do in practice (streaming commits, late data, maintenance, cost), and it isn't limited to Iceberg.
+- **Harness (built 2026-10-15):** `timebench` in `bench/timebench`, named on its own because it may move to its own repository: only its Timelake adapter knows Timelake. The website explains its method at /benchmarks/timebench. Our own benchmark system, extended over time with new workloads and systems: public benchmarks miss most of what a time-series lake has to do in practice (streaming commits, late data, maintenance, cost), and it isn't limited to Iceberg.
   - A **workload** is data at a named scale, the order its rows arrive in, and its queries (written once with dialect placeholders). Now: TSBS IoT (`small`, `standard`, `large`).
   - A **system** is one adapter: create tables, append a commit, run its own maintenance, open its readers. Now: Timelake, Iceberg (PyIceberg), S3 Tables, Lance, plain Parquet files, TimescaleDB (any server: a container, the benchmark instance, Tiger Cloud).
   - A **run** streams the workload into each system, then runs every query in a fresh process on every reader at each checkpoint (right after ingest, after maintenance), and checks that row counts match across readers.
   - **History:** every run is one file in `bench/results/runs/` with the commit, machine, versions and all measurements. The website charts it per target. Runs from before the harness (v0, Tiger Cloud) were converted.
-  - `timelake-bench run tsbs-iot --scale small` reproduces a run; `report` and `history` read them back.
+  - `timebench run tsbs-iot --scale small` reproduces a run; `report` and `history` read them back.
 - **Weekly regression run (decided 2026-10-15):** `bench/profiles/weekly.toml` every Monday on one fixed instance in us-east-2 (c8gd.2xlarge, local NVMe), started by a GitHub Actions workflow through a role limited to that instance. Same workloads, scales and pinned competitor versions each week, so changes in the history come from Timelake. No benchmark runs in CI.
 - **Spike: a CI gate on request and byte counts.** Those counts don't depend on the machine, so they could catch regressions (an extra metadata read, a lost pruning step) on every push. **Measured (2026-10-15, `spikes/request-counts`):** across three identical runs, query request counts were exact or within one or two requests, bytes within 0.5%, and Timelake's ingest within 0.1%. A gate, Timelake only at `small` scale (3–4 minutes), could require exact counts after maintenance (identical in every run) and allow 5% and 3 requests elsewhere. Not built yet: weekly runs only, for now.
 
@@ -878,7 +878,7 @@ TSBS models a truck fleet at ~10 s per device. Industrial plants look different,
 
 
 ### 17.7 Public benchmarks (reviewed 2026-10-15)
-We run the public benchmarks that fit a time-series lake, so results compare with published numbers, and say why for the others. The website lists the same (`dashboard/lib/public-benchmarks.ts`).
+We run the public benchmarks that fit a time-series lake, so results compare with published numbers, and say why for the others. The website lists the same, with a methodology page for each benchmark we run or plan (`dashboard/lib/benchmark-catalog.ts`).
 
 | Benchmark | Status | Why |
 |---|---|---|
@@ -989,7 +989,7 @@ Open from v0:
 
 | Phase | Deliverable |
 |-------|-------------|
-| 0 | This spec. `timelake-bench` skeleton: TSBS IoT generator → Parquet, adapters for DuckDB+Iceberg and TimescaleDB as first baselines. Spikes: ✅ `iceberg-rust` write maturity (Q7); `replace` + deletion-vector commits via our own commit layer (D13); DataFusion vs. embedded DuckDB (Q12); Lakekeeper evaluation (Q2); Iceberg v3 engine-support survey (Q1). Benchmark harness. |
+| 0 | This spec. `timebench` skeleton: TSBS IoT generator → Parquet, adapters for DuckDB+Iceberg and TimescaleDB as first baselines. Spikes: ✅ `iceberg-rust` write maturity (Q7); `replace` + deletion-vector commits via our own commit layer (D13); DataFusion vs. embedded DuckDB (Q12); Lakekeeper evaluation (Q2); Iceberg v3 engine-support survey (Q1). Benchmark harness. |
 | 1 | `timelake-core` writer (contract, sorting, partitioning, batching, commits); `timelake-catalog` (object-store backend, REST spec); CLI create/adopt/query; **import** (CSV, Parquet, Iceberg/S3 Tables) and **backfill** (plan, final-layout write, branch staging, publish, resume); DuckDB reads committed tables |
 | 2 | `timelake-maintain`: compaction, re-sort, dedup, retention, snapshot expiry, triggered by catalog events. Immutable deletes + audit table; GDPR erasure workflow. **TimescaleDB/Postgres import** with `--sync` cutover. Snowflake connection (F5, §21.5), first through metadata-file registration, then through the REST catalog. |
 | 3 | Rollups (incremental, hierarchical) + `timelake-functions` core (`time_bucket`, `time_buckets`, `forward_fill`, `time_weighted_mean`, `counter_diff`, quantiles) |

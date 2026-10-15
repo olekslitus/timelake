@@ -50,7 +50,8 @@ bun run sync-results
 | `app/(app)/explore/` | Explorer pages (sidebar layout) |
 | `app/api/sql`, `app/api/series` | Route handlers used by the SQL console and the series chart |
 | `lib/lake/` | Explorer data layer: `types.ts` (the `LakeBackend` interface), `wasm.ts` (hosted, `@timelake/client`), `cli.ts` (local, the CLI), `index.ts` (picks the backend, checks series queries), `error-response.ts` (errors → API responses) |
-| `lib/benchmarks.ts` | Loads the benchmark runs for `/benchmarks` (geometric means as in `bench/benchlib/report.py`) |
+| `lib/benchmarks.ts` | Loads the benchmark runs for `/benchmarks` (geometric means as in `bench/timebench/report.py`) |
+| `lib/benchmark-catalog.ts` | The benchmarks on `/benchmarks`: status, why, and each methodology page's text (SPEC §17.7) |
 | `scripts/sync-results.ts` | Copies the benchmark runs into `data/runs/` |
 | `scripts/upload-demo-to-blob.ts` | Uploads the demo warehouse to Vercel Blob (`bun run upload-demo`) |
 

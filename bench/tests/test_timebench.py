@@ -5,10 +5,10 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
-from benchlib import queries
-from benchlib.queries import CLICKBENCH_COMMIT, DATAFUSION, DUCKDB, apply_dialect, clickbench_queries, raw_queries
-from benchlib.results import append_jsonl, best_time, geomean, load_ok, order_engines, read_jsonl
-from benchlib.targets import Place, Target
+from timebench import queries
+from timebench.queries import CLICKBENCH_COMMIT, DATAFUSION, DUCKDB, apply_dialect, clickbench_queries, raw_queries
+from timebench.results import append_jsonl, best_time, geomean, load_ok, order_engines, read_jsonl
+from timebench.targets import Place, Target
 
 if TYPE_CHECKING:
     from pathlib import Path

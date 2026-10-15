@@ -1,6 +1,6 @@
-"""Runs one query in a fresh process and prints its measurements as one JSON line (started by ``benchlib.harness``).
+"""Runs one query in a fresh process and prints its measurements as one JSON line (started by ``timebench.harness``).
 
-    python -m benchlib.worker '{"system": "iceberg", "reader": "duckdb", "target": "local", "dataset": ..., "runs": 2}'
+    python -m timebench.worker '{"system": "iceberg", "reader": "duckdb", "target": "local", "dataset": ..., "runs": 2}'
 
 The SQL comes on stdin. The query runs once ("first run": cold metadata, footers and data in this process) and then
 ``runs`` more times; every run fully materializes the result.
@@ -13,12 +13,12 @@ import sys
 import time
 from typing import TYPE_CHECKING
 
-from benchlib.s3 import PROXY, ProxyStats
-from benchlib.systems import systems
-from benchlib.targets import Place, Target
+from timebench.s3 import PROXY, ProxyStats
+from timebench.systems import systems
+from timebench.targets import Place, Target
 
 if TYPE_CHECKING:
-    from benchlib.results import QueryRecord
+    from timebench.results import QueryRecord
 
 
 def request_kinds(before: ProxyStats, after: ProxyStats) -> dict[str, int]:

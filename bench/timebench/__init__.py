@@ -1,7 +1,7 @@
 """Code shared by the benchmark scripts: paths, S3 settings, query loading, result records.
 
 Installed (editable) into the root uv environment by ``uv sync``, so every script imports it the same way
-wherever it lives: ``from benchlib.results import geomean``.
+wherever it lives: ``from timebench.results import geomean``.
 """
 
 import os
@@ -16,7 +16,7 @@ LAKES = Path(os.environ.get("BENCH_LAKES", DATA / "lakes"))
 QUERIES = BENCH / "queries"
 RESULTS = BENCH / "results"
 RUNS = RESULTS / "runs"
-"""One file per ``timelake-bench`` run: the benchmark history."""
+"""One file per ``timebench`` run: the benchmark history."""
 
 TPCH_TABLES = ("lineitem", "orders", "customer", "part", "partsupp", "supplier", "nation", "region")
 TSBS_TABLES = ("tags", "readings", "diagnostics")

@@ -1,11 +1,16 @@
-# timelake-bench
+# timebench
 
-Benchmarks for SPEC.md §17: Timelake against the table formats and databases a team would otherwise use for time
-series. Results and their history are on [timelake.dev/benchmarks](https://timelake.dev/benchmarks).
+Benchmarks for time-series storage (SPEC.md §17): Timelake against the table formats and databases a team would
+otherwise use. Results, their history and the methodology of each benchmark are on
+[timelake.dev/benchmarks](https://timelake.dev/benchmarks); how timebench runs them is on
+[timelake.dev/benchmarks/timebench](https://timelake.dev/benchmarks/timebench).
+
+timebench lives here for now and may move to its own repository: only its Timelake adapter
+(`timebench/systems/timelake.py`) knows about Timelake.
 
 | What | Run | Results |
 |---|---|---|
-| **`timelake-bench`**: a workload streamed into each system, then its queries before and after each system's maintenance | `uv run timelake-bench run …` | `results/runs/` (the history), `timelake-bench report` |
+| **`timebench`**: a workload streamed into each system, then its queries before and after each system's maintenance | `uv run timebench run …` | `results/runs/` (the history), `timebench report` |
 | **Weekly regression run** on a fixed AWS instance | `.github/workflows/bench-weekly.yml` → `infra/weekly.sh` | `results/runs/` |
 | **Phase 0 engine comparison**: DuckDB, DataFusion, Polars, Iceberg and Vortex over static files | `run.py` | [`results/BASELINE.md`](results/BASELINE.md), [`OBJECT_STORAGE.md`](results/OBJECT_STORAGE.md), [`VORTEX.md`](results/VORTEX.md) |
 | **Any S3-compatible store**, small and without the proxy (free tiers) | `v0/small.py` | [`results/PERFORMANCE.md`](results/PERFORMANCE.md) |
@@ -20,19 +25,19 @@ GOBIN=$PWD/bench/.bin go install github.com/timescale/tsbs/cmd/tsbs_generate_dat
 Run Python from anywhere in the repo with `uv run …`; it uses the root `.venv`. Tests: `uv run pytest bench/tests`
 (offline, on a tiny generated workload).
 
-## timelake-bench
+## timebench
 ```bash
-uv run timelake-bench list                                         # workloads, scales, systems, readers
-uv run timelake-bench run tsbs-iot --scale small                   # every lake system on the local disk, a few minutes
-uv run timelake-bench run tsbs-iot --systems timelake,timescaledb  # with BENCH_TIMESCALEDB_DSN set
-uv run timelake-bench report latest                                # one run as Markdown
-uv run timelake-bench history --workload tsbs-iot                  # one line per run
+uv run timebench list                                         # workloads, scales, systems, readers
+uv run timebench run tsbs-iot --scale small                   # every lake system on the local disk, a few minutes
+uv run timebench run tsbs-iot --systems timelake,timescaledb  # with BENCH_TIMESCALEDB_DSN set
+uv run timebench report latest                                # one run as Markdown
+uv run timebench history --workload tsbs-iot                  # one line per run
 ```
-- **Workloads** (`benchlib/workloads/`): data at a named scale, the order its rows arrive in, and the queries. The
+- **Workloads** (`timebench/workloads/`): data at a named scale, the order its rows arrive in, and the queries. The
   data is generated on first use into `data/workloads/<workload>-<scale>/`. Now: `tsbs-iot` (SPEC §17.1) at `small`
   (50 trucks), `standard` (500 trucks, the published runs) and `large` (5,000 trucks), streamed in 5-minute windows
   (`--param window_minutes=…`; `--param max_windows=N` for a quick check).
-- **Systems** (`benchlib/systems/`), each written and read the way its docs suggest:
+- **Systems** (`timebench/systems/`), each written and read the way its docs suggest:
 
   | System | Writes | Maintenance | Readers |
   |---|---|---|---|
@@ -50,7 +55,7 @@ uv run timelake-bench history --workload tsbs-iot                  # one line pe
 - **Targets** (`--target`): `local` (tables under `data/lakes/`), or S3 through `tools/s3proxy` on `localhost:59100`:
   `s3` for a local RustFS, `aws-s3` / `aws-s3x` for real buckets (`infra/`). TimescaleDB ignores the target.
 - **Adding a workload or system:** subclass `Workload` or `System` and register it in its package's `__init__.py`.
-  Queries go in `queries/<suite>/queries.sql` with the dialect placeholders of `benchlib/queries.py`.
+  Queries go in `queries/<suite>/queries.sql` with the dialect placeholders of `timebench/queries.py`.
 
 ### Method
 - Each query runs in a fresh process: one first run, then `--runs` repeats (default 2). Every run fully
@@ -74,7 +79,7 @@ docker volume create timelake-bench-rustfs
 docker run -d --name timelake-bench-rustfs -p 59000:9000 -v timelake-bench-rustfs:/data \
   -e RUSTFS_ACCESS_KEY=benchkey -e RUSTFS_SECRET_KEY=benchsecret123 rustfs/rustfs:latest
 .bin/s3proxy -listen :59100 -upstream localhost:59000 -admin :59101 -ttfb 20ms &
-uv run timelake-bench run tsbs-iot --scale small --target s3 --ttfb-ms 20
+uv run timebench run tsbs-iot --scale small --target s3 --ttfb-ms 20
 docker rm -f timelake-bench-rustfs && docker volume rm timelake-bench-rustfs     # cleanup
 ```
 Create the bucket `bench` first (any S3 client against `localhost:59000`).
@@ -105,5 +110,5 @@ Engines: `duckdb`, `datafusion`, `polars` (Python packages), `duckdb-iceberg`, `
 (DataFusion in Rust, `rust-reader/`). Results: `results/<suite>.<tag>.jsonl`.
 
 The v0 scripts (`v0/ingest.py`, `run_queries.sh`, `summarize.py`, `tsdb_cloud.py`) that produced `V0.md`, `S3.md`
-and `TIMESCALE.md` were replaced by `timelake-bench` on 2026-10-15; recover them with
+and `TIMESCALE.md` were replaced by `timebench` on 2026-10-15; recover them with
 `git checkout b99aae9 -- bench/`. The older Phase 0 runners: `git checkout 2d66939 -- bench/`.

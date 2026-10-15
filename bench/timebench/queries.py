@@ -6,7 +6,7 @@ import re
 import urllib.request
 from collections.abc import Iterator, Mapping
 
-from benchlib import DATA, QUERIES
+from timebench import DATA, QUERIES
 
 SUITES = ("tpch", "clickbench", "tsbs_iot", "iot_point")
 TSBS_SUITES = ("tsbs_iot", "iot_point")
@@ -39,7 +39,7 @@ POLARS: Dialect = {
     "TS": "CAST({0} AS TIMESTAMP)",
 }
 TIMESCALEDB: Dialect = {
-    # benchlib/systems/timescaledb.py; the session runs with TimeZone = UTC.
+    # timebench/systems/timescaledb.py; the session runs with TimeZone = UTC.
     "B10M": "time_bucket('10 minutes', {})",
     "B1D": "time_bucket('1 day', {})",
     "B1H": "time_bucket('1 hour', {})",

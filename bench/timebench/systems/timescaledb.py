@@ -15,15 +15,15 @@ from typing import TYPE_CHECKING, Any, LiteralString, cast, override
 import pyarrow as pa
 import pyarrow.csv as pacsv
 
-from benchlib.systems import Runner, System
+from timebench.systems import Runner, System
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
     import psycopg
 
-    from benchlib.targets import Place, StorageStats
-    from benchlib.workloads import TableSpec
+    from timebench.targets import Place, StorageStats
+    from timebench.workloads import TableSpec
 
 DSN_ENV = "BENCH_TIMESCALEDB_DSN"
 CHUNK_INTERVAL = "12 hours"
