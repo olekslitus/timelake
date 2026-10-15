@@ -17,6 +17,8 @@ set -euo pipefail
 SELF=$(realpath "$0")
 source /etc/profile.d/timelake-bench.sh
 export PATH=$HOME/.cargo/bin:$HOME/.local/bin:$PATH GOTOOLCHAIN=auto
+# Amazon Linux's Go turns the checksum database off, and Go then refuses to download the toolchain go.mod asks for.
+export GOSUMDB=sum.golang.org
 cd ~/timelake/bench
 PY="uv run python"
 LOGS=/mnt/bench/logs
@@ -45,13 +47,18 @@ target() {
   esac
 }
 
-build() {
+# What timebench needs: the Python environment (engines, timelake), the CLI, the proxy and the TSBS generator.
+build_timebench() {
   export CARGO_PROFILE_RELEASE_DEBUG=false  # smaller, faster links on small instances
-  uv sync  # Python 3.13 (.python-version), the engines, and timelake built from crates/timelake-py
+  uv sync  # Python (.python-version), the engines, and timelake built from crates/timelake-py
   (cd .. && cargo build --release -p timelake-cli)
-  (cd rust-reader && cargo build --release)
   (cd tools/s3proxy && go build -o ../../.bin/s3proxy .)
   GOBIN=$PWD/.bin go install github.com/timescale/tsbs/cmd/tsbs_generate_data@latest
+}
+
+build() {
+  build_timebench
+  (cd rust-reader && cargo build --release)  # the Phase 0 engine comparison (run.py)
 }
 
 data() {
@@ -121,7 +128,7 @@ timescaledb() {
 
 weekly() {
   sudo shutdown -h +360  # a safety net: weekly.sh stops the instance when the run is done
-  build
+  build_timebench
   timescaledb
   uv run timebench profile weekly --target local
   target s3
