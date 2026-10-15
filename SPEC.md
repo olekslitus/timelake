@@ -742,7 +742,7 @@ TimescaleDB, InfluxDB 3, QuestDB, TDengine, GreptimeDB. They are fast and featur
 - **Tiered storage** (`timescaledb_osm`) moves older chunks to S3, and they stay queryable through the database. It has to be enabled per service in the Console; it can't be enabled over SQL.
 - **`timescaledb_lake`**, Tiger's Iceberg integration, is available on Tiger Cloud services (seen at version 1.0.1, 2026-10). It is to be evaluated.
 
-Both keep the database as the entry point, which is the trade-off Timelake avoids. The benchmark of tiered storage is in `bench/v0/tsdb_cloud.py`.
+Both keep the database as the entry point, which is the trade-off Timelake avoids. The benchmark of tiered storage was `bench/v0/tsdb_cloud.py` (in git history at `b99aae9`; results in `bench/results/TIMESCALE.md`).
 
 *All Timelake columns are design targets until measured by `timelake-bench` (§17).*
 
@@ -796,6 +796,7 @@ TSBS assumes a database. A lake also has to be judged on these, borrowing ideas 
 | Plain Iceberg | Iceberg + REST catalog | PyIceberg / Spark write; DuckDB, Trino read |
 | Managed Iceberg | S3 Tables; R2 Data Catalog | Spark/PyIceberg write; **Firehose → S3 Tables** (AWS's recommended streaming path; planned, needs an AWS Paid plan); Athena / DuckDB read |
 | Other formats | Delta Lake, Hudi, Paimon, DuckLake, Lance | delta-rs, Spark, Flink, DuckDB, lance |
+| No table format | Plain Parquet files per commit, by day (what a Firehose or Kafka Connect S3 sink writes) | pyarrow; DuckDB and DataFusion over a listing |
 | TSDB baselines | TimescaleDB, InfluxDB 3, QuestDB | Their native TSBS loaders |
 
 PyIceberg appends are the naive baseline (what v0 compares against today). Published results must also include Iceberg written the way an expert team would (planned): a Flink or Spark streaming sink that batches commits, with scheduled `rewrite_data_files` and sorting; the Kafka Connect Iceberg sink; iceberg-rust; and DuckDB's Iceberg writer. Beating only the naive writer proves too little.
@@ -812,7 +813,14 @@ PyIceberg appends are the naive baseline (what v0 compares against today). Publi
 - **Cold and warm runs reported separately:** cold means no local caches.
 - **Results include:** p50/p99 latency, bytes read, **object-store request counts**, and **estimated $** (per query, per GB ingested, per month of storage).
 - **Configurations:** Every system's configuration and version is committed. Each system is tuned per its own docs, and vendors are invited to review.
-- **Harness:** `bench/` with a driver, one adapter per system, and generator + converter scripts. One command reproduces a run (`timelake-bench run --system X --scale 10k`).
+- **Harness (built 2026-10-15):** `timelake-bench` in `bench/benchlib`. Our own benchmark system, extended over time with new workloads and systems: public benchmarks miss most of what a time-series lake has to do in practice (streaming commits, late data, maintenance, cost), and it isn't limited to Iceberg.
+  - A **workload** is data at a named scale, the order its rows arrive in, and its queries (written once with dialect placeholders). Now: TSBS IoT (`small`, `standard`, `large`).
+  - A **system** is one adapter: create tables, append a commit, run its own maintenance, open its readers. Now: Timelake, Iceberg (PyIceberg), S3 Tables, Lance, plain Parquet files, TimescaleDB (any server: a container, the benchmark instance, Tiger Cloud).
+  - A **run** streams the workload into each system, then runs every query in a fresh process on every reader at each checkpoint (right after ingest, after maintenance), and checks that row counts match across readers.
+  - **History:** every run is one file in `bench/results/runs/` with the commit, machine, versions and all measurements. The website charts it per target. Runs from before the harness (v0, Tiger Cloud) were converted.
+  - `timelake-bench run tsbs-iot --scale small` reproduces a run; `report` and `history` read them back.
+- **Weekly regression run (decided 2026-10-15):** `bench/profiles/weekly.toml` every Monday on one fixed instance in us-east-2 (c8gd.2xlarge, local NVMe), started by a GitHub Actions workflow through a role limited to that instance. Same workloads, scales and pinned competitor versions each week, so changes in the history come from Timelake. No benchmark runs in CI.
+- **Spike: a CI gate on request and byte counts.** Those counts don't depend on the machine, so they could catch regressions (an extra metadata read, a lost pruning step) on every push. **Measured (2026-10-15, `spikes/request-counts`):** across three identical runs, query request counts were exact or within one or two requests, bytes within 0.5%, and Timelake's ingest within 0.1%. A gate, Timelake only at `small` scale (3–4 minutes), could require exact counts after maintenance (identical in every run) and allow 5% and 3 requests elsewhere. Not built yet: weekly runs only, for now.
 
 ### 17.5 Phase 0 baseline (2026-10-11)
 Full results: [`bench/results/BASELINE.md`](bench/results/BASELINE.md).
@@ -868,6 +876,32 @@ TSBS models a truck fleet at ~10 s per device. Industrial plants look different,
 - **$ per month on AWS:** instance hours (or Lambda time) for each system's servers or writers, plus S3 storage and requests by type (GET, PUT, LIST, DELETE, counted by `bench/tools/s3proxy`), plus managed fees where they apply (S3 Tables compaction).
 - Where each system keeps data: local disk, EBS, object storage, or a mix (ClickHouse on S3 disks, QuestDB and TimescaleDB on local disk, InfluxDB 3 Core on object storage). Results say so next to every number.
 
+
+### 17.7 Public benchmarks (reviewed 2026-10-15)
+We run the public benchmarks that fit a time-series lake, so results compare with published numbers, and say why for the others. The website lists the same (`dashboard/lib/public-benchmarks.ts`).
+
+| Benchmark | Status | Why |
+|---|---|---|
+| TSBS IoT | Running | The base workload (§17.1). |
+| TSBS DevOps / cpu-only | Planned, next | The TSBS use case most databases publish; same generator. |
+| ClickBench | Planned | A 10% subset runs in development. Comparable numbers need the full dataset on its reference machine (c6a.4xlarge). An official entry waits until the system is more refined (issue #90). Its SQL is CC BY-NC-SA, so it stays out of the repository. |
+| RTABench | Planned | Fresh data, selective lookups and joins. Its pre-aggregate queries wait for rollups (§10). |
+| TSM-Bench | Planned | Seven query templates, queries while ingesting, compression. Its repository has no license: ask the authors first. |
+| IoT-benchmark (Apache IoTDB) | Planned | Batch size, writer concurrency, out-of-order data and read/write mixes. Its Java adapters need a server endpoint: F8 (§21.8). |
+| LST-Bench | Method only | Rounds of appends, compaction and expiry on our own data, charting how queries degrade; not its TPC-DS workload. |
+| TS-Benchmark (ICDE 2021) | Not planned | Unmaintained since 2022; its five queries are covered above. |
+| TSDBBench / YCSB-TS | Not planned | Unmaintained since 2019. |
+| TPCx-IoT | Not planned | TPC rules allow only audited results; 1 KB key-value records don't suit columnar files. |
+| STAC-M3 | Not planned | Closed, member-only, paid audits. |
+| TSRBench | Not planned | Measures LLM reasoning with the series pasted into the prompt, so storage plays no part. See §17.8. |
+
+### 17.8 Agent benchmark (planned, design to agree)
+Most people now ask questions of their data through LLM agents. The question: does an agent answer more correctly, with fewer tokens and tool calls, when the data is in Timelake? TSRBench doesn't answer it: its models get the series as text or a plot, never through tools. Benchmarks where agents do use tools are close but not it: OpenRCA (root cause over raw telemetry files), AssetOpsBench (industrial assets behind MCP servers), AgentFuel (IoT and telecom questions), Grafana's o11y-bench (answers checked against live queries), DataAgentBench (several databases).
+
+- **Design:** one agent loop (same model, prompt, turn limit and seed) against the same data in different arms: raw files with a Python sandbox; DuckDB over Parquet; TimescaleDB (same column comments for metadata); Timelake through generic SQL tools; Timelake through its MCP tools (F1, §21.1). Comparing arms separates the engine from the tool design; switching single features off (metadata, downsampling, helpful errors, result caps) shows what each is worth.
+- **Tasks:** generated from the workload generators with injected events whose answers are known: lookups with units, windowed aggregates, comparing periods, anomalies with their time ranges, a root cause shared by many devices, gaps vs zeros, late data and "as of" questions, counters across resets, long trends that only fit downsampled, and questions that must be refused.
+- **Scoring:** a typed `submit_answer` (value, unit, entities, interval), checked with tolerances; an LLM judge only for the explanation. Per task: accuracy, tokens, tool calls and errors, bytes returned to the model, time and dollars.
+- **Then:** run OpenRCA's metric tasks and AssetOpsBench's IoT scenarios against Timelake as published comparisons.
 ---
 
 ## 18. Open questions
@@ -1180,9 +1214,9 @@ A single binary on site (factory, vessel, rig, substation) that devices send dat
 **Design: the same modules, assembled as a server.** Nothing in the core may assume a server; the library, the serverless reader, the edge gateway (F7) and server mode are the same crates put together differently.
 - **Storage:** the table format on local NVMe as the primary store. Every commit is also uploaded to the bucket, synchronously (durable on commit) or asynchronously (faster commits, bounded loss window). Old partitions can live only in the bucket and be read through a cache.
 - **Memory:** table metadata, Parquet footers, the last-value index and recent data stay in memory, with the hot tier (§8) as the in-process write buffer. That makes data visible in under a second.
-- **Protocols:**
+- **Protocols (both, decided 2026-10-15):**
   - Postgres wire protocol, so Grafana, psql and BI tools connect unchanged;
-  - Arrow Flight SQL;
+  - Arrow Flight SQL, for fast Arrow clients (and JDBC/ADBC drivers);
   - the existing HTTP API and MCP (F1).
 - **Operations:** backups and point-in-time restore come from the bucket (snapshots). Failover is a new instance that warms up from the bucket. Readers that don't need the server keep reading the bucket directly.
 
