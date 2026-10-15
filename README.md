@@ -9,6 +9,16 @@
 
 <p align="center">Fast queries on your own object storage, with no database and no maintenance jobs.<br><a href="https://timelake.dev">timelake.dev</a> · <a href="https://timelake.dev/docs">Docs</a> · <a href="https://timelake.dev/benchmarks">Benchmarks</a></p>
 
+<p align="center">
+  <a href="https://crates.io/crates/timelake"><img alt="crates.io" src="https://img.shields.io/crates/v/timelake?label=crates.io"></a>
+  <a href="https://pypi.org/project/timelake/"><img alt="PyPI" src="https://img.shields.io/pypi/v/timelake?label=PyPI"></a>
+  <a href="https://www.npmjs.com/package/@timelake/client"><img alt="npm" src="https://img.shields.io/npm/v/%40timelake%2Fclient?label=npm"></a>
+  <a href="https://github.com/polythings/timelake/releases/latest"><img alt="CLI release" src="https://img.shields.io/github/v/release/polythings/timelake?label=CLI&amp;sort=semver"></a>
+  <a href="https://docs.rs/timelake"><img alt="docs.rs" src="https://img.shields.io/docsrs/timelake?label=docs.rs"></a>
+  <a href="https://github.com/polythings/timelake/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/polythings/timelake/actions/workflows/ci.yml/badge.svg?branch=main"></a>
+  <a href="https://github.com/polythings/timelake/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
+</p>
+
 Keep time series in your own bucket on S3, R2, GCS, Azure, MinIO or a local disk. Stream or batch-load them, query them fast, and run nothing else.
 
 - **Fast every day.** Dashboards, trends and "what is the value now" read only the files and row groups they need: data is partitioned by time and sorted by `(series key, time)`, and the latest value of every series comes from an index, not a scan.
