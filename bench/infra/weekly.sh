@@ -26,7 +26,9 @@ echo "$id is up; running $ref"
 started=$(date +%s)
 while :; do
   sleep 300
-  state=$(./ssm.sh "if [ -f /mnt/bench/logs/weekly.done ]; then echo done; elif [ -f /mnt/bench/logs/weekly.failed ]; then echo failed; else echo running; fi" | tail -1)
+  # ssm.sh prints the command's stdout and stderr; pick the status word out of them. If SSM itself fails, keep going.
+  state=$(./ssm.sh "if [ -f /mnt/bench/logs/weekly.done ]; then echo done; elif [ -f /mnt/bench/logs/weekly.failed ]; then echo failed; else echo running; fi" 2>&1 | grep -Eo 'done|failed|running' | head -1 || true)
+  state=${state:-running}
   echo "$(( ($(date +%s) - started) / 60 )) min: $state"
   [ "$state" = running ] || break
 done
