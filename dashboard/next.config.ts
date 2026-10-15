@@ -8,9 +8,10 @@ const nextConfig: NextConfig = {
   cacheComponents: true,
   // Docs pages are MDX (app/(site)/docs/**/page.mdx).
   pageExtensions: ["ts", "tsx", "mdx"],
-  // Files read from disk at runtime: benchmark results (when /benchmarks revalidates) and the OG image fonts.
+  // Files read from disk at runtime: benchmark runs (when /benchmarks revalidates) and the OG image fonts.
   outputFileTracingIncludes: {
-    "/benchmarks": ["./data/results/**"],
+    "/benchmarks": ["./data/runs/**"],
+    "/benchmarks/[workload]": ["./data/runs/**"],
     "/opengraph-image": ["./assets/fonts/**"],
   },
   partialPrefetching: true,

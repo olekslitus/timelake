@@ -101,11 +101,13 @@ The Explorer runs the local CLI against `TIMELAKE_WAREHOUSE` (default: the v0 be
 
 ```bash
 uv sync                                       # at the repo root; the same environment as above
-cd bench && (cd tools/s3proxy && go build -o ../../.bin/s3proxy .)
-uv run python run.py --suite tsbs_iot --engine duckdb --layout sorted
+cargo build --release -p timelake-cli         # the Timelake reader
+GOBIN=$PWD/bench/.bin go install github.com/timescale/tsbs/cmd/tsbs_generate_data@latest
+uv run timelake-bench run tsbs-iot --scale small
+uv run timelake-bench report latest
 ```
 
-Then follow `bench/README.md` (query suites and data), `bench/v0/README.md` (the v0 comparison) or `bench/infra/README.md` (AWS). Benchmark data lives in `bench/data` (git-ignored, several GB).
+Then follow `bench/README.md` (workloads, systems, storage targets, adding your own) or `bench/infra/README.md` (AWS and the weekly run). Benchmark data lives in `bench/data` (git-ignored, several GB). Commit a run file from `bench/results/runs` only when it should join the history on the website.
 
 ## Code style
 

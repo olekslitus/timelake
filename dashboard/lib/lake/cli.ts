@@ -20,7 +20,7 @@ const BIN =
 /** Warehouse to browse. Defaults to the TSBS IoT tables from the v0 benchmark. */
 const WAREHOUSE =
   process.env.TIMELAKE_WAREHOUSE ??
-  path.resolve(/*turbopackIgnore: true*/ process.cwd(), "../bench/data/v0/local/timelake/lake")
+  path.resolve(/*turbopackIgnore: true*/ process.cwd(), "../bench/data/lakes/local/tsbs-iot-standard/timelake/lake")
 
 /** Storage options as "k=v,k=v" (e.g. aws_endpoint=http://localhost:9000,aws_allow_http=true). */
 const OPTIONS = (process.env.TIMELAKE_OPTIONS ?? "")

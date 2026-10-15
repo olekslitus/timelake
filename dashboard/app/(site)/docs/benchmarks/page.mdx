@@ -2,18 +2,26 @@ export const metadata = { title: "Benchmarks (docs)" }
 
 # Benchmarks
 
-The results, charts and methodology are on the [Benchmarks page](/benchmarks). The benchmark lives in the repository under `bench/`:
+The results, their history and the public benchmarks we know of are on the [Benchmarks page](/benchmarks). The
+benchmark lives in the repository under `bench/`, and anyone can rerun it.
 
-- `bench/v0/`: the v0 comparison. `ingest.py` streams TSBS IoT into Timelake, Lance and PyIceberg as 5-minute micro-batches and runs each system’s maintenance; `run_queries.sh` runs the query suites; `summarize.py` writes `bench/results/V0.md`.
-- `bench/run_aws.sh`: the same benchmark against AWS S3 and S3 Tables, from your machine. The buckets come from `bench/infra` (one CloudFormation stack; `down.sh` deletes it).
-- `bench/run.py`: the query runner. Each query runs in a fresh process: one first run, then repeats, with request and byte counts when going through the proxy.
-- `bench/tools/s3proxy`: counts requests and bytes. In front of AWS it signs each request for the real bucket; in front of a local RustFS it can add a fixed delay per request.
-- `bench/queries/`: the 12 TSBS IoT queries ported to every engine, and 5 single-device queries.
+`timelake-bench` streams a workload into each system the way its own docs suggest, runs each system's maintenance, and
+runs every query in a fresh process before and after maintenance. Each run is one file in `bench/results/runs` with
+the commit, the machine, every version and every measurement; together they are the history the website charts.
 
 ```bash
-aws login --profile timelake        # any AWS account; the scripts use us-east-2
-bench/infra/up.sh                   # buckets: S3, S3 Express, S3 Tables
-bench/run_aws.sh                    # a few hours
-uv run python bench/compare_aws.py laptop
-bench/infra/down.sh
+uv sync && cargo build --release -p timelake-cli
+uv run timelake-bench list                          # workloads, scales, systems and their readers
+uv run timelake-bench run tsbs-iot --scale small    # every lake system on the local disk, a few minutes
+uv run timelake-bench report latest
 ```
+
+- **Workloads:** `tsbs-iot` (TSBS IoT, streamed in 5-minute batches) at `small`, `standard` and `large` scale.
+- **Systems:** Timelake, Iceberg written by PyIceberg, S3 Tables, Lance, plain Parquet files, and TimescaleDB (any
+  server, set by `BENCH_TIMESCALEDB_DSN`).
+- **Storage:** the local disk, or S3 through `bench/tools/s3proxy`, which counts requests and bytes. In front of AWS it
+  signs each request for the real bucket; in front of a local object store it can add a fixed delay per request.
+- **Weekly run:** every Monday a GitHub workflow runs the same workloads on one fixed AWS instance and commits the
+  results, so the history shows how Timelake changes.
+
+Setup, options, and how to add a workload or a system: [bench/README.md](https://github.com/polythings/timelake/tree/main/bench).

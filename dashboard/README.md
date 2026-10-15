@@ -29,15 +29,15 @@ When neither is available, the pages show a "not connected" card and the API rou
 | Env var | Default | Meaning |
 |---|---|---|
 | `TIMELAKE_URL` | (none) | HTTPS warehouse for the WASM backend, e.g. `https://<store>.public.blob.vercel-storage.com/demo` |
-| `TIMELAKE_WAREHOUSE` | `../bench/data/v0/local/timelake/lake` (TSBS IoT tables) | Warehouse the Explorer browses: local path or `s3://…` |
+| `TIMELAKE_WAREHOUSE` | `../bench/data/lakes/local/tsbs-iot-standard/timelake/lake` (TSBS IoT tables) | Warehouse the Explorer browses: local path or `s3://…` |
 | `TIMELAKE_OPTIONS` | (none) | Storage options, comma-separated `k=v` (e.g. `aws_endpoint=http://localhost:9000,aws_allow_http=true`) |
 | `TIMELAKE_BIN` | `../target/release/timelake` | CLI binary |
-| `TIMELAKE_BENCH_RESULTS` | `data/results` | Benchmark results for `/benchmarks` |
+| `TIMELAKE_BENCH_RUNS` | `data/runs` | Benchmark runs for `/benchmarks` |
 
 The SQL console accepts only single read statements (`SELECT`, `WITH`, `EXPLAIN`, `SHOW`, `DESCRIBE`), because DataFusion can write files. The dev and start scripts bind to 127.0.0.1.
 
 ### Benchmark data
-`/benchmarks` reads `data/results/`, a committed copy of the files it needs from `../bench/results`, so the app builds where only this directory exists. After re-running benchmarks:
+`/benchmarks` reads `data/runs/`, a committed copy of the run files in `../bench/results/runs`, so the app builds where only this directory exists. The weekly benchmark workflow refreshes it; after a run of your own:
 ```bash
 bun run sync-results
 ```
@@ -50,8 +50,8 @@ bun run sync-results
 | `app/(app)/explore/` | Explorer pages (sidebar layout) |
 | `app/api/sql`, `app/api/series` | Route handlers used by the SQL console and the series chart |
 | `lib/lake/` | Explorer data layer: `types.ts` (the `LakeBackend` interface), `wasm.ts` (hosted, `@timelake/client`), `cli.ts` (local, the CLI), `index.ts` (picks the backend, checks series queries), `error-response.ts` (errors → API responses) |
-| `lib/benchmarks.ts` | Loads `/benchmarks` data (geometric means as in `bench/v0/summarize.py`) |
-| `scripts/sync-results.ts` | Copies benchmark results into `data/results/` |
+| `lib/benchmarks.ts` | Loads the benchmark runs for `/benchmarks` (geometric means as in `bench/benchlib/report.py`) |
+| `scripts/sync-results.ts` | Copies the benchmark runs into `data/runs/` |
 | `scripts/upload-demo-to-blob.ts` | Uploads the demo warehouse to Vercel Blob (`bun run upload-demo`) |
 
 ## Docs

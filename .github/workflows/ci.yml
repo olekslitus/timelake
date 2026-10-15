@@ -90,8 +90,8 @@ jobs:
       - name: Embedded WASM matches its sources
         run: bun run --cwd packages/timelake-client check:wasm
       - run: bun test scripts
-      - name: Website results match bench/results
-        run: bun dashboard/scripts/sync-results.ts && git diff --exit-code dashboard/data/results
+      - name: Website runs match bench/results/runs
+        run: bun dashboard/scripts/sync-results.ts && git diff --exit-code dashboard/data/runs
 
   client:
     name: TypeScript client vs the engine

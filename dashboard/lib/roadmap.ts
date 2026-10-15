@@ -11,6 +11,11 @@ export const ROADMAP_UPDATED = "October 2026"
 
 export const NOW: RoadmapItem[] = [
   {
+    title: "Benchmarks over time",
+    description: "Every run kept with its commit, and a weekly run on a fixed machine, charted on the benchmarks page.",
+    status: "next",
+  },
+  {
     title: "Industrial IoT benchmark",
     description: "Timelake against InfluxDB, TimescaleDB, ClickHouse and QuestDB, with the monthly cost of each.",
     status: "next",
@@ -76,6 +81,10 @@ export const COMING_UP: RoadmapItem[] = [
 
 export const EXPLORING: RoadmapItem[] = [
   { title: "Agent access", description: "AI agents query your data within the permissions you set." },
+  {
+    title: "AI agent benchmark",
+    description: "Do AI agents answer questions about your data better, and for less, when it's in Timelake?",
+  },
   { title: "Dashboard read models", description: "Small ready-made files for frontends, refreshed on every write." },
   { title: "Data to events", description: "Turn new data into events on any stream." },
   { title: "Computed metrics", description: "Your Python functions, applied automatically like rollups." },
