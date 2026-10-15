@@ -1,5 +1,5 @@
 # Checks every push to main and every pull request. Needs no secrets.
-# Vercel builds and deploys the website separately (a preview per pull request, production on main).
+# Vercel builds and deploys the website separately, on every push to main (dashboard/vercel.json turns off previews).
 name: CI
 
 on:
