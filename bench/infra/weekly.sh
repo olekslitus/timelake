@@ -5,13 +5,15 @@
 #                                          (default HEAD, which must be pushed); the instance stops itself when done
 #   bench/infra/weekly.sh collect          copy finished run files from the bucket into bench/results/runs
 # One-time setup of the stack: bench/infra/README.md, "Weekly runs".
-set -euo pipefail
+set -Eeuo pipefail  # -E: functions inherit the ERR trap
 cd "$(dirname "$0")"
 source env.sh
 
 start() {
   local ref=${1:-$(git rev-parse HEAD)} id
   id=$(output InstanceId)
+  # If anything below fails, the run never started: stop the instance again.
+  trap 'aws ec2 stop-instances --instance-ids "$id" > /dev/null; echo "start failed; stopping $id"' ERR
   aws ec2 start-instances --instance-ids "$id" > /dev/null
   aws ec2 wait instance-running --instance-ids "$id"
   until [ "$(aws ssm describe-instance-information --filters Key=InstanceIds,Values="$id" \
@@ -22,6 +24,7 @@ start() {
   ./ssm.sh "sudo bench/infra/mount.sh > /dev/null 2>&1 && git clean -fdq bench/results/runs && git fetch -q origin \
     && git checkout -q $ref && git log -1 --oneline"
   ./ssm.sh --bg 'bench/infra/remote.sh weekly'
+  trap - ERR
 }
 
 # Run files reach the bucket after each run; only complete ones (with an end record) are copied.
