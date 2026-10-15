@@ -145,7 +145,8 @@ uv run pytest crates/timelake-py/tests                   # Python package
 uv run pytest bench/tests                                # benchmark helpers
 cargo build -p timelake-cli && (cd packages/timelake-client && bun test)   # TS client + WASM vs the engine
 ```
-See [Development](https://timelake.dev/docs/development) for each part, the tools and CI, [CONTRIBUTING.md](CONTRIBUTING.md) for the code guide, and [CHANGELOG.md](CHANGELOG.md) for what changed.
+See [Development](https://timelake.dev/docs/development) for each part, the tools and CI, [CONTRIBUTING.md](CONTRIBUTING.md) for the code guide, and [CHANGELOG.md](CHANGELOG.md) for what changed. Report
+security problems privately, as [SECURITY.md](SECURITY.md) describes.
 
 ## Acknowledgements
 Timelake is built on [Apache Iceberg](https://iceberg.apache.org), [Apache Parquet](https://parquet.apache.org), [Apache Arrow](https://arrow.apache.org) and [Apache DataFusion](https://datafusion.apache.org). Its compaction follows [Apache Cassandra](https://cassandra.apache.org)'s size tiers, and its benchmarks use [TSBS](https://github.com/timescale/tsbs), [ClickBench](https://github.com/ClickHouse/ClickBench) and TPC-H via [DuckDB](https://duckdb.org). We take ideas, never code: [PRIOR_ART.md](PRIOR_ART.md) credits the projects we learned from, and [NOTICE](NOTICE) lists third-party files and their licenses.

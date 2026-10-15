@@ -234,7 +234,10 @@ export class Lake {
   readonly options: Required<Omit<LakeOptions, "rewriteUrl">> & Pick<LakeOptions, "rewriteUrl">
 
   constructor(url: string, options: LakeOptions = {}) {
-    this.url = url.replace(/\/+$/, "")
+    // Not /\/+$/: on a URL with many slashes that regex backtracks in quadratic time.
+    let end = url.length
+    while (end > 0 && url[end - 1] === "/") end--
+    this.url = url.slice(0, end)
     this.options = {
       fetch: options.fetch ?? ((target, init) => globalThis.fetch(target, init)),
       concurrency: options.concurrency ?? DEFAULT_CONCURRENCY,
