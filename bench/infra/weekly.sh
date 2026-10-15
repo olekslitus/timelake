@@ -17,8 +17,10 @@ start() {
   until [ "$(aws ssm describe-instance-information --filters Key=InstanceIds,Values="$id" \
     --query 'InstanceInformationList[0].PingStatus' --output text)" = Online ]; do sleep 10; done
   echo "$id is up; running $ref"
-  # Stopping wiped the NVMe SSD: mount it again, then check out the commit (remote.sh runs from it).
-  ./ssm.sh "sudo bench/infra/mount.sh > /dev/null 2>&1 && git fetch -q origin && git checkout -q $ref && git log -1 --oneline"
+  # Stopping wiped the NVMe SSD: mount it again. Then check out the commit (remote.sh runs from it); earlier runs' files
+  # are in the bucket already, and may be in the repository by now.
+  ./ssm.sh "sudo bench/infra/mount.sh > /dev/null 2>&1 && git clean -fdq bench/results/runs && git fetch -q origin \
+    && git checkout -q $ref && git log -1 --oneline"
   ./ssm.sh --bg 'bench/infra/remote.sh weekly'
 }
 
