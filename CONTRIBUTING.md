@@ -142,6 +142,11 @@ table writes change:
 Teach `timelake upgrade` to bring older tables to it, and add the format to the table in the
 [Upgrading](https://timelake.dev/docs/upgrading#table-format) docs.
 
+Release when a set of changes is worth installing, not after every change: pushes to `main` publish nothing, and
+changes collect under `## Unreleased` until the next release. A release takes about 40 minutes of CI and a
+maintainer's approval per registry, and every version stays on the registries for good. Cut a patch release sooner
+for a bug fix users are waiting on.
+
 To release, from a clean `main`:
 
 ```bash
