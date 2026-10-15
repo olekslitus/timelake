@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import re
 import urllib.request
 from collections.abc import Iterator, Mapping
@@ -52,12 +53,45 @@ TIMESCALEDB: Dialect = {
     "TS": "TIMESTAMPTZ {}",
 }
 
+CLICKHOUSE: Dialect = {
+    "B1M": "toStartOfMinute({})",
+    "B10M": "toStartOfInterval({}, INTERVAL 10 MINUTE)",
+    "B1D": "toStartOfDay({})",
+    "B1H": "toStartOfHour({})",
+    "EPOCH": "(toUnixTimestamp64Micro({}) / 1000000.0)",
+    "TS": "toDateTime64({}, 6, 'UTC')",
+}
+QUESTDB: Dialect = {
+    "B1M": "timestamp_floor('m', {})",
+    "B10M": "timestamp_floor('10m', {})",
+    "B1D": "timestamp_floor('d', {})",
+    "B1H": "timestamp_floor('h', {})",
+    "EPOCH": "(CAST({} AS LONG) / 1000000.0)",  # microseconds
+    "TS": "to_timestamp({}, 'yyyy-MM-dd HH:mm:ss')",
+}
+
 _PLACEHOLDER = re.compile(r"@(B1M|B10M|B1D|B1H|EPOCH|TS)\(([^()]*)\)")  # arguments contain no nested parentheses
+_AGO = re.compile(r"@AGO\((\d+) (second|minute|hour|day)s?\)")
+_SECONDS = {"second": 1, "minute": 60, "hour": 3600, "day": 86400}
 
 
-def apply_dialect(sql: str, dialect: Dialect) -> str:
-    """Replaces the placeholders (``@B1H(time)``, ...) with one engine's SQL."""
+def apply_dialect(sql: str, dialect: Dialect, now: int | None = None) -> str:
+    """Replaces the placeholders (``@B1H(time)``, ...) with one engine's SQL.
+
+    ``@AGO(15 minutes)`` is a time before ``now`` (epoch seconds; the data's present, which moves as it arrives):
+    it becomes a ``@TS`` literal first.
+    """
+    if now is not None:
+        sql = _AGO.sub(lambda m: f"@TS('{ts_literal(now - int(m.group(1)) * _SECONDS[m.group(2)])}')", sql)
+    elif _AGO.search(sql):
+        msg = "@AGO needs the time the query runs at (now)"
+        raise ValueError(msg)
     return _PLACEHOLDER.sub(lambda m: dialect[m.group(1)].format(m.group(2)), sql)
+
+
+def ts_literal(epoch: int) -> str:
+    """``2026-01-03 12:00:00`` (UTC) for epoch seconds, as the ``@TS`` placeholder takes it."""
+    return dt.datetime.fromtimestamp(epoch, dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def raw_queries(suite: str) -> Iterator[tuple[str, str]]:

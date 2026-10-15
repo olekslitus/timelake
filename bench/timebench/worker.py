@@ -61,6 +61,8 @@ def single(job: dict[str, Any], sql: str) -> QueryRecord:
     out: QueryRecord = {"times": times, "rows": result.rows if result else None, "setup_s": setup_s}
     if result and isinstance(result.value, (int, float)):
         out["value"] = result.value
+    if result and result.sums is not None:
+        out["sums"] = result.sums
     if counted:
         out.update(requests=requests, bytes=nbytes)
         if kinds:

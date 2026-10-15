@@ -1,6 +1,6 @@
 "use client"
 
-import { ChevronDown } from "lucide-react"
+import { ChevronDown, CircleAlert } from "lucide-react"
 import { Bar, BarChart, Cell, LabelList, XAxis, YAxis, type TooltipContentProps } from "recharts"
 
 import { ChartTooltipCard } from "@/components/chart-tooltip-card"
@@ -86,9 +86,16 @@ function PanelChart({ panel }: { panel: BenchPanel }) {
                       <TableCell className="font-mono">{q.query}</TableCell>
                       {engines.map((e) => {
                         const time = q.times[e]
+                        const wrong = q.wrong.includes(e)
                         return (
                           <TableCell key={e} className="text-right font-mono tabular-nums">
                             {time == null ? "—" : formatTime(time, rowUnit)}
+                            {wrong && (
+                              <span className="ml-1 inline-flex items-center gap-0.5 text-muted-foreground">
+                                <CircleAlert className="size-3" aria-hidden />
+                                wrong
+                              </span>
+                            )}
                           </TableCell>
                         )
                       })}

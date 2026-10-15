@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # The weekly regression run (SPEC §17.4) on the weekly stack's instance. Run by .github/workflows/bench-weekly.yml,
 # or by hand (with STACK=timelake-bench-weekly):
-#   bench/infra/weekly.sh start [commit]   start the instance and the run of profiles/weekly.toml at a commit
-#                                          (default HEAD, which must be pushed); the instance stops itself when done
+#   bench/infra/weekly.sh start [commit] [profile]   start the instance and the run of profiles/weekly.toml (or
+#                                          another profile) at a commit (default HEAD, which must be pushed); the
+#                                          instance stops itself when done
 #   bench/infra/weekly.sh collect          copy finished run files from the bucket into bench/results/runs
 # One-time setup of the stack: bench/infra/README.md, "Weekly runs".
 set -Eeuo pipefail  # -E: functions inherit the ERR trap
@@ -10,7 +11,7 @@ cd "$(dirname "$0")"
 source env.sh
 
 start() {
-  local ref=${1:-$(git rev-parse HEAD)} id
+  local ref=${1:-$(git rev-parse HEAD)} profile=${2:-weekly} id
   id=$(output InstanceId)
   # If anything below fails, the run never started: stop the instance again.
   trap 'aws ec2 stop-instances --instance-ids "$id" > /dev/null; echo "start failed; stopping $id"' ERR
@@ -23,7 +24,11 @@ start() {
   # are in the bucket already, and may be in the repository by now.
   ./ssm.sh "sudo bench/infra/mount.sh > /dev/null 2>&1 && git clean -fdq bench/results/runs && git fetch -q origin \
     && git checkout -q $ref && git log -1 --oneline"
-  ./ssm.sh --bg 'bench/infra/remote.sh weekly'
+  if [ "$profile" = weekly ]; then
+    ./ssm.sh --bg 'bench/infra/remote.sh weekly'
+  else
+    ./ssm.sh --bg "bench/infra/remote.sh profile $profile"
+  fi
   trap - ERR
 }
 
@@ -41,7 +46,7 @@ collect() {
 }
 
 case ${1:-} in
-  start) start "${2:-}" ;;
+  start) start "${2:-}" "${3:-}" ;;
   collect) collect ;;
-  *) sed -n '2,7p' "$0"; exit 2 ;;
+  *) sed -n '2,8p' "$0"; exit 2 ;;
 esac

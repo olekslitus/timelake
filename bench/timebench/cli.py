@@ -16,7 +16,7 @@ import argparse
 import tomllib
 
 from timebench import BENCH, RUNS
-from timebench.harness import CHECKPOINTS, RunSpec, run
+from timebench.harness import RunSpec, run
 from timebench.report import Run, history, markdown, runs
 from timebench.systems import systems
 from timebench.targets import Target
@@ -72,9 +72,7 @@ def cmd_run(args: argparse.Namespace) -> None:
         target=Target(args.target),
         systems=names,
         readers=split(args.readers),
-        checkpoints=tuple(
-            c for c in (args.checkpoints if args.checkpoints is not None else ",".join(CHECKPOINTS)).split(",") if c
-        ),
+        checkpoints=None if args.checkpoints is None else tuple(c for c in args.checkpoints.split(",") if c),
         queries=set(split(args.queries) or []) or None,
         runs=args.runs,
         timeout=args.timeout,
@@ -108,7 +106,7 @@ def cmd_profile(args: argparse.Namespace) -> None:
             concurrency_seconds=entry.get("concurrency_seconds", profile.get("concurrency_seconds", 30)),
             pace=entry.get("pace", profile.get("pace", 0)),
             variant=entry.get("variant", ""),
-            checkpoints=tuple(entry.get("checkpoints", CHECKPOINTS)),
+            checkpoints=tuple(entry["checkpoints"]) if "checkpoints" in entry else None,
         )
         try:
             print(markdown(Run(run(spec))))
@@ -150,7 +148,9 @@ def main() -> None:
     r.add_argument("--readers", help="comma-separated (default: every reader of each system)")
     r.add_argument("--target", default="local", help="local, s3 (RustFS via the proxy), or an AWS target name")
     r.add_argument(
-        "--checkpoints", help=f"comma-separated, of {', '.join(CHECKPOINTS)} (default: both; empty: ingest only)"
+        "--checkpoints",
+        help="comma-separated: the workload's (ingested, or e.g. 1d, 7d, ingested) and maintained "
+        "(default: all; empty: ingest only)",
     )
     r.add_argument("--queries", help="comma-separated query names (default: all)")
     r.add_argument("--runs", type=int, default=2, help="repeat runs per query after the first run")

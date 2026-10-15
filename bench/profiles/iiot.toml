@@ -1,0 +1,25 @@
+# The industrial IoT workload (SPEC §17.6) on the benchmark instance: every system on the instance's disk, the
+# database servers in Docker (infra/servers.sh). Run with `bench/infra/weekly.sh start <commit> iiot`.
+label = "iiot"
+runs = 2
+pace = 1                    # the live day: one 5-minute window per second
+live_interval = 15          # fresh readers probe each system every 15 s while it ingests live
+concurrency = [1, 4, 16]
+concurrency_seconds = 30
+
+[[run]]
+workload = "iiot"
+scale = "small"
+target = "local"
+systems = [
+  "reference",
+  "timelake",
+  "timescaledb",
+  "clickhouse",
+  "questdb",
+  "influxdb3",
+  "influxdb3-defaults",
+  "iceberg",
+  "lance",
+  "parquet",
+]

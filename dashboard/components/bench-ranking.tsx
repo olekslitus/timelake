@@ -1,3 +1,5 @@
+import { CircleAlert } from "lucide-react"
+
 import type { Ranking } from "@/lib/benchmarks"
 import { formatCompact, formatTime, timeUnit } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -7,7 +9,8 @@ const SAME_AS_FASTEST = 1.05
 
 /**
  * One ranked list, best first: each system's value right after its name, then a bar from zero with how many times
- * worse than the best it is at its end. Times: lower is better; rates: higher is better.
+ * worse than the best it is at its end, and how many of its answers were wrong. Times: lower is better; rates: higher
+ * is better.
  */
 export function BenchRanking({ ranking }: { ranking: Ranking }) {
   const best = ranking.rows[0]?.value ?? 0
@@ -50,6 +53,12 @@ export function BenchRanking({ ranking }: { ranking: Ranking }) {
                 />
                 {ratio > SAME_AS_FASTEST && (
                   <span className="font-mono text-xs text-muted-foreground tabular-nums">{ratio.toFixed(1)}×</span>
+                )}
+                {(r.wrong ?? 0) > 0 && (
+                  <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+                    <CircleAlert className="size-3.5" aria-hidden />
+                    {r.wrong} wrong
+                  </span>
                 )}
               </span>
             </li>

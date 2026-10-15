@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, LiteralString, cast, override
 import pyarrow as pa
 import pyarrow.csv as pacsv
 
-from timebench.systems import Result, Runner, System
+from timebench.systems import Result, Runner, System, rows_result
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -77,7 +77,11 @@ def csv_chunks(data: pa.Table, batch_rows: int = 100_000) -> Iterator[bytes]:
 
 
 class TimescaleDB(System):
-    """Hypertables partitioned by time in 12-hour chunks, indexed on (series key, time DESC) like TSBS's loader."""
+    """Hypertables partitioned by time in 12-hour chunks, indexed on (series key, time DESC) like TSBS's loader.
+
+    Tables whose rows may arrive twice (``TableSpec.dedup``) get a unique index, and rows are inserted from a
+    staging table with ``ON CONFLICT DO NOTHING``.
+    """
 
     name = "timescaledb"
     title = "TimescaleDB"
@@ -118,17 +122,28 @@ class TimescaleDB(System):
             self.execute(
                 f"SELECT create_hypertable('{spec.name}', by_range('{spec.time_column}', INTERVAL '{CHUNK_INTERVAL}'))"
             )
-            self.execute(f"CREATE INDEX ON {spec.name} ({', '.join(spec.series_key)}, {spec.time_column} DESC)")
+            unique = "UNIQUE " if spec.dedup else ""
+            self.execute(f"CREATE {unique}INDEX ON {spec.name} ({', '.join(spec.series_key)}, {spec.time_column} DESC)")
+        if spec.dedup:
+            self.execute(f"CREATE UNLOGGED TABLE {spec.name}_staging (LIKE {spec.name})")
         self.specs[spec.name] = spec
 
     @override
     def append(self, table: str, data: pa.Table) -> None:
+        dedup = self.specs[table].dedup
+        target = f"{table}_staging" if dedup else table
         with (
             self.conn.cursor() as cur,
-            cur.copy(cast("LiteralString", f"COPY {table} FROM STDIN (FORMAT csv)")) as copy,
+            cur.copy(cast("LiteralString", f"COPY {target} FROM STDIN (FORMAT csv)")) as copy,
         ):
             for chunk in csv_chunks(data):
                 copy.write(chunk)
+        if dedup:
+            # Rows that arrive twice: COPY can't skip them, so they land in a staging table first (TimescaleDB's
+            # docs: a unique index and INSERT ... ON CONFLICT DO NOTHING).
+            with self.conn.transaction():
+                self.execute(f"INSERT INTO {table} SELECT * FROM {target} ON CONFLICT DO NOTHING")
+                self.execute(f"TRUNCATE {target}")
 
     @override
     def maintain(self) -> None:
@@ -176,7 +191,6 @@ class TimescaleDB(System):
 
         def run(sql: str) -> Result:
             # The query text comes from queries/, so it is trusted SQL.
-            rows = conn.execute(cast("LiteralString", sql)).fetchall()
-            return Result(len(rows), rows[0][0] if rows and rows[0] else None)
+            return rows_result(conn.execute(cast("LiteralString", sql)).fetchall())
 
         return run

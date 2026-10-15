@@ -294,32 +294,62 @@ export const BENCHMARKS: Benchmark[] = [
     status: "planned",
     summary: "Plant data as it really arrives, from a day to a month, against databases and lakes, with monthly cost.",
     why: "TSBS models trucks every 10 seconds. Plants look different, and that's where Timelake is used.",
+    workload: "iiot",
     methodology: [
       {
         title: "Data",
-        items: [
-          "A process historian: 100,000+ tags, narrow rows, at 1 s, 10 s, 60 s and on change.",
-          "Condition monitoring: vibration bursts at 1–10 kHz from hundreds of machines.",
-          "Gateways that go offline for hours, then backfill out of order while live data continues, with some duplicates.",
-          "Meters arriving as periodic batch files: millions of slow series.",
+        text: [
+          "Our own generator, the same rows from the same seed every time: a plant of lines and machines, 10 tags per machine. Pressure every second; flow, temperature, current and speed every 10 seconds; vibration and an energy counter every minute; machine state, alarm and setpoint when they change.",
+          "Machines run, stop and fault. Pressure sometimes goes over its alarm limit, energy meters get replaced, sensors drop out or get stuck. Every event is recorded, so answers can be checked.",
+        ],
+        table: {
+          head: ["Scale", "Tags", "Raw data", "History"],
+          rows: [
+            ["small", "1,000", "about 10 MB an hour", "30 days"],
+            ["standard", "10,000", "about 100 MB an hour", "30 days"],
+            ["large", "100,000", "about 1 GB an hour", "30 days"],
+            ["xlarge", "1,000,000", "about 10 GB an hour", "7 days"],
+          ],
+        },
+      },
+      {
+        title: "How the data arrives",
+        text: [
+          "Through gateways, one per line. A gateway goes offline for 1 to 12 hours now and then; when it's back, it sends its backlog, an hour per 5 minutes, while live data keeps coming. It also resends the last 5 minutes before it went offline, and 1.5% of all rows arrive twice. Every tenth line is wired and never drops out.",
+          "History is loaded in bulk, an hour of arrivals per commit. The last day arrives live, a 5-minute window per commit.",
         ],
       },
       {
         title: "Queries",
         items: [
-          "Dashboard refresh: the latest value of 1,000 tags; the last 15 minutes of 20 tags.",
-          "A 30-day trend downsampled to about 1,000 points; an hourly shift report joined with asset data.",
-          "The raw window around an alarm; time above a limit; time-weighted averages; energy from counters.",
-          "Many dashboards refreshing at once, all while ingest continues.",
+          "Dashboards: the latest value of 1,000 tags; the last 15 minutes of two machines; a 30-day trend as hourly min, max and mean.",
+          "Investigation: every tag of five machines around an alarm two hours ago.",
+          "Reports: a shift report per machine joined with the asset model; daily counts and means over 30 days.",
+          "Process: time above the alarm limit, time-weighted averages, machine uptime, energy from counters that reset, data gaps.",
+          "All relative to the newest data, so a query means the same after 1 day, 7 days or 30.",
         ],
       },
       {
-        title: "What we'll report",
+        title: "Right answers",
+        text: [
+          "A reference copy keeps every row that arrived, once. Each system's answer is compared with it. A system that keeps the duplicates, or doesn't see late rows yet, shows as wrong next to its speed.",
+        ],
+      },
+      {
+        title: "Systems",
         items: [
-          "Latency at 1, 7 and 30 days of data, at ingest rates from 10 MB to 10 GB an hour.",
-          "How fresh data is, the smallest setup that keeps up, maintenance work, storage.",
-          "What each setup costs a month on AWS: instances, storage and requests.",
-          "Against Timelake: InfluxDB 3, TimescaleDB, ClickHouse, QuestDB, Iceberg and Lance.",
+          "Timelake, TimescaleDB, ClickHouse, QuestDB, InfluxDB 3 Core, Iceberg, Lance and plain Parquet files.",
+          "Each database at a pinned version, loaded with its own recommended client, and removing duplicates the way its docs say.",
+          "InfluxDB 3 Core by default won't read more than 432 files in one query, about 3 days of data. It runs twice: as shipped, and with the limit raised.",
+          "Later: the same on each vendor's managed cloud, at its own prices.",
+        ],
+      },
+      {
+        title: "What we report",
+        items: [
+          "Query time after 1 day, 7 days and the full history, after maintenance, and while data arrives.",
+          "Whether each answer is right.",
+          "How fresh data is, load speed, storage, and what each setup costs a month on AWS.",
         ],
       },
     ],

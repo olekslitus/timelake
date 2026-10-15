@@ -66,6 +66,8 @@ class EndRecord(TypedDict, total=False):
     seconds: float
     mismatches: list[str]
     """Queries whose row counts differ between readers (should be none)."""
+    wrong: list[str]
+    """Answers that differ from the reference system's (``checkpoint/query: system+reader``)."""
 
 
 class QueryRecord(TypedDict, total=False):
@@ -75,7 +77,7 @@ class QueryRecord(TypedDict, total=False):
     system: str
     reader: str
     checkpoint: str
-    """The tables' state when the query ran: ``ingested`` or ``maintained``."""
+    """The tables' state when the query ran: ``ingested``, ``maintained``, or a workload's own (``1d``, ``7d``)."""
     suite: str
     engine: str
     version: str
@@ -104,6 +106,10 @@ class QueryRecord(TypedDict, total=False):
     server_ms: list[float]
     value: float
     """The first value of the result, for probes (the newest timestamp a reader sees, in epoch seconds)."""
+    sums: list[float | None]
+    """Per result column, the sum of its values (timestamps in epoch seconds; None for text): the answer's check."""
+    correct: bool
+    """Whether the answer matches the reference system's (absent when the run has no reference)."""
     usd: float
     """The first run's requests at the target's list prices (priced targets only, timebench/cost.py)."""
 
@@ -150,6 +156,21 @@ class ConcurrencyRecord(TypedDict, total=False):
     """The first error, if any."""
 
 
+class StageRecord(TypedDict, total=False):
+    """One stage of a system's ingest (``IngestRecord.stages``): its rows and time, and the storage after it."""
+
+    rows: int
+    commits: int
+    seconds: float
+    commit_ms_p50: float
+    settle_s: float
+    """Of ``seconds``, the wait until readers saw every commit (servers that apply writes asynchronously)."""
+    objects: int | None
+    bytes: int
+    data_files: int
+    data_bytes: int
+
+
 class IngestRecord(TypedDict, total=False):
     """One system's ingest or maintenance: a line of a run file (``kind``), or of ``results/v0_ingest*.jsonl``."""
 
@@ -190,6 +211,8 @@ class IngestRecord(TypedDict, total=False):
     """What keeping ``bytes`` costs a month at the target's list prices."""
     probed: bool
     """Fresh readers queried the tables during ingest (a ``live`` record follows), so ingest shared the machine."""
+    stages: dict[str, StageRecord]
+    """Per stage of the stream, when it has more than one (e.g. bulk history, then a live day)."""
 
 
 ENGINE_ORDER = (

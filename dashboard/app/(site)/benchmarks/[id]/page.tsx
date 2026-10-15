@@ -12,6 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { BENCHMARKS, benchmark } from "@/lib/benchmark-catalog"
 import {
+  CHECKPOINTS,
   SYSTEMS,
   SYSTEM_COLORS,
   WORKLOADS,
@@ -212,6 +213,8 @@ function RunResults({ run, workload }: { run: Run; workload: Workload }) {
   const failed = failures(run)
   const ingest = run.phases.filter((p) => p.kind === "ingest")
   const maintain = new Map(run.phases.filter((p) => p.kind === "maintain").map((p) => [p.system, p]))
+  // A staged stream (history in bulk, then a live day): commit times are the live day's.
+  const staged = ingest.some((p) => p.stages)
   return (
     <>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
@@ -241,8 +244,9 @@ function RunResults({ run, workload }: { run: Run; workload: Workload }) {
           <CardHeader>
             <CardTitle className="text-base">Ingest and maintenance</CardTitle>
             <CardDescription>
-              Committing is the time spent in all commits together. Storage is all files after maintenance, counting
-              replaced files still waiting for cleanup.
+              Committing is the time spent in all commits together
+              {staged ? "; commit times are the live day's, a 5-minute window per commit" : ""}. Storage is all files
+              after maintenance, counting replaced files still waiting for cleanup.
             </CardDescription>
           </CardHeader>
           <CardContent className="overflow-x-auto">
@@ -252,7 +256,7 @@ function RunResults({ run, workload }: { run: Run; workload: Workload }) {
                   <TableHead>System</TableHead>
                   <TableHead className="text-right">Committing</TableHead>
                   <TableHead className="text-right">Commit p50</TableHead>
-                  <TableHead className="text-right">Commit p95</TableHead>
+                  {!staged && <TableHead className="text-right">Commit p95</TableHead>}
                   <TableHead className="text-right">Maintenance</TableHead>
                   <TableHead className="text-right">Files</TableHead>
                   <TableHead className="text-right">Storage</TableHead>
@@ -270,8 +274,12 @@ function RunResults({ run, workload }: { run: Run; workload: Workload }) {
                       <TableCell className="text-right font-mono tabular-nums">
                         {seconds(p.commit_seconds ?? p.seconds)}
                       </TableCell>
-                      <TableCell className="text-right font-mono tabular-nums">{ms(p.commit_ms_p50)}</TableCell>
-                      <TableCell className="text-right font-mono tabular-nums">{ms(p.commit_ms_p95)}</TableCell>
+                      <TableCell className="text-right font-mono tabular-nums">
+                        {ms(staged ? p.stages?.live?.commit_ms_p50 : p.commit_ms_p50)}
+                      </TableCell>
+                      {!staged && (
+                        <TableCell className="text-right font-mono tabular-nums">{ms(p.commit_ms_p95)}</TableCell>
+                      )}
                       <TableCell className="text-right font-mono tabular-nums">
                         {p.system === "s3tables" ? "managed" : seconds(m?.seconds)}
                       </TableCell>
@@ -298,9 +306,7 @@ function RunResults({ run, workload }: { run: Run; workload: Workload }) {
         <p className="text-sm text-muted-foreground">
           Failed and left out of the charts:{" "}
           {failed
-            .map(
-              (f) => `${f.engine} ${f.query} (${f.checkpoint === "ingested" ? "after ingest" : "after maintenance"})`,
-            )
+            .map((f) => `${f.engine} ${f.query} (${(CHECKPOINTS[f.checkpoint] ?? f.checkpoint).toLowerCase()})`)
             .join(", ")}
           .
         </p>

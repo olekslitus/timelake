@@ -117,6 +117,8 @@ function BenchmarkResults({ benchmark, latest }: { benchmark: Benchmark; latest:
                     {r.header.commit.slice(0, 7)}
                   </a>
                   . {r.header.variant === "bulk" ? "Higher is better." : "Lower is better."}
+                  {r.queries.some((q) => q.correct !== undefined) &&
+                    " Answers are checked against a copy of the data with each row once."}
                 </p>
               </TabsContent>
             ))}

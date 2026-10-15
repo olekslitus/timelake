@@ -30,6 +30,7 @@ Run Python from anywhere in the repo with `uv run …`; it uses the root `.venv`
 uv run timebench list                                         # workloads, scales, systems, readers
 uv run timebench run tsbs-iot --scale small                   # every lake system on the local disk, a few minutes
 uv run timebench run tsbs-iot --systems timelake,timescaledb  # with BENCH_TIMESCALEDB_DSN set
+uv run timebench run iiot --param machines=50 --param days=9 --systems reference,timelake,clickhouse  # a quick IIoT run
 uv run timebench report latest                                # one run as Markdown
 uv run timebench history --workload tsbs-iot                  # one line per run
 ```
@@ -40,6 +41,11 @@ uv run timebench history --workload tsbs-iot                  # one line per run
   - `tsbs-devops`, TSBS's cpu-only use case and its 15 query types: `small` (100 hosts), `standard` (4,000 hosts,
     104M rows, the size published TSBS results use). Its file is in time order, so it streams without being held in
     memory.
+  - `iiot` (SPEC §17.6): a plant's process historian from our own generator (`timebench/workloads/plant.py`), arriving
+    through gateways that go offline and send some rows twice. `small` (1,000 tags, 30 days), `standard` (10,000),
+    `large` (100,000), `xlarge` (1,000,000, 7 days); `--param machines=N --param days=D` for a quick check. It
+    arrives in stages: history in bulk (an hour per commit) with checkpoints `1d` and `7d`, then the last day live (a
+    5-minute window per commit) and `ingested`. Its queries are relative to the data's present (`@AGO(15 minutes)`).
 - **Variants** (`--variant NAME`): a different kind of run of the same workload and target, kept apart in reports and
   on the site. The weekly `bulk` variant loads TSBS DevOps in 1-hour windows as fast as each system commits, with no
   queries (`--checkpoints ""`), and is judged by rows per second.
@@ -52,12 +58,17 @@ uv run timebench history --workload tsbs-iot                  # one line per run
   | `s3tables` | the same, through S3 Tables' REST endpoint (AWS only) | its managed compaction (waits up to 6 h) | `duckdb` |
   | `lance` | `write_dataset(mode="append")` | `compact_files()`, `cleanup_old_versions()` | `duckdb`, `datafusion` |
   | `parquet` | a Parquet file per commit under `day=…/` | one sorted file per day | `duckdb`, `datafusion` |
-  | `timescaledb` | `COPY` per commit into hypertables | convert chunks to the columnstore | `postgres` |
+  | `timescaledb` | `COPY` per commit into hypertables (via a staging table and `ON CONFLICT DO NOTHING` where rows repeat) | convert chunks to the columnstore | `postgres` |
+  | `clickhouse` | Arrow inserts into `MergeTree` (`ReplacingMergeTree` where rows repeat) | `OPTIMIZE TABLE … FINAL` | `clickhouse` (with `FINAL`) |
+  | `questdb` | QWP (`questdb.connect().dataframe`) into WAL tables, `DEDUP UPSERT KEYS` where rows repeat | none (waits for the WAL) | `questdb` (PGWire) |
+  | `influxdb3`, `influxdb3-defaults` | line protocol over HTTP, 4 concurrent requests | none (Core has no compaction) | `influxdb3` (SQL over HTTP) |
+  | `reference` | a local Parquet file per commit | none | `duckdb`, rows that arrived twice removed |
 
-  TimescaleDB needs `BENCH_TIMESCALEDB_DSN`, a server used only for benchmarks (each dataset gets a schema
-  `bench_<dataset>` that runs drop). A local one:
-  `docker run -d --name timelake-bench-timescaledb -p 55432:5432 -e POSTGRES_PASSWORD=bench -e POSTGRES_DB=bench timescale/timescaledb:2.30.2-pg18`,
-  then `BENCH_TIMESCALEDB_DSN=postgresql://postgres:bench@localhost:55432/bench`.
+  The database servers run in Docker at pinned versions: `infra/servers.sh up` starts them (data in
+  `data/servers/`, ports 55432, 58123, 59900/58812, 58181, 58182), and `eval "$(infra/servers.sh env)"` sets the
+  variables the adapters read (`BENCH_TIMESCALEDB_DSN`, `BENCH_CLICKHOUSE_URL`, ...). Each dataset gets its own
+  schema or database that runs drop; QuestDB holds one dataset at a time. `influxdb3` runs with
+  `--query-file-limit` raised, `influxdb3-defaults` as shipped (a query reads at most 432 files).
 - **Targets** (`--target`): `local` (tables under `data/lakes/`), or S3 through `tools/s3proxy` on `localhost:59100`:
   `s3` for a local RustFS, `aws-s3` / `aws-s3x` for real buckets (`infra/`). TimescaleDB ignores the target.
 - **Adding a workload or system:** subclass `Workload` or `System` and register it in its package's `__init__.py`.
@@ -66,6 +77,9 @@ uv run timebench history --workload tsbs-iot                  # one line per run
 ### Method
 - Each query runs in a fresh process: one first run, then `--runs` repeats (default 2). Every run fully
   materializes the result; row counts are compared across readers, and a mismatch is recorded in the run.
+- Right answers: when the run includes `reference` (first), every other answer is compared with its answer at the
+  same checkpoint: the same row count and, per column, the same sum (timestamps in epoch seconds) within 1e-6. Each
+  query record gets `correct`, and the `end` record lists the wrong ones.
 - "First run" is not cold-cache on local disk: the OS page cache stays warm (dropping it needs root on macOS). A
   database server's buffer cache stays warm too.
 - On S3 targets every request goes through the proxy, which counts requests (by kind, in AWS mode) and bytes for

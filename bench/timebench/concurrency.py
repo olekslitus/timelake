@@ -13,23 +13,24 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from timebench.queries import apply_dialect
-from timebench.systems import DIALECTS
 from timebench.worker import command
 
 if TYPE_CHECKING:
     from timebench.results import ConcurrencyRecord
     from timebench.systems import System
-    from timebench.workloads import Workload
 
 SETUP_GRACE_S = 300
 """How long a client may take to start and open its reader, beyond the measured seconds."""
 
 
-def dashboards(workload: Workload, system: System, checkpoint: str, clients: int, seconds: float) -> ConcurrencyRecord:
-    """Runs ``clients`` dashboard clients for ``seconds`` and summarizes their latencies."""
+def dashboards(
+    system: System, queries: list[dict[str, str]], checkpoint: str, clients: int, seconds: float
+) -> ConcurrencyRecord:
+    """Runs ``clients`` dashboard clients for ``seconds`` and summarizes their latencies.
+
+    ``queries`` are the dashboard's queries (``name``, ``sql``) in the system's own reader's SQL.
+    """
     reader = type(system).readers[0]
-    queries = [{"name": q.name, "sql": apply_dialect(q.sql, DIALECTS[reader])} for q in workload.dashboard_queries()]
     place = system.place
     job = {
         "mode": "client",

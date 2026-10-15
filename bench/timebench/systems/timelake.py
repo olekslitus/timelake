@@ -50,7 +50,7 @@ class Timelake(System):
         name = f"{self.namespace}.{spec.name}"
         if spec.time_column:
             table = self.lake.create_table(
-                name, schema, time_column=spec.time_column, series_key=list(spec.series_key), dedup=False
+                name, schema, time_column=spec.time_column, series_key=list(spec.series_key), dedup=spec.dedup
             )
         else:
             table = self.lake.create_table(name, schema)

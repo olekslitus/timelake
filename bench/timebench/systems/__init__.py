@@ -14,11 +14,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from timebench.queries import DATAFUSION, DUCKDB, POLARS, TIMESCALEDB, Dialect
+import pyarrow as pa
+
+from timebench.queries import CLICKHOUSE, DATAFUSION, DUCKDB, POLARS, QUESTDB, TIMESCALEDB, Dialect
 
 if TYPE_CHECKING:
-    import pyarrow as pa
-
     from timebench.results import IngestRecord
     from timebench.targets import Place, StorageStats, Target
     from timebench.workloads import TableSpec
@@ -28,11 +28,13 @@ if TYPE_CHECKING:
 class Result:
     """What a query returned.
 
-    Its row count, and the first value of the first row (for probes such as the newest timestamp a reader sees).
+    Its row count, the first value of the first row (for probes such as the newest timestamp a reader sees), and per
+    column the sum of its values (``column_sums``), which the harness compares between systems to check answers.
     """
 
     rows: int
     value: object = None
+    sums: list[float | None] | None = None
 
 
 Runner = Callable[[str], Result]
@@ -42,7 +44,53 @@ Runner = Callable[[str], Result]
 def arrow_result(table: pa.Table) -> Result:
     """The result of a query answered as an Arrow table."""
     value = table.column(0)[0].as_py() if table.num_rows and table.num_columns else None
-    return Result(table.num_rows, value)
+    return Result(table.num_rows, value, [column_sum(c) for c in table.columns])
+
+
+def column_sum(column: pa.ChunkedArray) -> float | None:
+    """The sum of a column: timestamps and dates in epoch seconds, booleans as the count of trues, None for text.
+
+    The Timelake CLI computes the same (crates/timelake-cli/src/bench.rs).
+    """
+    import pyarrow.compute as pc
+
+    t = column.type
+    if pa.types.is_timestamp(t):
+        per_second = {"s": 1, "ms": 1e3, "us": 1e6, "ns": 1e9}[t.unit]
+        numbers, scale = pc.cast(column.cast(pa.timestamp(t.unit)), pa.int64()), 1 / per_second
+    elif pa.types.is_date32(t):
+        numbers, scale = pc.cast(column, pa.int32()), 86_400
+    elif pa.types.is_boolean(t):
+        numbers, scale = pc.cast(column, pa.int8()), 1
+    elif pa.types.is_integer(t) or pa.types.is_floating(t) or pa.types.is_decimal(t):
+        numbers, scale = column, 1
+    else:
+        return None
+    # As floats before summing: epoch microseconds of a few thousand rows overflow 64-bit integers.
+    total = pc.call_function("sum", [pc.cast(numbers, pa.float64(), safe=False)])
+    return float(total.as_py() or 0) * scale
+
+
+def rows_result(rows: list[tuple[Any, ...]]) -> Result:
+    """The result of a query answered as Python rows (a DB-API cursor), with the same sums as ``arrow_result``."""
+    import datetime as dt
+    import decimal
+
+    def number(v: object) -> float | None:
+        if isinstance(v, dt.datetime):
+            return (v if v.tzinfo else v.replace(tzinfo=dt.timezone.utc)).timestamp()  # naive = UTC
+        if isinstance(v, dt.date):
+            return float(dt.datetime(v.year, v.month, v.day, tzinfo=dt.timezone.utc).timestamp())
+        if isinstance(v, (bool, int, float, decimal.Decimal)):
+            return float(v)
+        return None
+
+    sums: list[float | None] = []
+    for column in zip(*rows, strict=True):
+        values = [number(v) for v in column if v is not None]
+        text = any(v is not None and number(v) is None for v in column)
+        sums.append(None if text else float(sum(x for x in values if x is not None)))
+    return Result(len(rows), rows[0][0] if rows and rows[0] else None, sums)
 
 
 DIALECTS: dict[str, Dialect] = {
@@ -51,6 +99,9 @@ DIALECTS: dict[str, Dialect] = {
     "timelake": DATAFUSION,
     "polars": POLARS,
     "postgres": TIMESCALEDB,
+    "clickhouse": CLICKHOUSE,
+    "questdb": QUESTDB,
+    "influxdb3": DATAFUSION,  # InfluxDB 3's SQL is DataFusion's
 }
 """The SQL dialect of each reader."""
 
@@ -108,6 +159,13 @@ class System(ABC):
     def version(cls) -> dict[str, str]:
         """Versions of the packages the system and its readers use (name -> version)."""
 
+    def settle(self) -> float:
+        """Waits until every commit is visible to readers (a server that applies writes asynchronously).
+
+        Returns the seconds it waited.
+        """
+        return 0.0
+
     def ingest_extras(self) -> IngestRecord:
         """System-specific fields of the ingest record."""
         return {}
@@ -150,10 +208,29 @@ def duckdb_runner(con: Any) -> Runner:  # noqa: ANN401
 
 def systems() -> dict[str, type[System]]:
     """All systems by name."""
+    from timebench.systems.clickhouse import ClickHouse
     from timebench.systems.iceberg import Iceberg, S3Tables
+    from timebench.systems.influxdb3 import InfluxDB3, InfluxDB3Defaults
     from timebench.systems.lance import Lance
     from timebench.systems.parquet import ParquetFiles
+    from timebench.systems.questdb import QuestDB
+    from timebench.systems.reference import Reference
     from timebench.systems.timelake import Timelake
     from timebench.systems.timescaledb import TimescaleDB
 
-    return {s.name: s for s in (Timelake, Iceberg, S3Tables, Lance, ParquetFiles, TimescaleDB)}
+    return {
+        s.name: s
+        for s in (
+            Reference,
+            Timelake,
+            Iceberg,
+            S3Tables,
+            Lance,
+            ParquetFiles,
+            TimescaleDB,
+            ClickHouse,
+            QuestDB,
+            InfluxDB3,
+            InfluxDB3Defaults,
+        )
+    }

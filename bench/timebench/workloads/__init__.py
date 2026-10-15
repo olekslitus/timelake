@@ -7,14 +7,15 @@ Adding a workload: subclass ``Workload`` in a module here and add it to ``worklo
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, ClassVar
 
 from timebench import DATA
-from timebench.queries import raw_queries
+from timebench.queries import apply_dialect, raw_queries
+from timebench.systems import DIALECTS
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterable, Iterator, Mapping
     from pathlib import Path
 
     import pyarrow as pa
@@ -29,6 +30,8 @@ class TableSpec:
     """None for a dimension table."""
     series_key: tuple[str, ...] = ()
     """The columns that identify one series (Timelake's series key; TimescaleDB's segment-by)."""
+    dedup: bool = False
+    """Rows may arrive twice: one row per series key and time counts, where the system can keep it so."""
 
 
 @dataclass(frozen=True)
@@ -38,10 +41,30 @@ class Query:
     suite: str
     name: str
     sql: str
+    variants: Mapping[str, str] = field(default_factory=dict)
+    """Reader -> its own version of the query, where its SQL lacks a construct the shared one uses."""
+
+    def sql_for(self, reader: str, now: int | None = None) -> str:
+        """The query in a reader's SQL; ``now`` (epoch seconds) is the data's present, for ``@AGO``."""
+        return apply_dialect(self.variants.get(reader, self.sql), DIALECTS[reader], now)
 
 
 Batch = tuple[str, "pa.Table"]
 """Rows of one table, committed together."""
+
+
+@dataclass(frozen=True)
+class Stage:
+    """A part of the stream, and the checkpoint the queries run at after it."""
+
+    name: str
+    arrivals: Iterable[list[Batch]]
+    checkpoint: str | None
+    """None: no queries after this stage."""
+    live: bool = True
+    """Arrivals are paced and probed (``--pace``, ``--live-interval``); a bulk stage loads as fast as it commits."""
+    now: int | None = None
+    """The data's present at the end of the stage (epoch seconds), for queries with ``@AGO``."""
 
 
 class Workload(ABC):
@@ -63,7 +86,7 @@ class Workload(ABC):
     """Only these queries of the dashboard suite (all of it when empty)."""
     live_table: ClassVar[str | None] = None
     """The time-series table whose newest timestamp tells how fresh a reader's view is."""
-    span_days: ClassVar[float]
+    span_days: float
     """How many days of data the workload holds (scales its costs to a month)."""
 
     def __init__(self, scale: str | None = None) -> None:
@@ -107,9 +130,28 @@ class Workload(ABC):
     def stream(self) -> Iterator[list[Batch]]:
         """The rows as they arrive: one list per arrival (a time window), one commit per table in it."""
 
+    def stages(self) -> list[Stage]:
+        """The stream in stages, each followed by a checkpoint or not; by default one live stage, then ``ingested``."""
+        return [Stage("stream", self.stream(), "ingested")]
+
+    def checkpoints(self) -> list[str]:
+        """The checkpoints of the stream's stages, in order (``maintained`` follows them)."""
+        return [s.checkpoint for s in self.stages() if s.checkpoint]
+
     def queries(self) -> list[Query]:
         """All queries of the workload's suites."""
-        return [Query(suite, name, sql) for suite in self.suites for name, sql in raw_queries(suite)]
+        out: list[Query] = []
+        for suite in self.suites:
+            plain: dict[str, str] = {}
+            variants: dict[str, dict[str, str]] = {}
+            for name, sql in raw_queries(suite):
+                query, _, reader = name.partition(" ")
+                if reader:  # `-- name: foo [clickhouse]`
+                    variants.setdefault(query, {})[reader.strip("[]")] = sql
+                else:
+                    plain[query] = sql
+            out += [Query(suite, n, sql, variants.get(n, {})) for n, sql in plain.items()]
+        return out
 
     def dashboard_queries(self) -> list[Query]:
         """The dashboard's queries (none if the workload has no dashboard suite)."""
@@ -132,6 +174,7 @@ class Workload(ABC):
 
 def workloads() -> dict[str, type[Workload]]:
     """All workloads by name."""
+    from timebench.workloads.iiot import Iiot
     from timebench.workloads.tsbs import TsbsDevops, TsbsIot
 
-    return {w.name: w for w in (TsbsIot, TsbsDevops)}
+    return {w.name: w for w in (TsbsIot, TsbsDevops, Iiot)}

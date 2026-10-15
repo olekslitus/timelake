@@ -797,7 +797,7 @@ TSBS assumes a database. A lake also has to be judged on these, borrowing ideas 
 | Managed Iceberg | S3 Tables; R2 Data Catalog | Spark/PyIceberg write; **Firehose → S3 Tables** (AWS's recommended streaming path; planned, needs an AWS Paid plan); Athena / DuckDB read |
 | Other formats | Delta Lake, Hudi, Paimon, DuckLake, Lance | delta-rs, Spark, Flink, DuckDB, lance |
 | No table format | Plain Parquet files per commit, by day (what a Firehose or Kafka Connect S3 sink writes) | pyarrow; DuckDB and DataFusion over a listing |
-| TSDB baselines | TimescaleDB, InfluxDB 3, QuestDB | Their native TSBS loaders |
+| TSDB baselines | TimescaleDB, InfluxDB 3 Core, QuestDB, ClickHouse | Their native TSBS loaders; in timebench, each one's recommended client (§17.6) |
 
 PyIceberg appends are the naive baseline (what v0 compares against today). Published results must also include Iceberg written the way an expert team would (planned): a Flink or Spark streaming sink that batches commits, with scheduled `rewrite_data_files` and sorting; the Kafka Connect Iceberg sink; iceberg-rust; and DuckDB's Iceberg writer. Beating only the naive writer proves too little.
 
@@ -814,8 +814,8 @@ PyIceberg appends are the naive baseline (what v0 compares against today). Publi
 - **Results include:** p50/p99 latency, bytes read, **object-store request counts**, and **estimated $** (per query, per GB ingested, per month of storage).
 - **Configurations:** Every system's configuration and version is committed. Each system is tuned per its own docs, and vendors are invited to review.
 - **Harness (built 2026-10-15):** `timebench` in `bench/timebench`, named on its own because it may move to its own repository: only its Timelake adapter knows Timelake. The website explains its method at /benchmarks/timebench. Our own benchmark system, extended over time with new workloads and systems: public benchmarks miss most of what a time-series lake has to do in practice (streaming commits, late data, maintenance, cost), and it isn't limited to Iceberg.
-  - A **workload** is data at a named scale, the order its rows arrive in, and its queries (written once with dialect placeholders). Now: TSBS IoT (`small`, `standard`, `large`) and TSBS DevOps cpu-only (`small`, `standard` = 4,000 hosts).
-  - A **system** is one adapter: create tables, append a commit, run its own maintenance, open its readers. Now: Timelake, Iceberg (PyIceberg), S3 Tables, Lance, plain Parquet files, TimescaleDB (any server: a container, the benchmark instance, Tiger Cloud).
+  - A **workload** is data at a named scale, the order its rows arrive in (in stages, each optionally ending at a checkpoint), and its queries (written once with dialect placeholders; a reader-specific version only where its SQL lacks a construct). Now: TSBS IoT (`small`, `standard`, `large`), TSBS DevOps cpu-only (`small`, `standard` = 4,000 hosts) and IIoT (§17.6).
+  - A **system** is one adapter: create tables, append a commit, run its own maintenance, open its readers. Now: Timelake, Iceberg (PyIceberg), S3 Tables, Lance, plain Parquet files, TimescaleDB (any server: a container, the benchmark instance, Tiger Cloud), ClickHouse, QuestDB, InfluxDB 3 Core, and `reference` (the right answers, §17.6).
   - A **run** streams the workload into each system, then runs every query in a fresh process on every reader at each checkpoint (right after ingest, after maintenance), and checks that row counts match across readers.
   - **Under load (2026-10-15):** fresh readers probe each system while it ingests (query latency under writes, and whether they see every finished commit); then 1, 4 and 16 dashboard clients query at once (queries per second, p50/p95/p99). On AWS, every record carries its cost at S3 list prices; machines are not priced yet.
   - **History:** every run is one file in `bench/results/runs/` with the commit, machine, versions and all measurements. The website charts it per target. Runs from before the harness (v0, Tiger Cloud) were converted.
@@ -847,8 +847,8 @@ Full results: [`bench/results/BASELINE.md`](bench/results/BASELINE.md).
   - Every engine is 9–24× slower on S3 than on local disk for first runs. → The reader cache matters.
   - Lance reads stale versions on S3 Express One Zone (unsorted listings); Timelake doesn't.
 
-### 17.6 IIoT benchmark (planned)
-TSBS models a truck fleet at ~10 s per device. Industrial plants look different, and that is the market (Polythings' IIoT platform). The IIoT benchmark lives in `bench/iiot` and runs next to TSBS, not instead of it.
+### 17.6 IIoT benchmark (first version built 2026-10-15)
+TSBS models a truck fleet at ~10 s per device. Industrial plants look different, and that is the market (Polythings' IIoT platform). The IIoT benchmark is a timebench workload (`iiot`) and runs next to TSBS, not instead of it.
 
 **Principles**
 - **Every opponent, one table.** Timelake, InfluxDB 3 Core, TimescaleDB, ClickHouse, QuestDB, naive Iceberg (the S3 Tables write pattern) and Lance.
@@ -876,6 +876,16 @@ TSBS models a truck fleet at ~10 s per device. Industrial plants look different,
 - Storage: bytes and object count.
 - **$ per month on AWS:** instance hours (or Lambda time) for each system's servers or writers, plus S3 storage and requests by type (GET, PUT, LIST, DELETE, counted by `bench/tools/s3proxy`), plus managed fees where they apply (S3 Tables compaction).
 - Where each system keeps data: local disk, EBS, object storage, or a mix (ClickHouse on S3 disks, QuestDB and TimescaleDB on local disk, InfluxDB 3 Core on object storage). Results say so next to every number.
+
+**First version (decided and built 2026-10-15)**
+- **Scope:** the process historian with store-and-forward. Condition monitoring (vibration blocks) and metering fleets come later.
+- **Generator** (`bench/timebench/workloads/plant.py`): Python and NumPy rather than Rust, seeded per machine group and day, so it is fast enough and timebench stays one language; Rust only if generation becomes the slow part. Sites of 10 areas, areas of 10 lines, lines of 10 machines, 10 tags per machine (pressure at 1 s; flow, temperature, current and speed at 10 s; vibration and an energy counter at 60 s; state, alarm and setpoint on change with an hourly heartbeat). Machines run, stop and fault; pressure follows its setpoint and sometimes exceeds the alarm limit; counters reset; sensors drop out and get stuck. Each line's gateway (but every tenth, wired) goes offline for 1–12 h; its backlog arrives afterwards at an hour per 5-minute window, the last 5 minutes before the outage are sent again, and 1.5% of rows arrive twice. Every injected event is written to `events.parquet`, the agent benchmark's ground truth (§17.8).
+- **Scales:** `small` 1,000 tags (~10 MB/h raw), `standard` 10,000, `large` 100,000 (30 days each), `xlarge` 1,000,000 (7 days).
+- **A run** loads history in bulk (an hour of arrivals per commit) with queries after 1 and 7 days, then the last day live (a 5-minute window per commit, paced, probed), queries at `ingested`, maintenance, queries at `maintained`, then concurrent dashboards. Queries are relative to the data's present (`@AGO(15 minutes)`), so they mean the same at every checkpoint.
+- **Correct answers:** a `reference` system keeps every arrival and reads it with duplicates removed; every other system's answer (row count and per-column sums) is checked against it. Systems that keep duplicates or miss late rows show as wrong next to their speed.
+- **Systems:** Timelake (dedup on), TimescaleDB (unique index, `ON CONFLICT DO NOTHING`), ClickHouse 26.8 LTS (`ReplacingMergeTree`, read with `FINAL`), QuestDB 10.0 (WAL tables with `DEDUP UPSERT KEYS`, loaded over QWP), InfluxDB 3 Core 3.12 (line protocol; last write wins), naive Iceberg, Lance and plain Parquet. The servers run in Docker at pinned versions (`bench/infra/servers.sh`): first on the weekly instance, one system ingesting at a time; published comparison runs move to dedicated instances, one per database plus a client.
+- **InfluxDB 3 Core's query file limit:** by default a query reads at most 432 Parquet files, about 3 days of data. It runs twice: with the limit raised as its docs allow (`influxdb3`), and as shipped (`influxdb3-defaults`), so the results show both.
+- **Later:** the same workload against the vendors' managed clouds (ClickHouse Cloud, InfluxDB's and QuestDB's managed offerings), measured in us-east-2 at their own prices (decided 2026-10-15).
 
 
 ### 17.7 Public benchmarks (reviewed 2026-10-15)

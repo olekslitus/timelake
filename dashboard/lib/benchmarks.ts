@@ -54,7 +54,11 @@ export type PhaseRecord = {
   usd?: number
   /** Keeping the tables a month at the store's list prices. */
   storage_usd_month?: number
+  /** Per stage of a staged stream (bulk history, then a live day). */
+  stages?: Record<string, StageRecord>
 }
+
+export type StageRecord = { rows: number; commits: number; seconds: number; commit_ms_p50?: number }
 
 /** Fresh readers probing a system while it ingests. */
 export type LiveRecord = {
@@ -96,6 +100,8 @@ export type QueryRecord = {
   server_ms?: Times
   /** The first run's requests at the store's list prices. */
   usd?: number
+  /** Whether the answer matched the reference system's (absent when the run had none). */
+  correct?: boolean
 }
 
 export type Run = {
@@ -117,6 +123,7 @@ export const WORKLOADS = [
     ],
   },
   { id: "tsbs-devops", suites: [{ id: "tsbs_devops", label: "TSBS DevOps (15 queries)" }] },
+  { id: "iiot", suites: [{ id: "iiot", label: "Industrial IoT (11 queries)" }] },
 ] as const
 
 export type Workload = (typeof WORKLOADS)[number]
@@ -132,6 +139,10 @@ const ENGINES: Record<string, string> = {
   "parquet+duckdb": "Parquet files + DuckDB",
   "parquet+datafusion": "Parquet files + DataFusion",
   "timescaledb+postgres": "TimescaleDB",
+  "clickhouse+clickhouse": "ClickHouse",
+  "questdb+questdb": "QuestDB",
+  "influxdb3+influxdb3": "InfluxDB 3 Core",
+  "influxdb3-defaults+influxdb3": "InfluxDB 3 Core, as shipped",
 }
 
 export const SYSTEMS: Record<string, string> = {
@@ -141,6 +152,10 @@ export const SYSTEMS: Record<string, string> = {
   lance: "Lance",
   parquet: "Parquet files",
   timescaledb: "TimescaleDB",
+  clickhouse: "ClickHouse",
+  questdb: "QuestDB",
+  influxdb3: "InfluxDB 3 Core",
+  "influxdb3-defaults": "InfluxDB 3 Core, as shipped",
 }
 
 /**
@@ -165,9 +180,17 @@ export const TARGETS: Record<string, string> = {
 }
 
 export const CHECKPOINTS: Record<string, string> = {
+  "1d": "After 1 day",
+  "7d": "After 7 days",
   ingested: "Right after ingest",
   maintained: "After maintenance",
 }
+
+/** The checkpoints a run's top-level results show (the others are on its detail page). */
+const MAIN_CHECKPOINTS = ["maintained", "ingested"]
+
+/** The system whose answers the others are checked against; it keeps the right answers and isn't ranked. */
+const REFERENCE = "reference"
 
 export const engineLabel = (engine: string) => ENGINES[engine] ?? engine
 export const targetLabel = (target: string) => TARGETS[target] ?? target
@@ -182,12 +205,15 @@ async function readRun(file: string): Promise<Run> {
     .filter((l) => l.trim())
     .map((l) => JSON.parse(l) as { kind: string } & Record<string, unknown>)
   const end = records.find((r) => r.kind === "end")
+  const header = records[0] as unknown as RunHeader
+  const readers = Object.fromEntries(Object.entries(header.readers).filter(([system]) => system !== REFERENCE))
+  const ranked = records.filter((r) => r.system !== REFERENCE)
   return {
-    header: records[0] as unknown as RunHeader,
-    phases: records.filter((r) => r.kind === "ingest" || r.kind === "maintain") as unknown as PhaseRecord[],
-    queries: records.filter((r) => r.kind === "query") as unknown as QueryRecord[],
-    live: records.filter((r) => r.kind === "live") as unknown as LiveRecord[],
-    concurrency: records.filter((r) => r.kind === "concurrency") as unknown as ConcurrencyRecord[],
+    header: { ...header, readers },
+    phases: ranked.filter((r) => r.kind === "ingest" || r.kind === "maintain") as unknown as PhaseRecord[],
+    queries: ranked.filter((r) => r.kind === "query") as unknown as QueryRecord[],
+    live: ranked.filter((r) => r.kind === "live") as unknown as LiveRecord[],
+    concurrency: ranked.filter((r) => r.kind === "concurrency") as unknown as ConcurrencyRecord[],
     finished: (end?.finished as string | undefined) ?? null,
   }
 }
@@ -222,7 +248,13 @@ export type BenchBar = {
   best: number
   requests: number | null
 }
-export type QueryRow = { query: string; times: Record<string, number | null>; rows: Record<string, number | null> }
+export type QueryRow = {
+  query: string
+  times: Record<string, number | null>
+  rows: Record<string, number | null>
+  /** Engines whose answer didn't match the reference. */
+  wrong: string[]
+}
 export type BenchPanel = { suite: string; state: string; bars: BenchBar[]; queries: number; perQuery: QueryRow[] }
 
 const engineOf = (q: QueryRecord) => `${q.system}+${q.reader}`
@@ -259,6 +291,7 @@ export function panels(run: Run, workload: Workload): BenchPanel[] {
         query: q,
         times: Object.fromEntries(engines.map((e) => [e, by.get(`${e}|${q}`)?.times[0] ?? null])),
         rows: Object.fromEntries(engines.map((e) => [e, by.get(`${e}|${q}`)?.rows ?? null])),
+        wrong: engines.filter((e) => by.get(`${e}|${q}`)?.correct === false),
       }))
       out.push({ suite: suite.id, state: label, bars, queries: common.length, perQuery })
     }
@@ -330,7 +363,15 @@ export function s3TablesDelay(run: Run): [number, number] | null {
   return s.length ? [Math.min(...s) / 3600, Math.max(...s) / 3600] : null
 }
 
-export type Rank = { key: string; label: string; system: string; value: number; timelake: boolean }
+export type Rank = {
+  key: string
+  label: string
+  system: string
+  value: number
+  timelake: boolean
+  /** Of the queries ranked, how many answers didn't match the reference. */
+  wrong?: number
+}
 export type Ranking = {
   title: string
   note: string
@@ -346,7 +387,8 @@ export type Ranking = {
  */
 export function rankings(run: Run): Ranking[] {
   const out: Ranking[] = []
-  for (const [checkpoint, label] of Object.entries(CHECKPOINTS).toReversed()) {
+  for (const checkpoint of MAIN_CHECKPOINTS) {
+    const label = CHECKPOINTS[checkpoint] ?? checkpoint
     const ok = run.queries.filter((q) => q.checkpoint === checkpoint && q.status === "ok")
     const engines = [...new Set(ok.map(engineOf))]
     if (engines.length < 2) continue
@@ -365,12 +407,15 @@ export function rankings(run: Run): Ranking[] {
           system: e.split("+", 1)[0] ?? e,
           value: gm(common.flatMap((q) => by.get(`${e}|${q}`)?.times[0] ?? [])),
           timelake: e === "timelake+timelake",
+          wrong: common.filter((q) => by.get(`${e}|${q}`)?.correct === false).length,
         }))
         .sort((a, b) => a.value - b.value),
     })
   }
   const ingest = run.phases.filter((p) => p.kind === "ingest" && p.status === "ok" && p.commit_ms_p50 != null)
-  if (run.header.variant === "bulk" && ingest.length > 1) {
+  if (ingest.some((p) => p.stages)) {
+    out.push(...stagedIngest(ingest))
+  } else if (run.header.variant === "bulk" && ingest.length > 1) {
     // A bulk load is judged by its rate: rows per second spent committing.
     out.push({
       title: "Load",
@@ -404,6 +449,44 @@ export function rankings(run: Run): Ranking[] {
     })
   }
   return out
+}
+
+/**
+ * A staged stream's ingest: the bulk history's load rate (rows per second over its stages), and the live day's median
+ * commit time.
+ */
+function stagedIngest(ingest: PhaseRecord[]): Ranking[] {
+  const row = (p: PhaseRecord, value: number): Rank => ({
+    key: p.system,
+    label: SYSTEMS[p.system] ?? p.system,
+    system: p.system,
+    value,
+    timelake: p.system === "timelake",
+  })
+  const load = ingest.map((p) => {
+    const stages = Object.entries(p.stages ?? {}).flatMap(([name, s]) => (name === "live" ? [] : [s]))
+    const seconds = stages.reduce((t, s) => t + s.seconds, 0)
+    return row(p, seconds > 0 ? stages.reduce((t, s) => t + s.rows, 0) / seconds : 0)
+  })
+  const live = ingest.flatMap((p) => {
+    const ms = p.stages?.live?.commit_ms_p50
+    return ms == null ? [] : [row(p, ms)]
+  })
+  return [
+    {
+      title: "Load",
+      note: "rows per second, history in commits of an hour of data",
+      unit: "rows/s" as const,
+      higherIsBetter: true,
+      rows: load.sort((a, b) => b.value - a.value),
+    },
+    {
+      title: "Commit",
+      note: "median time per commit of the live day",
+      unit: "milliseconds" as const,
+      rows: live.sort((a, b) => a.value - b.value),
+    },
+  ].filter((r) => r.rows.length > 1)
 }
 
 const median = (xs: number[]) => {

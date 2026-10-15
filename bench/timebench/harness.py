@@ -1,14 +1,17 @@
 """One benchmark run: a workload streamed into each system, then its queries on every reader, at each checkpoint.
 
-The checkpoints are right after ingest and after each system's maintenance. Optionally, fresh readers probe each
-system while it ingests (``live.py``), and N dashboard clients query it at once after the last checkpoint
-(``concurrency.py``). The run writes ``results/runs/<run id>.jsonl`` as it goes.
+The workload arrives in stages (by default one); a stage may end at a checkpoint, where every query runs (e.g. after
+1 and 7 days of history, then ``ingested``). Then each system runs its maintenance, and the queries run again
+(``maintained``). Optionally, fresh readers probe each system while it ingests live (``live.py``), and N dashboard
+clients query it at once after the last checkpoint (``concurrency.py``). When the run includes the ``reference``
+system, first, every answer is checked against its answer. The run writes ``results/runs/<run id>.jsonl`` as it goes.
 """
 
 from __future__ import annotations
 
 import datetime as dt
 import json
+import math
 import statistics
 import subprocess
 import time
@@ -22,7 +25,6 @@ from timebench import RUNS, meta
 from timebench.concurrency import dashboards
 from timebench.cost import phase_cost, query_cost, storage_month
 from timebench.live import Prober
-from timebench.queries import apply_dialect
 from timebench.results import (
     ConcurrencyRecord,
     EndRecord,
@@ -30,24 +32,35 @@ from timebench.results import (
     LiveRecord,
     QueryRecord,
     RunRecord,
+    StageRecord,
     append_jsonl,
     best_time,
     first_time,
 )
 from timebench.s3 import PROXY, ProxyStats
-from timebench.systems import DIALECTS, System, systems
+from timebench.systems import System, systems
 from timebench.targets import Place
 from timebench.worker import command, request_kinds
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     import pyarrow as pa
 
     from timebench.targets import Target
-    from timebench.workloads import Query, Workload
+    from timebench.workloads import Batch, Query, Stage, Workload
 
-CHECKPOINTS = ("ingested", "maintained")
+REFERENCE = "reference"
+"""The system whose answers the others' are checked against (``systems/reference.py``)."""
+
+
+@dataclass(frozen=True)
+class At:
+    """A checkpoint, and the data's present there (epoch seconds) for queries with ``@AGO``."""
+
+    checkpoint: str
+    now: int | None
 
 
 @dataclass
@@ -59,7 +72,8 @@ class RunSpec:
     systems: list[str]
     readers: list[str] | None = None
     """Only these readers (all of each system's by default)."""
-    checkpoints: tuple[str, ...] = CHECKPOINTS
+    checkpoints: tuple[str, ...] | None = None
+    """Only the query passes at these checkpoints (default: the workload's and ``maintained``; empty: none)."""
     queries: set[str] | None = None
     """Only these queries (by name)."""
     runs: int = 2
@@ -96,6 +110,15 @@ class RunSpec:
         """The readers of a system in this run."""
         return [r for r in systems()[name].readers if self.readers is None or r in self.readers]
 
+    def wants(self, checkpoint: str) -> bool:
+        """Whether the queries run at a checkpoint."""
+        return self.checkpoints is None or checkpoint in self.checkpoints
+
+    def last_checkpoint(self) -> str | None:
+        """The last checkpoint the queries run at, where the concurrency phase runs too."""
+        every = [*self.workload.checkpoints(), "maintained"]
+        return next((c for c in reversed(every) if self.wants(c)), None)
+
 
 def run(spec: RunSpec) -> Path:
     """Runs everything and returns the run file."""
@@ -108,16 +131,26 @@ def run(spec: RunSpec) -> Path:
     append_jsonl(path, header)
     print(f"run {header['id']} → {path}", flush=True)
 
-    live = list(spec.systems) if spec.reuse else ingest_all(spec, path)
     results: list[QueryRecord] = []
-    for checkpoint in spec.checkpoints:
-        if checkpoint == "maintained" and not spec.reuse:
+    now = spec.workload.stages()[-1].now  # the data's present once everything arrived
+    if spec.reuse:
+        live = list(spec.systems)
+        for checkpoint in spec.checkpoints or (*spec.workload.checkpoints(), "maintained"):
+            results += query_pass(spec, path, live, At(checkpoint, now))
+    else:
+        live = [s for s in spec.systems if ingest_and_query(spec, path, s, results)]
+        if spec.wants("maintained"):
             live = [s for s in live if record(path, maintain(spec.system(s)))]
-        results += query_pass(spec, path, live, checkpoint)
-    if spec.concurrency and spec.workload.dashboard_queries() and spec.checkpoints:
+            results += query_pass(spec, path, live, At("maintained", now))
+    last = spec.last_checkpoint()
+    if spec.concurrency and spec.workload.dashboard_queries() and last:
         for s in live:
+            if s == REFERENCE:
+                continue
+            reader = systems()[s].readers[0]
+            queries = [{"name": q.name, "sql": q.sql_for(reader, now)} for q in spec.workload.dashboard_queries()]
             for clients in spec.concurrency:
-                c = dashboards(spec.workload, spec.system(s), spec.checkpoints[-1], clients, spec.concurrency_seconds)
+                c = dashboards(spec.system(s), queries, last, clients, spec.concurrency_seconds)
                 append_jsonl(path, c)
                 print(concurrency_line(c), flush=True)
 
@@ -128,6 +161,10 @@ def run(spec: RunSpec) -> Path:
         "seconds": round((finished - started).total_seconds(), 1),
         "mismatches": mismatches(results),
     }
+    if wrong := [
+        f"{r['checkpoint']}/{r['query']}: {r['system']}+{r['reader']}" for r in results if r.get("correct") is False
+    ]:
+        end["wrong"] = wrong
     append_jsonl(path, end)
     for m in end["mismatches"]:
         print(f"ROW COUNT MISMATCH {m}", flush=True)
@@ -171,32 +208,81 @@ def run_header(spec: RunSpec, started: dt.datetime) -> RunRecord:
     return header
 
 
-def ingest_all(spec: RunSpec, path: Path) -> list[str]:
-    """Ingests into every system, one at a time; the systems that succeeded."""
-    ingested = []
-    for s in spec.systems:
-        done, probes = ingest(spec, spec.system(s))
-        if record(path, done):
-            ingested.append(s)
-        if probes:
-            append_jsonl(path, probes)
-            print(live_line(probes), flush=True)
-    return ingested
+def ingest_and_query(spec: RunSpec, path: Path, name: str, results: list[QueryRecord]) -> bool:
+    """Streams the workload into one system, querying it at each stage's checkpoint; whether it succeeded."""
+    system = spec.system(name)
+
+    def checkpoint(stage: Stage) -> None:
+        if stage.checkpoint and spec.wants(stage.checkpoint):
+            results.extend(query_pass(spec, path, [name], At(stage.checkpoint, stage.now), results))
+
+    done, probes = ingest(spec, system, checkpoint)
+    ok = record(path, done)
+    if probes:
+        append_jsonl(path, probes)
+        print(live_line(probes), flush=True)
+    return ok
 
 
-def query_pass(spec: RunSpec, path: Path, systems_: list[str], checkpoint: str) -> list[QueryRecord]:
-    """Every query on every reader of the systems, each in a fresh process."""
-    results = []
+def query_pass(
+    spec: RunSpec, path: Path, systems_: list[str], at: At, earlier: list[QueryRecord] | None = None
+) -> list[QueryRecord]:
+    """Every query on every reader of the systems, each in a fresh process.
+
+    Answers are checked against the reference system's at the same checkpoint, when it ran first.
+    """
+    results: list[QueryRecord] = []
     for s in systems_:
         for reader in spec.readers_of(s):
             for query in spec.workload.queries():
                 if spec.queries and query.name not in spec.queries:
                     continue
-                r = measure(spec, spec.system(s), reader, query, checkpoint)
+                r = measure(spec, spec.system(s), reader, query, at)
+                expected = reference_answer([*(earlier or []), *results], at.checkpoint, query.name)
+                if expected is not None and s != REFERENCE and r["status"] == "ok":
+                    correct = same_answer(r, expected)
+                    if correct is not None:
+                        r["correct"] = correct
                 append_jsonl(path, r)
                 results.append(r)
                 print(summary_line(r), flush=True)
     return results
+
+
+def reference_answer(results: list[QueryRecord], checkpoint: str, query: str) -> QueryRecord | None:
+    """The reference system's answer to a query at a checkpoint, if it has one."""
+    return next(
+        (
+            r
+            for r in results
+            if r["system"] == REFERENCE
+            and r["checkpoint"] == checkpoint
+            and r["query"] == query
+            and r["status"] == "ok"
+        ),
+        None,
+    )
+
+
+def same_answer(r: QueryRecord, expected: QueryRecord) -> bool | None:
+    """Whether a result matches the reference: the same row count and, per column, the same sum (within 1e-6).
+
+    None when a reader doesn't report its sums.
+    """
+    if r.get("rows") != expected.get("rows"):
+        return False
+    if not r.get("rows"):
+        return True
+    got, want = r.get("sums"), expected.get("sums")
+    if got is None or want is None:
+        return None
+    if len(got) != len(want):
+        return False
+    return all(
+        (a is None and b is None)
+        or (a is not None and b is not None and math.isclose(a, b, rel_tol=1e-6, abs_tol=1e-6))
+        for a, b in zip(got, want, strict=True)
+    )
 
 
 def record(path: Path, r: IngestRecord) -> bool:
@@ -212,62 +298,123 @@ def counted(system: System) -> bool:
     return system.target.s3 and not system.server
 
 
-def ingest(spec: RunSpec, system: System) -> tuple[IngestRecord, LiveRecord | None]:
-    """Creates the tables, loads the initial rows, then commits every arrival of the stream.
+def ingest(
+    spec: RunSpec, system: System, checkpoint: Callable[[Stage], None]
+) -> tuple[IngestRecord, LiveRecord | None]:
+    """Creates the tables, loads the initial rows, then commits every arrival of the stream, stage by stage.
 
-    With ``live_interval`` set, fresh readers probe the tables while it runs.
+    After each stage, ``checkpoint`` runs its queries (not counted as ingest time). With ``live_interval`` set,
+    fresh readers probe the tables during the live stage.
     """
     out: IngestRecord = {"kind": "ingest", "system": system.name}
     workload = spec.workload
-    prober = Prober(workload, system, spec.live_interval) if spec.live_interval and workload.live_table else None
+    writer = Writer(spec, system)
     before = PROXY.stats() if counted(system) else None
-    latencies: list[float] = []
-    rows = 0
-    start = time.perf_counter()
+    stages: dict[str, StageRecord] = {}
     try:
+        start = time.perf_counter()
         system.reset()
         for t in workload.tables:
             system.create(t, workload.schema(t.name))
         for table, data in workload.initial():
             system.append(table, data)
-        for i, arrival in enumerate(workload.stream()):
-            arrived = time.perf_counter()
-            for table, data in arrival:
-                t = time.perf_counter()
-                system.append(table, data)
-                latencies.append(time.perf_counter() - t)
-                rows += data.num_rows
-                if prober and table == workload.live_table:
-                    prober.committed(newest_second(data, workload.spec(table).time_column))
-            if i == 0 and prober:
-                # The tables exist now: readers can find them, so probing can start.
-                system.place.save_state({**system.state(), "phase": "ingesting"})
-                prober.start()
-            if i % 100 == 0:
-                print(f"  {system.name}: arrival {i}, {time.perf_counter() - start:.1f}s", flush=True)
-            if spec.pace:
-                time.sleep(max(0.0, arrived + spec.pace - time.perf_counter()))
-        seconds = time.perf_counter() - start
-        state = {**system.state(), "phase": "ingested", "ingested_at": now()}
-        system.place.save_state(state)
+        setup = time.perf_counter() - start
+        for stage in workload.stages():
+            done = writer.stage(stage)
+            system.place.save_state({**system.state(), "phase": stage.checkpoint or stage.name, "ingested_at": now()})
+            stats = system.stats()
+            done.update(
+                objects=stats["objects"],
+                bytes=stats["bytes"],
+                data_files=stats["data_files"],
+                data_bytes=stats["data_bytes"],
+            )
+            stages[stage.name] = done
+            checkpoint(stage)
+        latencies = writer.latencies
         out.update(
             status="ok",
             commits=len(latencies),
-            rows=rows,
-            seconds=round(seconds, 2),
+            rows=sum(s["rows"] for s in stages.values()),
+            seconds=round(setup + sum(s["seconds"] for s in stages.values()), 2),
             commit_seconds=round(sum(latencies), 2),
             commit_ms_p50=round(statistics.median(latencies) * 1000, 1),
             commit_ms_p95=round(float(np.percentile(latencies, 95)) * 1000, 1),
             commit_ms_max=round(max(latencies) * 1000, 1),
         )
+        if len(stages) > 1:
+            out["stages"] = stages
         out.update(storage(system))
         out.update(system.ingest_extras())
     except Exception as e:  # noqa: BLE001 (a failing system is a result; the run goes on without it)
-        out.update(status="error", error=f"{type(e).__name__}: {e}"[:300], commits=len(latencies))
-    probes = prober.finish() if prober and prober.thread.is_alive() else None
+        out.update(status="error", error=f"{type(e).__name__}: {e}"[:300], commits=len(writer.latencies))
+    probes = writer.finish_probes()
     if probes:
         out["probed"] = True
     return priced({**out, **proxy_delta(before)}, system), probes
+
+
+class Writer:
+    """Commits a system's stages: every arrival's batches, timed, and probes while the live stage arrives."""
+
+    def __init__(self, spec: RunSpec, system: System) -> None:
+        self.spec = spec
+        self.system = system
+        self.latencies: list[float] = []
+        """Seconds per commit."""
+        self.prober: Prober | None = None
+        self.probes: LiveRecord | None = None
+
+    def stage(self, stage: Stage) -> StageRecord:
+        """Commits a stage's arrivals (paced and probed if it's live), then waits until readers can see them all."""
+        start = time.perf_counter()
+        rows, commits = 0, len(self.latencies)
+        for i, arrival in enumerate(stage.arrivals):
+            arrived = time.perf_counter()
+            rows += self.commit(arrival)
+            if i == 0 and stage.live:
+                self.start_probes()
+            if i % 100 == 0:
+                print(f"  {self.system.name}: {stage.name} arrival {i}, {time.perf_counter() - start:.1f}s", flush=True)
+            if self.spec.pace and stage.live:
+                time.sleep(max(0.0, arrived + self.spec.pace - time.perf_counter()))
+        settle = self.system.settle()  # rows a reader can't see yet haven't finished arriving
+        seconds = time.perf_counter() - start
+        if self.prober and self.probes is None:
+            self.probes = self.prober.finish()  # before the checkpoint's queries, which would compete with them
+        done: StageRecord = {"rows": rows, "commits": len(self.latencies) - commits, "seconds": round(seconds, 2)}
+        if latencies := self.latencies[commits:]:
+            done["commit_ms_p50"] = round(statistics.median(latencies) * 1000, 1)
+        if settle:
+            done["settle_s"] = round(settle, 2)
+        return done
+
+    def commit(self, arrival: list[Batch]) -> int:
+        """Appends one arrival, a commit per table; the rows it held."""
+        workload, rows = self.spec.workload, 0
+        for table, data in arrival:
+            t = time.perf_counter()
+            self.system.append(table, data)
+            self.latencies.append(time.perf_counter() - t)
+            rows += data.num_rows
+            if self.prober and table == workload.live_table:
+                self.prober.committed(newest_second(data, workload.spec(table).time_column))
+        return rows
+
+    def start_probes(self) -> None:
+        """Starts probing, once the tables exist (after the live stage's first arrival), if the run probes."""
+        spec, system = self.spec, self.system
+        if self.prober or not (spec.live_interval and spec.workload.live_table) or system.name == REFERENCE:
+            return
+        system.place.save_state({**system.state(), "phase": "ingesting"})  # readers can find the tables now
+        self.prober = Prober(spec.workload, system, spec.live_interval)
+        self.prober.start()
+
+    def finish_probes(self) -> LiveRecord | None:
+        """What the probes saw (None if there were none); stops them if a failure left them running."""
+        if self.prober and self.probes is None and self.prober.thread.is_alive():
+            self.probes = self.prober.finish()
+        return self.probes
 
 
 def newest_second(data: pa.Table, time_column: str | None) -> int:
@@ -333,17 +480,17 @@ def proxy_delta(before: ProxyStats | None) -> IngestRecord:
     return out
 
 
-def measure(spec: RunSpec, system: System, reader: str, query: Query, checkpoint: str) -> QueryRecord:
+def measure(spec: RunSpec, system: System, reader: str, query: Query, at: At) -> QueryRecord:
     """Runs one query in a fresh process: its record, with ``status`` ok, error or timeout."""
     out: QueryRecord = {
         "kind": "query",
         "system": system.name,
         "reader": reader,
-        "checkpoint": checkpoint,
+        "checkpoint": at.checkpoint,
         "suite": query.suite,
         "query": query.name,
     }
-    sql = apply_dialect(query.sql, DIALECTS[reader])
+    sql = query.sql_for(reader, at.now)
     place = system.place
     if reader in system.commands:
         cmd = type(system).reader_command(reader, place, place.load_state(), spec.runs)

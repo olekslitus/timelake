@@ -15,8 +15,6 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from timebench.queries import apply_dialect
-from timebench.systems import DIALECTS
 from timebench.worker import command
 
 if TYPE_CHECKING:
@@ -104,10 +102,11 @@ class Prober:
         }
         started = time.time()
         commits = list(self.commits)
+        now = max((c.newest for c in commits), default=None)  # the data's present, as far as the writer got
         try:
             proc = subprocess.run(
                 command(job),
-                input=apply_dialect(query.sql, DIALECTS[self.reader]),
+                input=query.sql_for(self.reader, now),
                 capture_output=True,
                 text=True,
                 timeout=PROBE_TIMEOUT_S,

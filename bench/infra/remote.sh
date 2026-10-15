@@ -10,6 +10,7 @@
 #   remote.sh all                everything above, in order
 #   remote.sh weekly             the weekly regression run (profiles/weekly.toml), started by weekly.sh; stops the
 #                                instance when done
+#   remote.sh profile <name>     any profile (profiles/<name>.toml) the same way, e.g. iiot; stops the instance too
 #
 # Targets: local = the instance's disk (/mnt/bench: NVMe SSD if it has one, else EBS); s3 = S3 Standard; s3x = S3
 # Express One Zone (same zone as the instance). S3 traffic goes through tools/s3proxy in AWS mode, which counts
@@ -118,27 +119,29 @@ bench() {
   uv run timebench run tsbs-iot --target "$name" --systems "$systems" --ttfb-ms 0
 }
 
-# TimescaleDB for the weekly run, in a container on this instance (its data on the instance's disk). The version is
-# pinned so that changes in the history are ours; move it deliberately.
-timescaledb() {
-  docker rm -f bench-timescaledb > /dev/null 2>&1 || true
-  docker run -d --name bench-timescaledb -p 55432:5432 -e POSTGRES_PASSWORD=bench -e POSTGRES_DB=bench \
-    -v /mnt/bench/timescaledb:/var/lib/postgresql timescale/timescaledb:2.30.2-pg18 > /dev/null
-  # Over TCP: the server that initializes the database listens on the socket only, then restarts.
-  until docker exec bench-timescaledb pg_isready -q -h 127.0.0.1 -U postgres; do sleep 1; done
-  export BENCH_TIMESCALEDB_DSN=postgresql://postgres:bench@localhost:55432/bench
+# The database servers (TimescaleDB, ClickHouse, QuestDB, InfluxDB 3 Core) in containers on this instance, their data
+# on the instance's disk, at the versions servers.sh pins.
+servers() {
+  BENCH_SERVERS_DIR=/mnt/bench/servers infra/servers.sh "$1"
+  eval "$(infra/servers.sh env)"
 }
 
-weekly() {
+# A profile's local entries, then (once those files are in the bucket) its S3 entries.
+run_profile() {
   sudo shutdown -h +720  # a safety net; the instance stops itself when the run is done (below)
   build_timebench
-  timescaledb
-  uv run timebench profile weekly --target local
+  servers up
+  uv run timebench profile "$1" --target local
   sync_out  # each target's run files reach the bucket as soon as they are done
-  target s3
-  uv run timebench profile weekly --target aws-s3
-  docker rm -f bench-timescaledb > /dev/null
+  if grep -q '^target = "aws-s3"' "profiles/$1.toml"; then
+    target s3
+    uv run timebench profile "$1" --target aws-s3
+  fi
+  servers down
 }
+
+weekly() { run_profile weekly; }
+profile() { run_profile "$1"; }
 
 stage() {
   local name=$*
@@ -163,6 +166,7 @@ case ${1:-} in
     ;;
   build | data | direct) stage "$1" ;;
   weekly) stage weekly || true; sudo shutdown -h +1 ;;  # stop when done, failed or not (stage copied the logs)
+  profile) stage profile "$2" || true; sudo shutdown -h +1 ;;
   queries | bench) stage "$1" "$2" ;;
   *) sed -n '2,16p' "$SELF"; exit 2 ;;
 esac
