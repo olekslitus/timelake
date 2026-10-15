@@ -110,7 +110,7 @@ ideas we took and the projects we're studying.
   dir, or commit small ones under `tests/fixtures/`. Fixtures stay byte-exact.
 - **Test behaviour, not implementation**: query results, files on disk, errors. Avoid matching `EXPLAIN` strings or
   log text.
-- **Benchmarks are not tests.** They run by hand (`bench/`) and never in CI.
+- **Benchmarks are not tests.** They run by hand (`timelake-bench`) or in the weekly run on AWS, never in CI.
 
 ## Checks
 

@@ -22,10 +22,10 @@ import time
 
 import numpy as np
 import pyarrow.parquet as pq
-from ingest import windows  # next to this script
 
 import timelake
 from benchlib import DATA, TSBS_TIME_SERIES
+from benchlib.workloads.tsbs_iot import windows
 
 QUERIES = {
     "one-truck-latest": "SELECT time, latitude, longitude FROM readings WHERE tags_id = 1 ORDER BY time DESC LIMIT 1",

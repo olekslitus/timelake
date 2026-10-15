@@ -1,0 +1,47 @@
+# The weekly regression benchmark (SPEC §17.4): bench/profiles/weekly.toml on a fixed instance in us-east-2, at the
+# newest commit on main. The run files are committed to bench/results/runs and the website's copy, so the history
+# on timelake.dev/benchmarks grows by one point a week. Setup: bench/infra/README.md, "Weekly runs".
+name: Weekly benchmark
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write # commit the results
+  id-token: write # assume the benchmark role in AWS
+
+concurrency:
+  group: bench-weekly
+  cancel-in-progress: false
+
+jobs:
+  run:
+    name: Run and commit results
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    if: vars.BENCH_ROLE_ARN != ''
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.BENCH_ROLE_ARN }}
+          aws-region: us-east-2
+          role-duration-seconds: 21600
+      - run: bench/infra/weekly.sh "$GITHUB_SHA"
+        env:
+          STACK: timelake-bench-weekly
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: dashboard/package.json
+      - run: bun dashboard/scripts/sync-results.ts
+      - name: Commit the run files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bench/results/runs dashboard/data
+          git diff --cached --quiet && { echo "no new runs"; exit 0; }
+          git commit -m "Bench: weekly run of $(git rev-parse --short "$GITHUB_SHA")"
+          git pull --rebase origin main
+          git push origin HEAD:main

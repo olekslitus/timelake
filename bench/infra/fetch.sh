@@ -4,4 +4,5 @@ set -euo pipefail
 cd "$(dirname "$0")"
 source env.sh
 aws s3 sync "s3://$(output DataBucket)/_out/results" ../results --exclude '*' --include '*aws*'
+aws s3 sync "s3://$(output DataBucket)/_out/runs" ../results/runs
 aws s3 sync "s3://$(output DataBucket)/_out/logs" ../results/aws-logs

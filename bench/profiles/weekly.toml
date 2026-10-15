@@ -1,0 +1,16 @@
+# The weekly regression run (SPEC §17.4), on the benchmark instance in us-east-2 (bench/infra/remote.sh weekly).
+# Same workloads, scales and systems every week, so the history shows what changed between commits.
+label = "weekly"
+runs = 2
+
+[[run]]
+workload = "tsbs-iot"
+scale = "standard"
+target = "local"
+systems = ["timelake", "iceberg", "lance", "parquet", "timescaledb"]
+
+[[run]]
+workload = "tsbs-iot"
+scale = "standard"
+target = "aws-s3"
+systems = ["timelake", "iceberg", "lance", "parquet"]

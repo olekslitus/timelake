@@ -39,7 +39,7 @@ POLARS: Dialect = {
     "TS": "CAST({0} AS TIMESTAMP)",
 }
 TIMESCALEDB: Dialect = {
-    # v0/tsdb_cloud.py; the session runs with TimeZone = UTC.
+    # benchlib/systems/timescaledb.py; the session runs with TimeZone = UTC.
     "B10M": "time_bucket('10 minutes', {})",
     "B1D": "time_bucket('1 day', {})",
     "B1H": "time_bucket('1 hour', {})",

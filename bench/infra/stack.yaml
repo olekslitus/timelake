@@ -2,7 +2,9 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
   timelake-bench (SPEC 17.4): an S3 Standard bucket, an S3 Express One Zone bucket and an S3 Tables table bucket,
   plus (Instance=true) one benchmark instance in the same zone. Access via SSM only (no SSH, no inbound ports).
-  The instance stops itself after AutoStopMinutes. Delete with bench/infra/down.sh.
+  The instance stops itself after AutoStopMinutes. Delete with bench/infra/down.sh. With GitHubRepo set (the
+  weekly stack, bench/infra/weekly.sh), a role GitHub Actions of that repository's main branch can assume to start
+  the instance, run the weekly benchmark on it and read its results.
 
 Parameters:
   Instance:
@@ -36,9 +38,21 @@ Parameters:
   AutoStopMinutes:
     Type: Number
     Default: 720
+  GitHubRepo:
+    Type: String
+    Default: ""
+    Description: owner/name of the repository whose main branch may run the weekly benchmark (empty = no role).
+  GitHubOidcProviderArn:
+    Type: String
+    Default: ""
+    Description: >-
+      The account's existing OIDC provider for token.actions.githubusercontent.com, if it has one (an account can
+      have only one per URL); empty = the stack creates it.
 
 Conditions:
   WithInstance: !Equals [!Ref Instance, "true"]
+  WithGitHub: !And [!Condition WithInstance, !Not [!Equals [!Ref GitHubRepo, ""]]]
+  CreateOidcProvider: !And [!Condition WithGitHub, !Equals [!Ref GitHubOidcProviderArn, ""]]
 
 Resources:
   DataBucket:
@@ -59,7 +73,7 @@ Resources:
   TableBucket:
     Type: AWS::S3Tables::TableBucket
     Properties:
-      TableBucketName: !Sub "timelake-bench-${AWS::AccountId}"
+      TableBucketName: !Sub "${AWS::StackName}-${AWS::AccountId}"
 
   Role:
     Type: AWS::IAM::Role
@@ -131,6 +145,59 @@ Resources:
           curl -fsSL https://raw.githubusercontent.com/polythings/timelake/${RepoRef}/bench/infra/bootstrap.sh \
             | bash -s ${RepoRef} > /var/log/timelake-bootstrap.log 2>&1
 
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: CreateOidcProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList: [sts.amazonaws.com]
+
+  GitHubRole:
+    Type: AWS::IAM::Role
+    Condition: WithGitHub
+    Properties:
+      Description: Weekly benchmark from GitHub Actions (bench/infra/weekly.sh)
+      MaxSessionDuration: 21600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If [CreateOidcProvider, !Ref GitHubOidcProvider, !Ref GitHubOidcProviderArn]
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Sub "repo:${GitHubRepo}:ref:refs/heads/main"
+      Policies:
+        - PolicyName: weekly-benchmark
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: cloudformation:DescribeStacks
+                Resource: !Ref AWS::StackId
+              - Effect: Allow
+                Action: [ec2:StartInstances, ec2:StopInstances]
+                Resource: !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/${BenchInstance}"
+              - Effect: Allow
+                Action: [ec2:DescribeInstances, ec2:DescribeInstanceStatus, ssm:DescribeInstanceInformation, ssm:GetCommandInvocation]
+                Resource: "*"
+              - Effect: Allow
+                Action: ssm:SendCommand
+                Resource:
+                  - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/${BenchInstance}"
+                  - !Sub "arn:aws:ssm:${AWS::Region}::document/AWS-RunShellScript"
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !GetAtt DataBucket.Arn
+                Condition:
+                  StringLike:
+                    s3:prefix: "_out/*"
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub "${DataBucket.Arn}/_out/*"
+
 Outputs:
   InstanceId:
     Condition: WithInstance
@@ -141,3 +208,6 @@ Outputs:
     Value: !Ref ExpressBucket
   TableBucketArn:
     Value: !GetAtt TableBucket.TableBucketARN
+  GitHubRoleArn:
+    Condition: WithGitHub
+    Value: !GetAtt GitHubRole.Arn

@@ -1,72 +1,109 @@
 # timelake-bench
 
-Benchmarks for SPEC.md §17: Timelake against the engines and table formats it builds on and competes with.
+Benchmarks for SPEC.md §17: Timelake against the table formats and databases a team would otherwise use for time
+series. Results and their history are on [timelake.dev/benchmarks](https://timelake.dev/benchmarks).
 
-| Benchmark | Question | Run | Report |
-|---|---|---|---|
-| **Query suites** | How fast are DuckDB, DataFusion, Polars, Iceberg and Vortex on our data layouts, on local disk and on S3? | `run.py` (one suite × one engine), `run_aws.sh` | [`results/BASELINE.md`](results/BASELINE.md), [`OBJECT_STORAGE.md`](results/OBJECT_STORAGE.md), [`VORTEX.md`](results/VORTEX.md), [`S3.md`](results/S3.md) |
-| **v0 comparison** | The same IoT stream written into Timelake, naive Iceberg, S3 Tables and Lance: ingest, then queries before and after each system's maintenance | [`v0/README.md`](v0/README.md) | [`results/V0.md`](results/V0.md), [`S3.md`](results/S3.md) |
-| **TimescaleDB** | The same tables and queries on Tiger Cloud | `v0/tsdb_cloud.py` | [`results/TIMESCALE.md`](results/TIMESCALE.md) |
+| What | Run | Results |
+|---|---|---|
+| **`timelake-bench`**: a workload streamed into each system, then its queries before and after each system's maintenance | `uv run timelake-bench run …` | `results/runs/` (the history), `timelake-bench report` |
+| **Weekly regression run** on a fixed AWS instance | `.github/workflows/bench-weekly.yml` → `infra/weekly.sh` | `results/runs/` |
+| **Phase 0 engine comparison**: DuckDB, DataFusion, Polars, Iceberg and Vortex over static files | `run.py` | [`results/BASELINE.md`](results/BASELINE.md), [`OBJECT_STORAGE.md`](results/OBJECT_STORAGE.md), [`VORTEX.md`](results/VORTEX.md) |
+| **Any S3-compatible store**, small and without the proxy (free tiers) | `v0/small.py` | [`results/PERFORMANCE.md`](results/PERFORMANCE.md) |
 
 ## Setup
 ```bash
-uv sync                                                    # at the repo root: Python 3.13, the engines, and timelake (built from crates/timelake-py)
-(cd tools/s3proxy && go build -o ../../.bin/s3proxy .)     # request-counting S3 proxy
-(cd rust-reader && cargo build --release)                  # DataFusion 55 + Vortex reader (engines datafusion-rs*)
-GOBIN=$PWD/.bin go install github.com/timescale/tsbs/cmd/tsbs_generate_data@latest
+uv sync                                                    # at the repo root: Python, the engines, and timelake (built from crates/timelake-py)
+cargo build --release -p timelake-cli                      # the Timelake reader (target/release/timelake)
+(cd bench/tools/s3proxy && go build -o ../../.bin/s3proxy .)   # request-counting S3 proxy
+GOBIN=$PWD/bench/.bin go install github.com/timescale/tsbs/cmd/tsbs_generate_data@latest
 ```
-Run Python from anywhere in the repo with `uv run python …`; it uses the root `.venv`. The scripts share `benchlib/` (paths, S3 settings per client, query loading, result records), which `uv sync` installs. Tests: `uv run pytest bench/tests`.
+Run Python from anywhere in the repo with `uv run …`; it uses the root `.venv`. Tests: `uv run pytest bench/tests`
+(offline, on a tiny generated workload).
 
-## Data
-Generated locally into `bench/data/` (git-ignored, several GB). Same generators and seeds everywhere:
+## timelake-bench
+```bash
+uv run timelake-bench list                                         # workloads, scales, systems, readers
+uv run timelake-bench run tsbs-iot --scale small                   # every lake system on the local disk, a few minutes
+uv run timelake-bench run tsbs-iot --systems timelake,timescaledb  # with BENCH_TIMESCALEDB_DSN set
+uv run timelake-bench report latest                                # one run as Markdown
+uv run timelake-bench history --workload tsbs-iot                  # one line per run
+```
+- **Workloads** (`benchlib/workloads/`): data at a named scale, the order its rows arrive in, and the queries. The
+  data is generated on first use into `data/workloads/<workload>-<scale>/`. Now: `tsbs-iot` (SPEC §17.1) at `small`
+  (50 trucks), `standard` (500 trucks, the published runs) and `large` (5,000 trucks), streamed in 5-minute windows
+  (`--param window_minutes=…`; `--param max_windows=N` for a quick check).
+- **Systems** (`benchlib/systems/`), each written and read the way its docs suggest:
+
+  | System | Writes | Maintenance | Readers |
+  |---|---|---|---|
+  | `timelake` | `Table.append` per commit, inline compaction | `Table.maintain()` | `timelake` (the CLI), `duckdb` |
+  | `iceberg` | PyIceberg `append`, `day(time)` partitions | binpack rewrite (S3 Tables' default) | `duckdb` |
+  | `s3tables` | the same, through S3 Tables' REST endpoint (AWS only) | its managed compaction (waits up to 6 h) | `duckdb` |
+  | `lance` | `write_dataset(mode="append")` | `compact_files()`, `cleanup_old_versions()` | `duckdb`, `datafusion` |
+  | `parquet` | a Parquet file per commit under `day=…/` | one sorted file per day | `duckdb`, `datafusion` |
+  | `timescaledb` | `COPY` per commit into hypertables | convert chunks to the columnstore | `postgres` |
+
+  TimescaleDB needs `BENCH_TIMESCALEDB_DSN`, a server used only for benchmarks (each dataset gets a schema
+  `bench_<dataset>` that runs drop). A local one:
+  `docker run -d --name timelake-bench-timescaledb -p 55432:5432 -e POSTGRES_PASSWORD=bench -e POSTGRES_DB=bench timescale/timescaledb:2.30.2-pg18`,
+  then `BENCH_TIMESCALEDB_DSN=postgresql://postgres:bench@localhost:55432/bench`.
+- **Targets** (`--target`): `local` (tables under `data/lakes/`), or S3 through `tools/s3proxy` on `localhost:59100`:
+  `s3` for a local RustFS, `aws-s3` / `aws-s3x` for real buckets (`infra/`). TimescaleDB ignores the target.
+- **Adding a workload or system:** subclass `Workload` or `System` and register it in its package's `__init__.py`.
+  Queries go in `queries/<suite>/queries.sql` with the dialect placeholders of `benchlib/queries.py`.
+
+### Method
+- Each query runs in a fresh process: one first run, then `--runs` repeats (default 2). Every run fully
+  materializes the result; row counts are compared across readers, and a mismatch is recorded in the run.
+- "First run" is not cold-cache on local disk: the OS page cache stays warm (dropping it needs root on macOS). A
+  database server's buffer cache stays warm too.
+- On S3 targets every request goes through the proxy, which counts requests (by kind, in AWS mode) and bytes for
+  ingest, maintenance and each query run. With `--ttfb-ms` it adds a fixed delay per request (local stores).
+- A failing system or query is recorded and the run goes on.
+
+### Results
+`results/runs/<started>-<workload>-<scale>-<target>.jsonl`, one per run: a `run` record (commit, uncommitted changes,
+machine, versions, settings), `ingest` and `maintain` records per system, a `query` record per query and reader, and
+an `end` record. Commit the runs worth keeping: they are the history the website charts (it reads a copy in
+`dashboard/data/runs`, refreshed by `bun dashboard/scripts/sync-results.ts`). The runs before 2026-10-15 were
+converted from the v0 scripts' result files.
+
+## Local S3 (RustFS + 20 ms per request)
+```bash
+docker volume create timelake-bench-rustfs
+docker run -d --name timelake-bench-rustfs -p 59000:9000 -v timelake-bench-rustfs:/data \
+  -e RUSTFS_ACCESS_KEY=benchkey -e RUSTFS_SECRET_KEY=benchsecret123 rustfs/rustfs:latest
+.bin/s3proxy -listen :59100 -upstream localhost:59000 -admin :59101 -ttfb 20ms &
+uv run timelake-bench run tsbs-iot --scale small --target s3 --ttfb-ms 20
+docker rm -f timelake-bench-rustfs && docker volume rm timelake-bench-rustfs     # cleanup
+```
+Create the bucket `bench` first (any S3 client against `localhost:59000`).
+
+## Real AWS S3
+From this machine (`run_aws.sh`) or from an instance in the region, including the weekly run: see
+[`infra/README.md`](infra/README.md).
+
+## Phase 0 engine comparison (`run.py`)
+Query engines over the same static files, one suite × one engine:
 ```bash
 .bin/tsbs_generate_data --use-case=iot --seed=123 --scale=500 \
   --timestamp-start=2026-01-01T00:00:00Z --timestamp-end=2026-01-04T00:00:00Z \
   --log-interval=10s --format=timescaledb | uv run python scripts/tsbs_to_parquet.py data/tsbs/parquet
 uv run python scripts/to_vortex.py          # Vortex copies
 uv run python scripts/tsbs_to_iceberg.py    # Iceberg copy (PyIceberg); add "s3" to write it through the proxy
-```
-TPC-H SF10 comes from `uv run python scripts/tpch_to_parquet.py data/tpch`; the ClickBench 10% subset is downloaded as in `infra/remote.sh` (`data`).
-
-| Suite | Data | Queries |
-|---|---|---|
-| `tsbs_iot` | TSBS IoT, 500 trucks × 3 days at 10 s (11.7M readings + 11.7M diagnostics, ~10% missing points by design), seed 123 | 12 TSBS IoT queries ported to portable SQL (`queries/tsbs_iot/queries.sql`, porting rules in its header) |
-| `iot_point` | the same data | 5 single-truck queries (`queries/iot_point`) |
-| `tpch` | TPC-H SF10 as Parquet (zstd), from DuckDB `dbgen` | 22 TPC-H queries from DuckDB's `tpch` extension |
-| `clickbench` | ClickBench `hits`, 10% subset (partitions 0–9 of 100, ~10M rows) | 43 official queries, each engine's own SQL, downloaded from ClickBench at a pinned commit (`queries/README.md`) |
-
-## Engines
-- `duckdb`, `datafusion`, `polars`: the Python packages over Parquet (versions recorded in every result).
-- `duckdb-iceberg`: DuckDB over the TSBS data as Iceberg tables (PyIceberg, `day(time)` partitions, sorted by `(tags_id, time)`).
-- `duckdb-vortex`, `datafusion-rs`, `datafusion-rs-vortex`: Vortex files, and DataFusion 55 in Rust (`rust-reader/`).
-- `v0-*`: the systems of the v0 comparison (see `v0/README.md`).
-
-## Method
-- Each query runs in a fresh process: one first run, then repeats. Every run fully materializes the result as Arrow, and row counts are compared across engines.
-- "First run" is not cold-cache on local disk: the OS page cache stays warm (dropping it needs root on macOS).
-- Engines run one at a time, with default settings and all cores.
-- With `--storage s3`, all reads go through `tools/s3proxy`, which counts requests and bytes per run. It can add a fixed time-to-first-byte (`-ttfb`, for a local RustFS) or, in AWS mode (`-aws-bucket`), sign requests for a real bucket.
-
-## Runs
-**Local disk:**
-```bash
 uv run python run.py --suite tsbs_iot --engine duckdb --layout sorted --tag mytag
 ```
 
-**S3-compatible storage on this machine (RustFS + 20 ms per request):**
-```bash
-docker volume create timelake-bench-rustfs
-docker run -d --name timelake-bench-rustfs -p 59000:9000 -v timelake-bench-rustfs:/data \
-  -e RUSTFS_ACCESS_KEY=benchkey -e RUSTFS_SECRET_KEY=benchsecret123 rustfs/rustfs:latest
-.bin/s3proxy -listen :59100 -upstream localhost:59000 -admin :59101 -ttfb 20ms &
-# upload data/{tpch,clickbench,tsbs/parquet*} to s3://bench/…, then:
-uv run python run.py --suite tsbs_iot --engine duckdb --storage s3 --tag rustfs-20ms
-docker rm -f timelake-bench-rustfs && docker volume rm timelake-bench-rustfs     # cleanup
-```
+| Suite | Data | Queries |
+|---|---|---|
+| `tsbs_iot` | TSBS IoT, 500 trucks × 3 days at 10 s, seed 123 | 12 TSBS IoT queries ported to portable SQL (`queries/tsbs_iot/queries.sql`, porting rules in its header) |
+| `iot_point` | the same data | 5 single-truck queries (`queries/iot_point`) |
+| `tpch` | TPC-H SF10 as Parquet (`scripts/tpch_to_parquet.py`) | 22 TPC-H queries from DuckDB's `tpch` extension |
+| `clickbench` | ClickBench `hits`, 10% subset (as in `infra/remote.sh`, `data`) | 43 official queries, downloaded at a pinned commit (`queries/README.md`) |
 
-**Real AWS S3** (from this machine, or from an instance in the region): see [`infra/README.md`](infra/README.md).
+Engines: `duckdb`, `datafusion`, `polars` (Python packages), `duckdb-iceberg`, `duckdb-vortex`, and `datafusion-rs*`
+(DataFusion in Rust, `rust-reader/`). Results: `results/<suite>.<tag>.jsonl`.
 
-## Results
-`results/<suite>.<tag>.jsonl` holds one record per query and engine; the `.md` files are the write-ups. The website reads a copy of some of them (`dashboard/data/results`, refreshed with `bun dashboard/scripts/sync-results.ts`).
-
-The Phase 0 runners that produced `BASELINE.md`, `OBJECT_STORAGE.md` and `VORTEX.md` (`run_all.sh`, `run_s3.sh`, `run_vortex.sh`, `run_rust.sh`, `summarize.py`, `compare_storage.py`, `compare_formats.py`, `scripts/timescaledb.sh`) were removed after those runs. Recover them with `git checkout 2d66939 -- bench/`.
+The v0 scripts (`v0/ingest.py`, `run_queries.sh`, `summarize.py`, `tsdb_cloud.py`) that produced `V0.md`, `S3.md`
+and `TIMESCALE.md` were replaced by `timelake-bench` on 2026-10-15; recover them with
+`git checkout b99aae9 -- bench/`. The older Phase 0 runners: `git checkout 2d66939 -- bench/`.

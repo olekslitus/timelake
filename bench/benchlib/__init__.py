@@ -4,14 +4,19 @@ Installed (editable) into the root uv environment by ``uv sync``, so every scrip
 wherever it lives: ``from benchlib.results import geomean``.
 """
 
+import os
 from pathlib import Path
 
 BENCH = Path(__file__).resolve().parent.parent
 """The ``bench/`` directory."""
 DATA = BENCH / "data"
 """Generated datasets (git-ignored)."""
+LAKES = Path(os.environ.get("BENCH_LAKES", DATA / "lakes"))
+"""The tables and state of each system in a run (local targets), by target, dataset and system."""
 QUERIES = BENCH / "queries"
 RESULTS = BENCH / "results"
+RUNS = RESULTS / "runs"
+"""One file per ``timelake-bench`` run: the benchmark history."""
 
 TPCH_TABLES = ("lineitem", "orders", "customer", "part", "partsupp", "supplier", "nation", "region")
 TSBS_TABLES = ("tags", "readings", "diagnostics")

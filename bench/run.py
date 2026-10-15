@@ -1,7 +1,9 @@
-"""Baseline benchmark runner for Timelake (SPEC.md §17).
+"""Phase 0 engine comparison (SPEC.md §17.5): query engines over the same static Parquet, Vortex and Iceberg files.
 
-Runs a query suite on one engine. Each query runs in a fresh subprocess: one "first" run, then `--runs` repeat
-runs. Each run fully materializes the result as Arrow. Results are appended to results/<suite>[.<tag>].jsonl.
+Workloads that write tables (ingest, maintenance, then queries per system) run with ``timelake-bench`` instead
+(``benchlib/cli.py``). This runs a query suite on one engine. Each query runs in a fresh subprocess: one "first"
+run, then `--runs` repeat runs. Each run fully materializes the result as Arrow. Results are appended to
+results/<suite>[.<tag>].jsonl.
 
     python run.py --suite tpch --engine duckdb
     python run.py --suite clickbench --engine datafusion --queries 0,1,2
@@ -40,7 +42,6 @@ from benchlib.queries import (
 )
 from benchlib.results import QueryRecord, append_jsonl, best_time, first_time, utc_timestamp
 from benchlib.s3 import BUCKET, PROXY, ProxyStats
-from benchlib.v0 import Target
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -58,25 +59,8 @@ RUST_ENGINES = {
     "datafusion-rs-vortex": ["--format", "vortex"],
 }
 RUST_BIN = BENCH / "rust-reader" / "target" / "release" / "bench-reader"
-TIMELAKE_BIN = BENCH.parent / "target" / "release" / "timelake"
 
 
-@dataclass(frozen=True)
-class V0Engine:
-    """A reader of the v0 benchmark (v0/README.md): the tables one system wrote, read by one engine."""
-
-    system: str
-    dialect: Dialect
-
-
-V0_ENGINES = {
-    "v0-iceberg": V0Engine("iceberg", DUCKDB),  # DuckDB iceberg_scan over PyIceberg-appended tables
-    "v0-s3tables": V0Engine("s3tables", DUCKDB),  # the same over real S3 Tables tables (AWS)
-    "v0-lance-duckdb": V0Engine("lance", DUCKDB),  # DuckDB over Lance datasets (pyarrow dataset interface)
-    "v0-lance-df": V0Engine("lance", DATAFUSION),  # DataFusion + Lance's own scanner (FFILanceTableProvider)
-    "v0-timelake": V0Engine("timelake", DATAFUSION),  # Timelake reader (timelake CLI, DataFusion inside)
-    "v0-timelake-duckdb": V0Engine("timelake", DUCKDB),  # plain DuckDB iceberg_scan over Timelake tables
-}
 DIALECTS: dict[str, Dialect] = {
     "duckdb": DUCKDB,
     "duckdb-iceberg": DUCKDB,
@@ -84,9 +68,8 @@ DIALECTS: dict[str, Dialect] = {
     "datafusion": DATAFUSION,
     "polars": POLARS,
     **dict.fromkeys(RUST_ENGINES, DATAFUSION),
-    **{name: e.dialect for name, e in V0_ENGINES.items()},
 }
-ENGINES = ["duckdb", "duckdb-iceberg", "duckdb-vortex", "datafusion", "polars", *RUST_ENGINES, *V0_ENGINES]
+ENGINES = ["duckdb", "duckdb-iceberg", "duckdb-vortex", "datafusion", "polars", *RUST_ENGINES]
 
 
 @dataclass(frozen=True)
@@ -265,51 +248,12 @@ def setup_polars(cfg: RunConfig) -> Runner:
     return lambda sql: ctx.execute(sql, eager=True).to_arrow()
 
 
-def setup_v0(cfg: RunConfig) -> Runner:
-    """A v0 reader over the tables ``v0/ingest.py`` left."""
-    engine = V0_ENGINES[cfg.engine]
-    tables = Target.from_env(cfg.storage).load_state(engine.system)["tables"]
-    if engine.system != "lance":
-        import duckdb
-
-        con = duckdb.connect()
-        con.execute("SET TimeZone = 'UTC'")
-        con.execute("INSTALL iceberg; LOAD iceberg")
-        if cfg.s3:
-            con.execute("INSTALL httpfs; LOAD httpfs")
-            con.execute(PROXY.duckdb_secret())
-        for t in TSBS_TABLES:
-            con.execute(f"CREATE VIEW {t} AS SELECT * FROM iceberg_scan('{tables[t]}')")
-        return lambda sql: con.execute(sql).fetch_arrow_table()
-
-    import lance
-
-    options = PROXY.lance_options() if cfg.s3 else None
-    datasets = {t: lance.dataset(tables[t], storage_options=options) for t in TSBS_TABLES}
-    if cfg.engine == "v0-lance-duckdb":
-        import duckdb
-
-        con = duckdb.connect()
-        con.execute("SET TimeZone = 'UTC'")
-        for t, ds in datasets.items():
-            con.register(t, ds)
-        return lambda sql: con.execute(sql).fetch_arrow_table()
-
-    from datafusion import SessionContext
-
-    ctx = SessionContext()
-    for t, ds in datasets.items():
-        ctx.register_table(t, lance.FFILanceTableProvider(ds))
-    return lambda sql: ctx.sql(sql).to_arrow_table()
-
-
 PYTHON_ENGINES: dict[str, Callable[[RunConfig], Runner]] = {
     "duckdb": setup_duckdb,
     "duckdb-iceberg": lambda cfg: setup_duckdb(cfg, iceberg=True),
     "duckdb-vortex": lambda cfg: setup_duckdb(cfg, vortex=True),
     "datafusion": setup_datafusion,
     "polars": setup_polars,
-    **dict.fromkeys(V0_ENGINES, setup_v0),
 }
 """Engines that run in a Python worker process (the others are separate binaries)."""
 
@@ -358,25 +302,12 @@ def engine_version(engine: str) -> str:
     """The engine and its version, as recorded in results."""
     if engine in RUST_ENGINES:
         return "df55.2+vortex0.88"
-    if engine == "v0-timelake":
-        return "timelake" + importlib.import_module("timelake").__version__ + "+df54.1"
-    if engine.startswith("v0-lance"):
-        return "lance" + importlib.import_module("lance").__version__
-    if engine in V0_ENGINES:
-        return "duckdb" + importlib.import_module("duckdb").__version__
     module = "duckdb" if engine.startswith("duckdb") else engine
     return importlib.import_module(module).__version__
 
 
 def query_command(cfg: RunConfig, name: str, sql: str) -> tuple[list[str], str | None]:
     """The command that runs one query in a fresh process, and its stdin."""
-    if cfg.engine == "v0-timelake":
-        root = Target.from_env(cfg.storage).load_state("timelake")["tables"]["root"]
-        options = [x for k, v in PROXY.object_store_options().items() for x in ("-o", f"{k}={v}")] if cfg.s3 else []
-        cmd = [str(TIMELAKE_BIN), "-w", root, *options, "sql", "--namespace", "tsbs", "--bench-runs", str(cfg.runs)]
-        if cfg.s3:
-            cmd += ["--proxy-admin", str(PROXY.admin)]
-        return cmd, sql
     if cfg.engine in RUST_ENGINES:
         cmd = [str(RUST_BIN), "--suite", cfg.suite, "--runs", str(cfg.runs), "--storage", cfg.storage]
         return [*cmd, "--layout", cfg.layout, *RUST_ENGINES[cfg.engine]], sql

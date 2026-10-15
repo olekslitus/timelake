@@ -1,20 +1,72 @@
-"""Result records (``results/*.jsonl``, one JSON object per line) and the statistics the reports use."""
+"""Result records (one JSON object per line) and the statistics the reports use.
+
+A run of ``timelake-bench`` writes ``results/runs/<run id>.jsonl``: a ``run`` record first, then one ``ingest`` and
+``maintain`` record per system and one ``query`` record per query and reader, and an ``end`` record last. The older
+``results/<suite>.<tag>.jsonl`` files hold the Phase 0 and v0 runs, one query record per line without a ``kind``.
+"""
 
 from __future__ import annotations
 
 import datetime as dt
 import json
 import statistics
-from typing import TYPE_CHECKING, Any, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
     from pathlib import Path
 
 
-class QueryRecord(TypedDict, total=False):
-    """One query on one engine (``results/<suite>[.<tag>].jsonl``), written by ``run.py`` and ``v0/tsdb_cloud.py``."""
+class RunRecord(TypedDict, total=False):
+    """The first line of a run file: what ran, where, and on which commit."""
 
+    kind: Literal["run"]
+    id: str
+    workload: str
+    scale: str
+    params: dict[str, object]
+    """Workload settings beyond the scale (e.g. ``window_minutes``)."""
+    target: str
+    """Where the lake systems keep their tables: ``local``, ``s3`` (RustFS), ``aws-s3``, ``aws-s3x``, ..."""
+    storage: str
+    """``local`` or ``s3``: how the target is reached (S3 goes through ``tools/s3proxy``)."""
+    ttfb_ms: int
+    """Latency the proxy adds per request (local object stores only)."""
+    machine: str
+    commit: str
+    dirty: bool
+    """Uncommitted changes outside ``bench/results``: the run isn't exactly ``commit``."""
+    label: str
+    """``weekly`` for the regression runs; free text otherwise."""
+    started: str
+    readers: dict[str, list[str]]
+    """The systems of the run -> their readers in it."""
+    versions: dict[str, str]
+    """Package -> version, for Timelake and every system and reader."""
+    runs: int
+    """Repeat runs per query after the first run."""
+    imported: str
+    """For runs converted from the older result files: where they came from."""
+
+
+class EndRecord(TypedDict, total=False):
+    """The last line of a complete run file."""
+
+    kind: Literal["end"]
+    finished: str
+    seconds: float
+    mismatches: list[str]
+    """Queries whose row counts differ between readers (should be none)."""
+
+
+class QueryRecord(TypedDict, total=False):
+    """One query on one reader: a line of a run file (``kind`` = ``query``), or of an older result file."""
+
+    kind: Literal["query"]
+    system: str
+    reader: str
+    checkpoint: str
+    """The tables' state when the query ran: ``ingested`` or ``maintained``."""
     suite: str
     engine: str
     version: str
@@ -44,8 +96,9 @@ class QueryRecord(TypedDict, total=False):
 
 
 class IngestRecord(TypedDict, total=False):
-    """One v0 ingest or maintenance run (``results/v0_ingest*.jsonl``), written by ``v0/ingest.py``."""
+    """One system's ingest or maintenance: a line of a run file (``kind``), or of ``results/v0_ingest*.jsonl``."""
 
+    kind: Literal["ingest", "maintain"]
     system: str
     storage: str
     phase: str
@@ -66,6 +119,13 @@ class IngestRecord(TypedDict, total=False):
     target: str
     """The storage target when it differs from ``storage`` (e.g. ``s3x``, ``aws-s3``)."""
     machine: str
+    requests: int
+    """S3 requests during the phase (through the counting proxy)."""
+    kinds: dict[str, int]
+    """Those requests by kind, where the proxy reports them (AWS mode)."""
+    status: str
+    """``ok`` or ``error``; a failed system is recorded and the run goes on without it."""
+    error: str
 
 
 ENGINE_ORDER = (

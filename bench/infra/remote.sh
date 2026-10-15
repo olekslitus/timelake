@@ -5,12 +5,14 @@
 #   remote.sh data               generate the Phase 0 datasets, upload to S3, write Iceberg on S3, copy to S3 Express
 #   remote.sh queries <target>   Phase 0 suites on local | s3 | s3x  (results tag aws-<target>)
 #   remote.sh direct             plain DuckDB straight to S3 (no proxy), to measure the proxy's overhead
-#   remote.sh v0 <target>        v0 benchmark: ingest, queries, maintenance, queries
+#   remote.sh bench <target>     timelake-bench: TSBS IoT streamed into every lake system, queries before and after
+#                                maintenance (results/runs)
 #   remote.sh all                everything above, in order
+#   remote.sh weekly             the weekly regression run (profiles/weekly.toml), started by weekly.sh
 #
-# Targets: local = the instance's disk (/mnt/bench: NVMe SSD if it has one, else EBS); s3 = S3 Standard; s3x = S3 Express One Zone (same zone as the
-# instance). S3 traffic goes through tools/s3proxy in AWS mode, which counts requests by kind.
-# Logs and results are copied to s3://$BENCH_DATA_BUCKET/_out/ after every stage.
+# Targets: local = the instance's disk (/mnt/bench: NVMe SSD if it has one, else EBS); s3 = S3 Standard; s3x = S3
+# Express One Zone (same zone as the instance). S3 traffic goes through tools/s3proxy in AWS mode, which counts
+# requests by kind. Logs and results are copied to s3://$BENCH_DATA_BUCKET/_out/ after every stage.
 set -euo pipefail
 SELF=$(realpath "$0")
 source /etc/profile.d/timelake-bench.sh
@@ -18,10 +20,10 @@ export PATH=$HOME/.cargo/bin:$HOME/.local/bin:$PATH GOTOOLCHAIN=auto
 cd ~/timelake/bench
 PY="uv run python"
 LOGS=/mnt/bench/logs
-export V0_INGEST_LOG=v0_ingest.aws.jsonl
 
 sync_out() {
   aws s3 sync results "s3://$BENCH_DATA_BUCKET/_out/results" --exclude '*' --include '*aws*' --only-show-errors
+  aws s3 sync results/runs "s3://$BENCH_DATA_BUCKET/_out/runs" --only-show-errors
   aws s3 sync "$LOGS" "s3://$BENCH_DATA_BUCKET/_out/logs" --only-show-errors
 }
 
@@ -96,21 +98,35 @@ direct() {
   done
 }
 
-v0() {
+bench() {
   target "$1"
-  export V0_TAG=v0-aws-$1 TTFB_MS=0
-  local systems="iceberg lance timelake"
-  if [ "$1" = s3x ]; then
-    # Lance 13 finds the latest version from listing order, and S3 Express listings are unsorted, so it reads
-    # stale versions there (an append is invisible to a fresh reader). Not benchmarked on s3x.
-    systems="iceberg timelake"
-    export ENGINES="v0-iceberg v0-timelake v0-timelake-duckdb"
-    rm -f results/*."$V0_TAG"-*.jsonl
-  fi
-  for s in $systems; do $PY v0/ingest.py --system $s --storage "$storage" | tail -1; done
-  v0/run_queries.sh "$storage" ingested
-  for s in $systems; do $PY v0/ingest.py --system $s --storage "$storage" --maintain-only | tail -1; done
-  v0/run_queries.sh "$storage" maintained
+  local name=aws-$1 systems=timelake,iceberg,lance,parquet
+  [ "$1" = local ] && name=local
+  # Lance 13 finds the latest version from listing order, and S3 Express listings are unsorted, so it reads stale
+  # versions there (an append is invisible to a fresh reader). Not benchmarked on s3x.
+  [ "$1" = s3x ] && systems=timelake,iceberg,parquet
+  uv run timelake-bench run tsbs-iot --target "$name" --systems "$systems" --ttfb-ms 0
+}
+
+# TimescaleDB for the weekly run, in a container on this instance (its data on the instance's disk). The version is
+# pinned so that changes in the history are ours; move it deliberately.
+timescaledb() {
+  docker rm -f bench-timescaledb > /dev/null 2>&1 || true
+  docker run -d --name bench-timescaledb -p 55432:5432 -e POSTGRES_PASSWORD=bench -e POSTGRES_DB=bench \
+    -v /mnt/bench/timescaledb:/var/lib/postgresql timescale/timescaledb:2.30.2-pg18 > /dev/null
+  # Over TCP: the server that initializes the database listens on the socket only, then restarts.
+  until docker exec bench-timescaledb pg_isready -q -h 127.0.0.1 -U postgres; do sleep 1; done
+  export BENCH_TIMESCALEDB_DSN=postgresql://postgres:bench@localhost:55432/bench
+}
+
+weekly() {
+  sudo shutdown -h +360  # a safety net: weekly.sh stops the instance when the run is done
+  build
+  timescaledb
+  uv run timelake-bench profile weekly --target local
+  target s3
+  uv run timelake-bench profile weekly --target aws-s3
+  docker rm -f bench-timescaledb > /dev/null
 }
 
 stage() {
@@ -130,11 +146,11 @@ case ${1:-} in
   _run) shift; "$@" ;;
   all)
     stage build && stage data || exit 1
-    for s in "queries local" "queries s3" "queries s3x" direct "v0 local" "v0 s3" "v0 s3x"; do
+    for s in "queries local" "queries s3" "queries s3x" direct "bench local" "bench s3" "bench s3x"; do
       stage $s || true  # later stages don't depend on each other
     done
     ;;
-  build | data | direct) stage "$1" ;;
-  queries | v0) stage "$1" "$2" ;;
-  *) sed -n '2,13p' "$SELF"; exit 2 ;;
+  build | data | direct | weekly) stage "$1" ;;
+  queries | bench) stage "$1" "$2" ;;
+  *) sed -n '2,16p' "$SELF"; exit 2 ;;
 esac

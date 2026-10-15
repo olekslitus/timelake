@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from benchlib import queries
 from benchlib.queries import CLICKBENCH_COMMIT, DATAFUSION, DUCKDB, apply_dialect, clickbench_queries, raw_queries
 from benchlib.results import append_jsonl, best_time, geomean, load_ok, order_engines, read_jsonl
-from benchlib.v0 import Target
+from benchlib.targets import Place, Target
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -71,11 +71,13 @@ def test_every_tsbs_query_is_fully_translated() -> None:
 
 
 def test_s3_tables_live_in_the_bench_bucket() -> None:
-    assert Target("s3", "s3").root("timelake") == "s3://bench/v0/timelake"
+    assert Place(Target("aws-s3"), "tsbs-iot-small", "timelake").root == "s3://bench/lakes/tsbs-iot-small/timelake"
 
 
 def test_local_target_keeps_tables_on_disk() -> None:
-    assert Target("local", "local").root("lance").endswith("data/v0/local/lance/lake")
+    place = Place(Target("local"), "tsbs-iot-small", "lance")
+    assert place.root.endswith("lakes/local/tsbs-iot-small/lance/lake")
+    assert not place.target.s3
 
 
 def test_clickbench_queries_come_from_the_download_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

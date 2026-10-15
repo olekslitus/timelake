@@ -51,6 +51,9 @@ updates:
     cooldown: { default-days: 7 }
     groups:
       python: { update-types: [minor, patch] }
+    ignore:
+      # Lance's DataFusion table provider (pylance 13) is built for DataFusion 54: move them together, by hand.
+      - { dependency-name: "datafusion", update-types: [version-update:semver-major] }
 
   - package-ecosystem: bun
     directories: [/, /brand]
