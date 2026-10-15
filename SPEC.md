@@ -18,7 +18,7 @@
 | D9 | Backfill is a first-class operation: one command, final layout on write, staged on an Iceberg branch, atomic publish; existing rows win on conflict by default (§8.4) | **Accepted** |
 | D10 | `import` = contract inference + create/adopt + backfill, with smart defaults for CSV, lake formats, and databases (TimescaleDB first) (§8.5) | **Accepted** |
 | D11 | Ingestion is a library-first pipeline (ingest + rules) deployable embedded, as AWS Lambda, as a container, or at the edge (§13) | **Accepted** |
-| D12 | Open core: the lake, ingestion, caggs, import of open formats/DBs, and the DuckDB extension are open source. Industrial historian connectors are a **premium** offering (§20). | Proposed |
+| D12 | Open core: the lake, ingestion, rollups, import of open formats/DBs, and the DuckDB extension are open source. Industrial historian connectors are a **premium** offering (§20). | Proposed |
 | D13 | Timelake owns its commit layer (append, replace, row-delta, overwrite, branch commits, rewrite-manifests) on iceberg-rust's public types. Forking and maintaining our own iceberg-rust is acceptable if needed. Upstreaming is welcome but low priority. Iceberg Java, iceberg-cpp, and iceberg-go serve as **reference implementations** to learn from (never to copy) and as **conformance oracles** in tests (Phase 0 finding, `spikes/iceberg-write`) | **Accepted** |
 | D14 | Rust for the core, even where we must implement Iceberg operations ourselves. Python is the client/API layer (PyO3), not the engine. | **Accepted** |
 | D15 | `timelake-bench`: TSBS IoT as the base workload plus lake extensions, run against every alternative in §16 (§17) | **Accepted** |
@@ -28,7 +28,7 @@
 | D19 | Inline maintenance uses **size-tiered compaction** (merge ≥ N files of similar size within a partition) to keep write amplification logarithmic under micro-batches. Explicit `maintain` rewrites each partition into one sorted, deduplicated file. | **Accepted (v0)** |
 | D20 | v0 pins **DataFusion 54.1**, the newest release on Arrow 58, which iceberg-rust 0.10 requires. Revisit when iceberg-rust moves to Arrow 59+. | **Accepted (v0)** |
 | D21 | Benchmarks compare against every opponent (InfluxDB 3, TimescaleDB, ClickHouse, QuestDB, naive Iceberg, Lance), publish where Timelake is worse as well as better, and always report cost per month and behavior as data grows next to latency (§17.6). | **Accepted** |
-| D22 | Time-series functions take their names from pandas first, then Polars and DuckDB (`ffill`, `resample`, `ohlc`, `quantile`, `asof`) (§11.2) | **Accepted** |
+| D22 | Every time-series function has a descriptive name, and its pandas name as an alias where that differs (`forward_fill` / `ffill`, `value_at` / `asof`); "continuous aggregates" are called **materialized rollups** (§11) | **Accepted** |
 
 ---
 
@@ -36,7 +36,7 @@
 
 **Timelake is an open-source, serverless time-series lake built on Apache Iceberg.**
 
-Think "S3 Tables, but open source, runs on any object storage, and actually understands time series": frequent small writes, late and out-of-order data, rollups (continuous aggregates), retention, and a rich time-series function library — while every byte stays as plain Iceberg + Parquet that DuckDB, Spark, Trino, Snowflake, etc. can read directly.
+Think "S3 Tables, but open source, runs on any object storage, and actually understands time series": frequent small writes, late and out-of-order data, materialized rollups, retention, and a rich time-series function library — while every byte stays as plain Iceberg + Parquet that DuckDB, Spark, Trino, Snowflake, etc. can read directly.
 
 Primary target: **IoT / industrial telemetry.** Also supports observability metrics, financial ticks, and event streams.
 
@@ -52,7 +52,7 @@ The problem we replace: teams today run S3 Tables (or self-managed Iceberg) plus
 | R2 | Build on Apache Iceberg. Open-source alternative to S3 Tables, works on any object storage, specialized for time series (frequent writes, late-arriving data, …). |
 | R3 | Parquet as the first file format; keep the door open for Vortex once Iceberg supports it. |
 | R4 | Pluggable in-memory cache/hot layer for recent data (Valkey/Redis, DuckDB). |
-| R5 | Simple continuous aggregates (caggs) and a rich time-series function library. |
+| R5 | Simple materialized rollups and a rich time-series function library. |
 | R6 | Willing to build a custom table format *if justified* — to be decided (see §5). |
 | R7 | Easier to use and faster for time series than DuckLake, S3 Tables, Lance, etc. |
 | R8 | Support all time-series shapes; IoT is the primary target. |
@@ -85,7 +85,7 @@ The problem we replace: teams today run S3 Tables (or self-managed Iceberg) plus
 - **G3 — Serverless and cheap:** All durable state lives in object storage + an Iceberg catalog. Every Timelake component is stateless or embeddable and can run as a library, a cron/k8s job, a Lambda, or a sidecar.
 - **G4 — Fresh:** Seconds-level visibility through Timelake readers when a hot tier is enabled; minutes-level when it is not.
 - **G5 — Fast on time-series query shapes:** Faster than generic engines on the query shapes that matter (last value, range scan for a few series, bucketed aggregates), because we exploit layout, indexes, and rollups.
-- **G6 — Batteries included:** Ingestion, stream rules/alarms, caggs, a Python client, and docs with real-world recipes.
+- **G6 — Batteries included:** Ingestion, stream rules/alarms, rollups, a Python client, and docs with real-world recipes.
 
 ### Non-goals (for now)
 - An OLTP database or a general-purpose warehouse.
@@ -104,7 +104,7 @@ The problem we replace: teams today run S3 Tables (or self-managed Iceberg) plus
 | **Table format** | **Apache Iceberg** | Turns a pile of Parquet files into a *table*: schema, partitioning, snapshots (time travel), atomic commits, and file-level statistics in manifests. This is what makes DuckDB/Spark/Trino able to read our data. |
 | **Catalog** | **`timelake-catalog`** (ours, §5.2) or any Iceberg REST catalog (Lakekeeper, Polaris, Glue, S3 Tables, Nessie, …) | Maps table names to the current metadata file and makes commits atomic. Every commit and every reader goes through it. |
 | **In-memory format** | **Apache Arrow** | Columnar *in-memory* format and the lingua franca between systems. Rust, Python (PyArrow/Polars/pandas), and DuckDB can exchange Arrow data **zero-copy**. We use Arrow for every in-flight batch: ingestion buffers, WAL segments (Arrow IPC), query results, and the Python API. |
-| **Query engine (embedded)** | **Apache DataFusion** | Rust library containing a SQL parser, planner, optimizer, and vectorized executor that operates on Arrow. It is *not* a server; we embed it. We extend it with custom table providers (our pruning + hot-tier merge), UDFs/UDAFs (time-series functions), and optimizer rules (route queries to caggs). It powers compaction, cagg refresh, in-stream rules, and the Timelake reader. |
+| **Query engine (embedded)** | **Apache DataFusion** | Rust library containing a SQL parser, planner, optimizer, and vectorized executor that operates on Arrow. It is *not* a server; we embed it. We extend it with custom table providers (our pruning + hot-tier merge), UDFs/UDAFs (time-series functions), and optimizer rules (route queries to rollups). It powers compaction, rollup refresh, in-stream rules, and the Timelake reader. |
 | **Iceberg in Rust** | `iceberg-rust` (Apache) | Rust implementation of the Iceberg spec, including catalog clients and a DataFusion integration. Our base for reading and writing Iceberg metadata. |
 | **External engines** | DuckDB, Spark, Trino, Snowflake, Athena | Read our Iceberg tables directly. DuckDB is the first-class "plain SQL" path (R1, R10). |
 
@@ -122,11 +122,11 @@ Iceberg already provides the mechanisms we need to add time-series intelligence 
 
 | Extension point | What we store there | Other engines |
 |-----------------|--------------------|---------------|
-| Table properties (`timelake.*`) | Table kind (raw / cagg / events), time column, series key, dedup policy, retention, cagg definitions | Ignore |
+| Table properties (`timelake.*`) | Table kind (raw / rollup / events), time column, series key, dedup policy, retention, rollup definitions | Ignore |
 | Snapshot summary properties | Ingest watermarks (WAL offsets), changed time ranges per commit, idempotency/batch IDs | Ignore |
 | Puffin statistics files | Series→file index, per-series time ranges, "last value" index, sketches | Ignore unknown blobs (*to verify per engine*) |
 | Sort order + partition spec | `(series_key…, time_column)` sort; time + bucket partitioning | Use for pruning |
-| Sidecar Iceberg tables | Series/device metadata, caggs, events/alarms | Fully readable |
+| Sidecar Iceberg tables | Series/device metadata, rollups, events/alarms | Fully readable |
 
 ### Why not a custom format (yet)
 - **Ecosystem:** Iceberg is readable by DuckDB, Spark, Trino, Flink, Snowflake, BigQuery, Athena, and Databricks. A custom format would forfeit R1.
@@ -149,8 +149,8 @@ A catalog alone doesn't make data faster to scan: file layout, compaction, and i
 | **Commit throughput** | Queues commits per table server-side and can coalesce concurrent append-only commits into one snapshot. No retry storms from optimistic concurrency (OCC) conflicts. | Writers retry on conflict; need a single committer per table |
 | **Metadata latency** | Caches table metadata, manifests, and Puffin indexes in memory | Every reader re-fetches from object storage |
 | **Server-side scan planning** | Implements the Iceberg REST scan-planning endpoints using our series/time indexes, so any engine that delegates planning gets Timelake pruning | Engines only use min/max statistics |
-| **Maintenance triggers** | Emits commit events that drive compaction and cagg refresh as work arrives, with no polling or schedules | Cron schedules |
-| **Timelake state** | Stores hot-tier watermarks, cagg registry, retention policies, delete audit log, tenant configuration | Stored in table properties / snapshot summaries (works, but slower to query) |
+| **Maintenance triggers** | Emits commit events that drive compaction and rollup refresh as work arrives, with no polling or schedules | Cron schedules |
+| **Timelake state** | Stores hot-tier watermarks, rollup registry, retention policies, delete audit log, tenant configuration | Stored in table properties / snapshot summaries (works, but slower to query) |
 | **Security / multitenancy** | AuthN/Z, scoped credential vending (STS / presigned URLs), per-tenant quotas | Whatever the third-party catalog offers |
 
 **Design constraints (to stay true to R13):**
@@ -167,7 +167,7 @@ A catalog alone doesn't make data faster to scan: file layout, compaction, and i
 
 **Why we need an embedded engine at all.** Several Timelake components must execute queries *inside our own Rust processes*:
 - **Compaction:** k-way merge of sorted files, dedup, re-sort.
-- **Cagg refresh:** `GROUP BY time_bucket(…)` over changed ranges.
+- **Rollup refresh:** `GROUP BY time_bucket(…)` over changed ranges.
 - **Ingest transforms and rules:** SQL over streaming batches.
 - **Server-side scan planning** in the catalog.
 - **The Timelake reader** and Python library.
@@ -178,18 +178,18 @@ Writing all of that by hand would mean reimplementing a query engine.
 
 | Option | Pros | Cons |
 |--------|------|------|
-| **DataFusion** | Native Rust. Arrow-native (no conversions). Extensible at every layer: custom table providers (our pruning + hot-tier merge), optimizer rules (cagg routing), custom physical operators (sorted merge/dedup), UDAFs with state. Streaming execution with memory limits (good for compaction in small Lambdas). Integrates with `iceberg-rust`. Proven in time-series systems (InfluxDB 3, GreptimeDB). Apache governance. | Fast-moving API (major releases are frequent, so we pin versions). Comparable to DuckDB on many benchmarks, not uniformly faster. |
+| **DataFusion** | Native Rust. Arrow-native (no conversions). Extensible at every layer: custom table providers (our pruning + hot-tier merge), optimizer rules (rollup routing), custom physical operators (sorted merge/dedup), UDAFs with state. Streaming execution with memory limits (good for compaction in small Lambdas). Integrates with `iceberg-rust`. Proven in time-series systems (InfluxDB 3, GreptimeDB). Apache governance. | Fast-moving API (major releases are frequent, so we pin versions). Comparable to DuckDB on many benchmarks, not uniformly faster. |
 | **Embedded DuckDB** (`duckdb-rs`) | Excellent performance. One engine everywhere. Users already know it. | C++ dependency complicates cross-compiling for edge/ARM/Lambda. Deep customization (scan pruning, optimizer, operators) must happen through C++ extensions. Data crosses a Rust↔C++ boundary. |
 | **Polars** | Fast DataFrame engine | DataFrame-first; limited SQL planner extensibility; weak fit for custom scans and streaming SQL rules |
 | **Hand-written only** | Maximum speed for specific shapes | Reinventing a query engine |
 
 **Proposal**
-1. **DataFusion** is the internal engine for compaction, caggs, rules, the catalog planner, and the Timelake reader.
-2. **Hand-written fast paths** (directly on `arrow-rs`/`parquet`) cover the hottest query shapes where we want to beat any general engine: last value, single-series range reads, cagg point lookups.
+1. **DataFusion** is the internal engine for compaction, rollups, rules, the catalog planner, and the Timelake reader.
+2. **Hand-written fast paths** (directly on `arrow-rs`/`parquet`) cover the hottest query shapes where we want to beat any general engine: last value, single-series range reads, rollup point lookups.
 3. **The DuckDB extension is the primary user-facing SQL path.** Users keep DuckDB; we make it Timelake-aware.
 4. **One function implementation, two engines:** time-series kernels live in an engine-agnostic crate, `timelake-functions`, that operates on Arrow arrays. Thin adapters expose them as DataFusion UDFs/UDAFs and as DuckDB extension functions (Rust via the DuckDB C extension API; *verify aggregate-function coverage*).
 
-**Phase 0 spike to confirm:** Implement compaction (merge + dedup) and one cagg refresh in both DataFusion and embedded DuckDB. Compare throughput, memory, binary size, and build complexity.
+**Phase 0 spike to confirm:** Implement compaction (merge + dedup) and one rollup refresh in both DataFusion and embedded DuckDB. Compare throughput, memory, binary size, and build complexity.
 
 ---
 
@@ -206,19 +206,19 @@ Writing all of that by hand would mean reimplementing a query engine.
                       sinks (webhook,    ┌───────────┐   ┌──────────────────────┐    ┌─────────────────────┐
                       Kafka, SNS) +      │ Hot tier  │   │ Iceberg tables on    │◄───┤ timelake backfill   │
                       events table       │ (optional)│   │ object storage       │    │ branch → publish    │
-                                         │ S3 WAL /  │   │ raw / caggs / events │    │ ◄ files, DBs,       │
-                                         │ Valkey /  │   │ / series metadata    │    │   Iceberg tables    │
+                                         │ S3 WAL /  │   │ raw / rollups /      │    │ ◄ files, DBs,       │
+                                         │ Valkey /  │   │ events / metadata    │    │   Iceberg tables    │
                                          │ DuckDB/PG │   └──────────▲───────────┘    └─────────────────────┘
                                          └─────▲─────┘              │
                                                │         ┌──────────┴───────────────┐
                                                │         │ timelake-maintain (jobs) │
-                                               │         │ compaction, caggs,       │
+                                               │         │ compaction, rollups,     │
                                                │         │ retention, erasure, idx  │
                                                │         └──────────────────────────┘
          ┌─────────────────────────────────────┴─────────────────────────────────────┐
          │ Readers                                                                   │
          │  • timelake reader (Rust/Python): lake + hot-tier merge, Puffin index     │
-         │    pruning, cagg routing, TS functions                                    │
+         │    pruning, rollup routing, TS functions                                  │
          │  • DuckDB + timelake extension: the same, inside DuckDB                   │
          │  • Plain DuckDB / Spark / Trino: committed Iceberg data                   │
          └───────────────────────────────────────────────────────────────────────────┘
@@ -232,11 +232,11 @@ Writing all of that by hand would mean reimplementing a query engine.
 | `timelake-core` | library | Table conventions, writer (sorting, partitioning, file sizing), commit protocol, Puffin indexes, hot-tier trait |
 | `timelake-catalog` | library + optional service | Iceberg REST catalog with commit queueing, metadata cache, scan planning, commit events (§5.2) |
 | `timelake-functions` | library | Engine-agnostic time-series kernels on Arrow (§5.3) |
-| `timelake-query` | library | DataFusion integration: table provider, UDF adapters, cagg query rewrite, hot-tier merge, fast paths |
+| `timelake-query` | library | DataFusion integration: table provider, UDF adapters, rollup query rewrite, hot-tier merge, fast paths |
 | `timelake-ingest` | binary / container | Firehose-style ingestion with in-stream rules (§13) |
-| `timelake-maintain` | binary / job | Compaction, cagg refresh, retention, snapshot expiry. Runs as cron, k8s CronJob, Lambda, or on commit events |
+| `timelake-maintain` | binary / job | Compaction, rollup refresh, retention, snapshot expiry. Runs as cron, k8s CronJob, Lambda, or on commit events |
 | `timelake` CLI | binary | Create/adopt tables, backfill, query, inspect, erase, run maintenance |
-| `timelake` Python | PyO3 wheel | Query → Arrow / Polars / pandas; write; cagg management |
+| `timelake` Python | PyO3 wheel | Query → Arrow / Polars / pandas; write; rollup management |
 | DuckDB extension | loadable extension | Primary user-facing SQL path: Timelake-aware scans (indexes, hot tier, dedup) and the function library in DuckDB |
 
 ---
@@ -248,7 +248,7 @@ Users define their own schema. A table becomes a **Timelake table** when it meet
 
 | Element | Required? | Meaning |
 |---------|-----------|---------|
-| `time_column` | **Required**, exactly one | `timestamp` / `timestamptz` (µs; ns on Iceberg v3). Drives partitioning, retention, caggs, late-data detection. |
+| `time_column` | **Required**, exactly one | `timestamp` / `timestamptz` (µs; ns on Iceberg v3). Drives partitioning, retention, rollups, late-data detection. |
 | `series_key` | Optional (strongly recommended) | One or more columns identifying a series, e.g. `(device_id, metric)`. Drives sort order, dedup, series indexes, bucket partitioning. If absent, the table is treated as a single stream (e.g. an event log). |
 | `dedup_key` | Optional | Defaults to `series_key + time_column`. Set to none to disable dedup. |
 | `chunk_interval` | Optional | Time partition granularity. Auto-chosen from expected volume if omitted. |
@@ -327,7 +327,7 @@ Backfill means loading historical data (months to years) into a table, usually *
 - No disruption to live ingestion or queries.
 - All-or-nothing visibility.
 - Resumable.
-- Caggs correct afterwards.
+- Rollups correct afterwards.
 - No false alarms.
 
 **How it works**
@@ -341,7 +341,7 @@ Backfill means loading historical data (months to years) into a table, usually *
 5. **Publish:** Apply the branch's changes onto the current `main` in one atomic commit.
    - Live ingestion keeps committing meanwhile; append-only commits don't conflict.
    - Very large jobs can publish chunk by chunk (e.g. one month at a time) instead.
-6. **Follow-up:** The published time ranges are marked as changed, so the caggs over those ranges are refreshed in bulk, in parallel by chunk.
+6. **Follow-up:** The published time ranges are marked as changed, so the rollups over those ranges are refreshed in bulk, in parallel by chunk.
 
 **Overlap modes** (what happens when backfilled rows meet existing rows)
 
@@ -412,7 +412,7 @@ timelake import readings.csv --table iot.sensor
 | **Register in place** (Parquet already in the target layout) | No copy (Iceberg `add_files`) | Validated against the contract |
 | **Iceberg tables** (S3 Tables, Glue, any REST catalog) | `iceberg-rust` | Schema, partitioning. Two options: copy + re-layout with `import`, or **in place** with `adopt` (§7.1) |
 | Delta Lake, DuckLake, Hive-partitioned Parquet | Native or DuckDB-backed reader | Schema, partition columns |
-| **TimescaleDB** | Parallel by **hypertable chunk** (natural time-range units), consistent snapshot, binary `COPY` → Arrow | Hypertable time dimension → `time_column`; compression `segmentby` → `series_key`; `chunk_time_interval` → `chunk_interval`; retention policy → retention. Cagg definitions are **translated to Timelake caggs** where the functions map; anything unmapped is reported. |
+| **TimescaleDB** | Parallel by **hypertable chunk** (natural time-range units), consistent snapshot, binary `COPY` → Arrow | Hypertable time dimension → `time_column`; compression `segmentby` → `series_key`; `chunk_time_interval` → `chunk_interval`; retention policy → retention. Continuous aggregate definitions are **translated to Timelake rollups** where the functions map; anything unmapped is reported. |
 | PostgreSQL / MySQL / SQL Server | Parallel by time-range slices, ADBC / `COPY` | Time column from type; series key proposed |
 | InfluxDB (v1/v2 export, v3 Flight SQL) | Per measurement | Measurement → table; tags → `series_key`; fields → columns |
 | ClickHouse, QuestDB | Native protocol or HTTP/Arrow | Time and ordering key → contract |
@@ -451,7 +451,7 @@ lake.import_from("postgres://…/factory", hypertable="public.sensor_data", tabl
 
 - **Late data is normal**, not an error. It is written to its correct time partition. Each commit records the **time ranges it touched** (per partition, optionally per series bucket) in the snapshot summary.
 - **Small-file control:** Late data scattered across old partitions creates small files. The compactor prioritizes partitions by *small-file count × query heat*.
-- **Cagg invalidation:** The cagg refresher diffs snapshots since its last processed snapshot and recomputes only the affected buckets (§11). No separate change log is needed.
+- **Rollup invalidation:** The rollup refresher diffs snapshots since its last processed snapshot and recomputes only the affected buckets (§11). No separate change log is needed.
 - **Duplicates and corrections:** IoT devices resend data. Per-table policy:
   - `append` (default for raw): Duplicates are removed at compaction and at read time by the Timelake reader, using `dedup_key` and keeping the latest `_ingest_ts`.
   - `upsert`: Same as `append`, but exposed as a first-class semantic for corrections.
@@ -478,7 +478,7 @@ WITH (reason = 'sensor miscalibrated', ticket = 'OPS-123');
 - Every delete gets a `delete_id` and records actor, timestamp, predicate, reason, and affected row count.
 - These records go in the snapshot summary **and** in an append-only `_timelake_audit` Iceberg table, so audits are a SQL query.
 
-**Consistency with caggs:** A delete, undelete, or purge marks its time ranges as changed, so the affected cagg buckets are recomputed (§11). Rollups never silently include deleted data.
+**Consistency with rollups:** A delete, undelete, or purge marks its time ranges as changed, so the affected rollup buckets are recomputed (§11). Rollups never silently include deleted data.
 
 **Corrections vs. deletes:** Bad values usually need *correcting* rather than deleting. An `upsert` writes the corrected row, and dedup keeps the latest `_ingest_ts`. The original stays in older snapshots, so history is preserved without a delete.
 
@@ -507,7 +507,7 @@ A logical delete hides data but is not erasure: the bytes still exist in the ori
 | Location | Action |
 |----------|--------|
 | Raw tables, events table | Rewrite files; expire snapshots; delete orphans |
-| Caggs | Recompute affected buckets; delete per-subject rollup rows (aggregates across many subjects are generally not personal data) |
+| Rollups | Recompute affected buckets; delete per-subject rollup rows (aggregates across many subjects are generally not personal data) |
 | Hot tier | Delete/rewrite WAL segments; evict Valkey/DB keys |
 | Puffin indexes, bloom filters, sketches | Rebuild for rewritten files |
 | Catalog and reader caches | Invalidate; local caches have a bounded TTL |
@@ -535,8 +535,8 @@ A logical delete hides data but is not erasure: the bytes still exist in the ori
 | Task | What it does |
 |------|-------------|
 | Compaction | Merges small files, re-sorts by `(series_key…, time_column)`, applies dedup, coarsens partitions for old data |
-| Cagg refresh | Incremental, snapshot-diff based (§11) |
-| Retention | Per-table TTL (e.g. raw 90 d, 1-min cagg 2 y, 1-h cagg forever). Drops whole partitions (metadata-only when aligned) |
+| Rollup refresh | Incremental, snapshot-diff based (§11) |
+| Retention | Per-table TTL (e.g. raw 90 d, 1-min rollup 2 y, 1-h rollup forever). Drops whole partitions (metadata-only when aligned) |
 | Snapshot expiry and orphan cleanup | Keeps metadata small and storage costs down |
 | Manifest rewrite | Clusters manifests by time so planning stays fast as tables grow |
 | Index build | Writes Puffin blobs (series index, last-value index, sketches) |
@@ -545,12 +545,14 @@ These tasks can be triggered by a schedule, by commit events (catalog events, S3
 
 ---
 
-## 11. Continuous aggregates and the function library (R5)
+## 11. Materialized rollups and the function library (R5)
 
-### 11.1 Continuous aggregates (caggs)
+### 11.1 Materialized rollups
+A materialized rollup is a table of aggregates per time bucket (for example, per device per minute) that Timelake
+keeps up to date as data lands, so dashboards read a small table instead of the raw data.
 - Defined declaratively in SQL:
   ```sql
-  CREATE CONTINUOUS AGGREGATE sensor_1m AS
+  CREATE MATERIALIZED ROLLUP sensor_1m AS
   SELECT device_id, metric,
          time_bucket('1 minute', ts) AS bucket,
          avg(value), min(value), max(value),
@@ -560,30 +562,30 @@ These tasks can be triggered by a schedule, by commit events (catalog events, S3
   GROUP BY 1, 2, 3
   WITH (refresh_lag = '2 minutes', retention = '2 years');
   ```
-- **Every cagg is itself an Iceberg table**, so DuckDB and others can query rollups directly.
+- **Every rollup is itself an Iceberg table**, so DuckDB and others can query rollups directly.
 - **Incremental refresh:** Only buckets touched since the last refresh are recomputed (from snapshot diffs). This handles late data correctly.
-- **Hierarchical caggs:** 1 min → 1 h → 1 d, each built from the previous level.
+- **Hierarchical rollups:** 1 min → 1 h → 1 d, each built from the previous level.
 - **Real-time aggregation (Timelake reader):** Combines materialized buckets with on-the-fly aggregation of the not-yet-materialized tail and hot-tier data.
-- **Automatic query routing:** The Timelake reader rewrites `GROUP BY time_bucket(...)` queries to use the best matching cagg.
+- **Automatic query routing:** The Timelake reader rewrites `GROUP BY time_bucket(...)` queries to use the best matching rollup.
 - **Mergeable state:** Aggregates that can't be re-merged from final values (percentiles, time-weighted averages) store intermediate **state** (sketches, partial sums).
 
 ### 11.2 Function library
-Names come from pandas first, then Polars and DuckDB, because that's what people who work with data already know
-(D22). A new function takes the pandas name when pandas has one.
+Every function has a plain, descriptive name. Where pandas uses a different name, that name works too, as an alias:
+`forward_fill` and `ffill` are the same function (D22). Polars mostly uses the descriptive names, so they match it.
 
-| Category | Functions |
+| Category | Functions (pandas alias in brackets, where it differs) |
 |----------|-----------|
-| Bucketing | `time_bucket` (with origin, offset, timezone, months), `resample` (buckets, including empty ones) |
-| Gap filling | `ffill`, `bfill`, `interpolate` (linear or by time) |
-| Selection | `first`, `last`, `asof` (the latest value at or before a time), ASOF JOIN |
-| Statistics | `mean`, `std`, `var`, `skew`, `kurt`, `corr`, `cov`, `regr_slope`, `regr_intercept`, `regr_r2`, `histogram` |
+| Bucketing | `time_bucket` (with origin, offset, timezone, months); `time_buckets`, every bucket in a range, including empty ones, to join against (`date_range`) |
+| Gap filling | `forward_fill` (`ffill`), `backward_fill` (`bfill`), `interpolate` (linear or by time) |
+| Selection | `first`, `last`, `value_at`, the latest value at or before a time (`asof`); ASOF JOIN |
+| Statistics | `mean`, `stddev` (`std`), `variance` (`var`), `skewness` (`skew`), `kurtosis` (`kurt`), `corr`, `covariance` (`cov`), `regr_slope`, `regr_intercept`, `regr_r2`, `histogram` |
 | Quantiles | `quantile`, `approx_quantile` (mergeable sketch state, so it rolls up across buckets) |
-| Changes | `diff`, `pct_change`, `rate` (per second); `counter_diff` and `counter_rate` also handle counter resets |
-| Time-weighted | `time_weighted_mean` (`ffill` or `linear`), `integral`. **Critical for IoT** because sampling is irregular |
+| Changes | `diff`, `percent_change` (`pct_change`), `rate` (per second); `counter_diff` and `counter_rate` also handle counter resets |
+| Time-weighted | `time_weighted_mean` (`forward_fill` or `linear`), `integral`. **Critical for IoT** because sampling is irregular |
 | States and uptime | `state_duration` (time spent in each state), `uptime`, `gaps` (silences longer than a threshold) |
 | Finance | `ohlc` (open, high, low, close; volume is a `sum`) |
-| Downsampling for charts | `lttb`, `minmax` per pixel |
-| Rolling and anomalies | `rolling_mean`, `rolling_std`, `zscore`, flatline (stuck sensor) detection |
+| Downsampling for charts | `downsample` (`lttb`, or `minmax` per pixel) |
+| Rolling and anomalies | `rolling_mean`, `rolling_std` (`rolling(…).mean()`), `zscore`, flatline (stuck sensor) detection |
 
 **Availability by engine:**
 - **Timelake reader (DataFusion):** Full library as Rust UDFs/UDAFs.
@@ -608,7 +610,7 @@ This path sees committed data only, and does not get hot-tier merge, dedup-on-re
 We don't try to beat DuckDB as a general engine. We win by using knowledge a generic engine doesn't have:
 1. **Series-level pruning** from Puffin indexes, which goes beyond min/max statistics: open only the files and row groups containing the requested series.
 2. **Last-value index:** "Current state of every device" without scanning.
-3. **Automatic cagg routing.**
+3. **Automatic rollup routing.**
 4. **Sort-order awareness:** No re-sorting for per-series windows and ASOF joins.
 5. **Hot-tier merge** for instant freshness.
 6. **I/O tuned for object storage:** Coalesced range reads, parallel GETs, and a metadata and footer cache (in memory or on local disk).
@@ -679,7 +681,7 @@ Documented patterns with trade-offs and examples:
 | Namespace per tenant | Catalog-level ACLs | Low | Tens to thousands of tenants |
 | Warehouse/bucket per tenant | IAM + per-tenant KMS keys | Higher | Regulated / enterprise tenants |
 
-Plus examples for credential vending via the REST catalog, per-tenant retention and caggs, and per-tenant ingestion quotas.
+Plus examples for credential vending via the REST catalog, per-tenant retention and rollups, and per-tenant ingestion quotas.
 
 **Planned setup guides, one per object store:** AWS S3 (and S3 Express One Zone), Cloudflare R2, Tigris, Wasabi, Backblaze B2, Azure Blob, Google Cloud Storage, and self-hosted RustFS. Each covers the bucket, credentials, endpoint and region settings, conditional-write support, and the cost to expect.
 
@@ -715,7 +717,7 @@ This section compares products. What we learned from them, and how we credit it,
 | Frequent small writes | Weak (per-commit metadata cost) | Moderate | Good | **Strong** (LSM) | **Strong** (inlining in catalog DB) | Moderate | Strong *with* hot tier / batched commits |
 | Upserts / dedup | Merge-on-read deletes | MERGE, deletion vectors | Native | Native (merge engines) | Yes | Yes | Dedup by `dedup_key` (§9.1) |
 | Time-series aware layout / compaction | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
-| Rollups (caggs) | ✗ | ✗ | ✗ | Aggregation merge engine (on write) | ✗ | ✗ | ✓ incremental, late-data aware |
+| Materialized rollups | ✗ | ✗ | ✗ | Aggregation merge engine (on write) | ✗ | ✗ | ✓ incremental, late-data aware |
 | Needs extra infrastructure | Catalog | Optional catalog | Spark/Flink jobs | Flink/Spark jobs | SQL database | ✗ | Catalog (ours or any); hot store optional |
 
 ### 16.2 Managed catalogs and maintenance services
@@ -726,7 +728,7 @@ This section compares products. What we learned from them, and how we credit it,
 | Storage | AWS only | R2 only | Any | Any | Any |
 | Compaction | Generic, automatic (billed) | Generic, automatic | Generic: compaction, dedup, sort | ✗ | **Time-series aware**, tiered partitions |
 | Snapshot expiry / cleanup | ✓ | ✓ | ✓ | ✗ | ✓ |
-| Late data, caggs, retention by time, GDPR erasure, backfill, ingestion rules | ✗ | ✗ | ✗ | ✗ | ✓ |
+| Late data, rollups, retention by time, GDPR erasure, backfill, ingestion rules | ✗ | ✗ | ✗ | ✗ | ✓ |
 | Runs serverless / scale to zero | Managed | Managed | ✗ (resident server) | Server | ✓ |
 
 **Also watch:** RustFS 1.0 (Apache-2.0, Rust, GA 2026-09) is an S3-compatible object store that ships an **Iceberg REST catalog / S3 Tables-style API**. It's a likely integration target (storage + catalog in one binary) and a potential competitor for the "open-source S3 Tables" position.
@@ -780,9 +782,9 @@ TSBS assumes a database. A lake also has to be judged on these, borrowing ideas 
 |---|---|
 | **Streaming ingest** in small batches (1 s / 10 s / 60 s) | Throughput; **freshness** (write → visible to a query); files and metadata created per hour |
 | **Bulk load / backfill** of 1 year | Time, cost, final file count, behavior under concurrent live ingest |
-| **Late data** at 1% / 10% / 30%, up to 30 days late | Query correctness, small-file growth, cagg correctness after refresh |
+| **Late data** at 1% / 10% / 30%, up to 30 days late | Query correctness, small-file growth, rollup correctness after refresh |
 | **Maintenance** | Compaction time/cost; query speed before vs. after; snapshot/metadata size over 30 days of commits |
-| **Rollups** | Cagg refresh cost; TSBS daily queries answered from caggs vs. raw |
+| **Rollups** | Rollup refresh cost; TSBS daily queries answered from rollups vs. raw |
 | **Deletes** | Logical delete (device + range) latency; GDPR purge time and bytes rewritten |
 | **Extra query shapes** | Time-weighted average with irregular sampling; gap-filled `time_bucket`; ASOF join of two series; raw range read for 1 / 100 series over 1 h / 1 d / 30 d |
 | **Storage** | Bytes on disk per raw row (compression), object count |
@@ -877,7 +879,7 @@ TSBS models a truck fleet at ~10 s per device. Industrial plants look different,
 | Q3 | Should plain-DuckDB readers ever see duplicates or uncompacted late data? | Accept briefly; the DuckDB extension removes them; aggressive compaction of recent partitions |
 | Q4 | Materialize a hidden `_series_id` column or keep it index-only? | Decide after benchmarks |
 | Q5 | Default hot tier: object-store WAL (B) or Valkey (C)? | **Profile both** (latency, cost per GB, ops burden) before choosing |
-| Q6 | Where does the cagg definition live: table properties, or the catalog? | Catalog when `timelake-catalog` is used, mirrored into table properties for portability |
+| Q6 | Where does the rollup definition live: table properties, or the catalog? | Catalog when `timelake-catalog` is used, mirrored into table properties for portability |
 | Q7 | ~~How mature is `iceberg-rust` for writes?~~ | **Answered (spike 1), and the v0 commit layer is implemented on its public types (D13):** append + read are solid and DuckDB-compatible on v2 and v3. Replace, row-delta, delete writers, branch commits, manifest merging, and file cleanup are missing and not extensible from outside the crate. → D13. Details: `spikes/iceberg-write/README.md` |
 | Q8 | Vortex: when Iceberg adds pluggable file formats, how do we migrate (compaction rewrites to Vortex)? | Keep a file-format abstraction in `timelake-core` from day one. **Measured (2026-10-11, `bench/results/VORTEX.md`), via DuckDB and via DataFusion + `vortex-datafusion` (Rust):**
 - Local disk: Vortex is 20–45% faster, and 2.4–4× faster on single-device queries.
@@ -925,7 +927,7 @@ TSBS models a truck fleet at ~10 s per device. Industrial plants look different,
 | Interfaces | `timelake` CLI (create, append/import Parquet+CSV, sql, latest, maintain, info, duckdb) and a Python package (PyO3): `Lake`, `create_table`, `append`, `sql`, `latest`, `maintain` with Arrow in and out. |
 | Benchmark | Same ingest stream (TSBS IoT, 5-minute micro-batches) into naive Iceberg (PyIceberg appends, the S3 Tables write pattern), Iceberg after binpack compaction (S3 Tables' default maintenance), Lance (append, then compacted), and Timelake. Then TSBS IoT + single-device queries, local and on RustFS with 20 ms latency. |
 
-**Out of scope (v0):** REST catalog server, hot tier / WAL, caggs, deletes/GDPR, backfill branches, TimescaleDB import, `timelake-ingest` service and rules, DuckDB extension, Vortex, schema evolution beyond add-column.
+**Out of scope (v0):** REST catalog server, hot tier / WAL, rollups, deletes/GDPR, backfill branches, TimescaleDB import, `timelake-ingest` service and rules, DuckDB extension, Vortex, schema evolution beyond add-column.
 
 **Exit criteria:** On RustFS + 20 ms, Timelake's reader beats naive Iceberg + DuckDB and Lance on the TSBS IoT and single-device suites (geomean, first run), latest-value queries take tens of milliseconds, plain DuckDB reads every Timelake table with identical results, and no maintenance job outside Timelake is needed.
 
@@ -956,7 +958,7 @@ Open from v0:
 | 0 | This spec. `timelake-bench` skeleton: TSBS IoT generator → Parquet, adapters for DuckDB+Iceberg and TimescaleDB as first baselines. Spikes: ✅ `iceberg-rust` write maturity (Q7); `replace` + deletion-vector commits via our own commit layer (D13); DataFusion vs. embedded DuckDB (Q12); Lakekeeper evaluation (Q2); Iceberg v3 engine-support survey (Q1). Benchmark harness. |
 | 1 | `timelake-core` writer (contract, sorting, partitioning, batching, commits); `timelake-catalog` (object-store backend, REST spec); CLI create/adopt/query; **import** (CSV, Parquet, Iceberg/S3 Tables) and **backfill** (plan, final-layout write, branch staging, publish, resume); DuckDB reads committed tables |
 | 2 | `timelake-maintain`: compaction, re-sort, dedup, retention, snapshot expiry, triggered by catalog events. Immutable deletes + audit table; GDPR erasure workflow. **TimescaleDB/Postgres import** with `--sync` cutover. Snowflake connection (F5, §21.5), first through metadata-file registration, then through the REST catalog. |
-| 3 | Caggs (incremental, hierarchical) + `timelake-functions` core (`time_bucket`, `resample`, `ffill`, `time_weighted_mean`, `counter_diff`, quantiles) |
+| 3 | Rollups (incremental, hierarchical) + `timelake-functions` core (`time_bucket`, `time_buckets`, `forward_fill`, `time_weighted_mean`, `counter_diff`, quantiles) |
 | 4 | DuckDB extension (functions, dedup-on-read, index-aware scans) |
 | 5 | Hot tier (profile WAL vs. Valkey; ship both behind `HotStore`) + Timelake reader with merge, Puffin indexes, fast paths |
 | 6 | `timelake-ingest` with MQTT/HTTP/Kafka and the rule engine + events table; data → events with pluggable sinks and commit-driven triggers (F3, §21.3); edge gateway (F7) and device sync (F6) |
@@ -991,7 +993,7 @@ Open from v0:
 | P4 | **Done.** **Two-step commit.** Upload data, manifest, index and manifest list in parallel (all are known locally), then make the one conditional write. Update the hint asynchronously. | Commit p50 483 ms → 243 ms measured (whole v0 ingest 1,307 s → 795 s) |
 | P5 | **Local disk cache across processes** for metadata, footers and recent data (§12.2 item 6). | Repeat queries at best-run speed |
 | P6 | **Optional staleness bound** (e.g. "at most 1 s old") to skip the per-query version check, and the head pointer on S3 Express where available. | Warm `last-loc` 68 ms → a few ms |
-| P7 | **Caggs (§11.1).** TSBS daily queries read hourly or daily rollups instead of raw data. | Likely 10–100× on bandwidth-bound dashboard queries |
+| P7 | **Rollups (§11.1).** TSBS daily queries read hourly or daily rollups instead of raw data. | Likely 10–100× on bandwidth-bound dashboard queries |
 | P8 | **Scan tuning:** late materialization (`pushdown_filters`, now off), Q4's hidden `_series_id`, fewer and larger parallel range reads. | Less data decoded and fetched on selective scans |
 
 **How we measure:** the same v0 suites through `tools/s3proxy` (request counts by kind) on local disk, S3 from a laptop, and S3 in-region. Each step lands only if it improves first-run latency or requests without slowing other queries, and plain DuckDB still reads every table.
@@ -1052,7 +1054,7 @@ Open from v0:
 |-------------|----------------------|
 | Table conventions, writer, catalog, maintenance jobs | Industrial historian connectors (AVEVA PI, Ignition, PHD, IP.21), OPC-UA at scale |
 | Ingestion pipeline + built-in rules | Managed/hosted control plane, UI, alert management |
-| Caggs + function library, DuckDB extension, Python library | Enterprise SSO/RBAC, compliance reporting (GDPR erasure certificates as a service) |
+| Rollups + function library, DuckDB extension, Python library | Enterprise SSO/RBAC, compliance reporting (GDPR erasure certificates as a service) |
 | Import: CSV, Parquet, Iceberg/S3 Tables, Delta, TimescaleDB/Postgres, InfluxDB | Support / SLAs |
 
 The principle: everything needed to run the lake well is open; integrations with proprietary industrial systems and managed operations are premium. The open-source part is Apache 2.0 (D7); premium components would live outside this repository.
@@ -1068,8 +1070,8 @@ New product features beyond the original requirements, recorded on 2026-10-13. N
 | F1 | Read access for LLM agents, with permission sets built in | R19 | Reader, multitenancy (§14) | 8 |
 | F2 | Static read models in the bucket, generated from the frontend's Zod schemas and refreshed on ingest | R20 | `@timelake/client`, snapshot diffs (§11.1) | 8 |
 | F3 | Data → events: produce any event type into any event stream | R21 | Rules (§13.3) | 6 |
-| F4 | Computed metrics: user-defined Python functions applied automatically, like rollups | R22 | Caggs (§11.1), Python package | Later |
-| F5 | Snowflake connection: query Timelake tables from Snowflake in place | R23 | REST catalog (§5.2), caggs (§11.1) | 2 |
+| F4 | Computed metrics: user-defined Python functions applied automatically, like rollups | R22 | Rollups (§11.1), Python package | Later |
+| F5 | Snowflake connection: query Timelake tables from Snowflake in place | R23 | REST catalog (§5.2), rollups (§11.1) | 2 |
 | F6 | Device sync: devices write locally, Timelake moves the data to the lake | R24 | Local tables, idempotent batches, F7 | 6 |
 | F7 | Edge gateway: local endpoints for data, metrics, logs and blobs, plus a local cache | R25 | Ingest (§13), reader | 6 |
 | F8 | Server mode: Timelake as a database on local disk, the bucket as the durable copy (experiment first) | R26 | Reader, hot tier (§8), F7 | Experiment after §17.6 |
@@ -1089,10 +1091,10 @@ LLM agents should be able to find, understand and read time-series data without 
 
 Dashboards almost always ask the same thing: one device or asset, a recent time range, a few fields at a fixed resolution. F2 answers those requests with one object GET from the bucket or a CDN instead of planning a query.
 
-- **Defined from the frontend:** a read model is declared next to the component that renders it, with the Zod schema of the shape it needs (`@timelake/client` already uses Zod) plus its query: source table or cagg, series key (device/asset), fields, aggregates and resolutions. A build step exports the definition (Zod → JSON Schema) to `_timelake/read-models/<name>.json`, so the lake knows what to precompute and the frontend gets typed results.
+- **Defined from the frontend:** a read model is declared next to the component that renders it, with the Zod schema of the shape it needs (`@timelake/client` already uses Zod) plus its query: source table or rollup, series key (device/asset), fields, aggregates and resolutions. A build step exports the definition (Zod → JSON Schema) to `_timelake/read-models/<name>.json`, so the lake knows what to precompute and the frontend gets typed results.
 - **Time tiles:** results are stored like map tiles: per series, per resolution level, per fixed tile (for example 1-minute buckets in day tiles, 1-hour buckets in month tiles) at deterministic paths such as `read-models/<name>/<series>/<resolution>/<tile>.arrow`. Any time range is a few tiles. Closed tiles never change, so they cache forever; only the open (current) tile and tiles hit by late data are rewritten.
-- **Invalidation and regeneration on ingest:** each commit knows which series and time partitions it touched (the same snapshot diff that drives incremental caggs). Only the affected tiles are regenerated, by the writer inline or by a commit-triggered job. A small per-model manifest records the snapshot each tile reflects, so readers and caches never mix versions.
-- **Cost guardrails:** regeneration is debounced per model (at most once per N seconds) and can be limited to "hot" series, because each refresh is a PUT. Tiles are built from caggs where a matching cagg exists.
+- **Invalidation and regeneration on ingest:** each commit knows which series and time partitions it touched (the same snapshot diff that drives incremental rollups). Only the affected tiles are regenerated, by the writer inline or by a commit-triggered job. A small per-model manifest records the snapshot each tile reflects, so readers and caches never mix versions.
+- **Cost guardrails:** regeneration is debounced per model (at most once per N seconds) and can be limited to "hot" series, because each refresh is a PUT. Tiles are built from rollups where a matching rollup exists.
 - **Browser path:** `timelake-wasm` / `@timelake/client` fetch tiles by path, stitch them, and fall back to a normal query when a model doesn't cover the request.
 
 ### 21.3 F3: Data → events (R21)
@@ -1106,7 +1108,7 @@ Turn incoming data into events and publish them into whatever event system the u
 
 ### 21.4 F4: Computed metrics (R22, later)
 
-Let users define a Python function and the result it produces, for example a computed metric, and have Timelake keep that result up to date automatically, the way caggs keep rollups up to date.
+Let users define a Python function and the result it produces, for example a computed metric, and have Timelake keep that result up to date automatically, the way materialized rollups stay up to date.
 
 - **Definition:** the function, its inputs (tables, series selection, window) and its output table with a normal contract. Sketch:
   ```python
@@ -1114,7 +1116,7 @@ Let users define a Python function and the result it produces, for example a com
              output="iot.pump_efficiency", window="1m", series="pump_id")
   def efficiency(flow: pl.DataFrame, power: pl.DataFrame) -> pl.DataFrame: ...
   ```
-- **Incremental like caggs:** on each commit, compute which output windows are affected (snapshot diff), pass the inputs as Arrow (zero-copy into Polars or pandas), and replace those windows in the output table. Late data recomputes the affected windows the same way it does for caggs.
+- **Incremental like rollups:** on each commit, compute which output windows are affected (snapshot diff), pass the inputs as Arrow (zero-copy into Polars or pandas), and replace those windows in the output table. Late data recomputes the affected windows the same way it does for rollups.
 - **Contract for functions:** deterministic and per-window by default, so any window can be recomputed. State carried across windows is opt-in.
 - **Where it runs:** in the writer's process (Python bindings), in a scheduled `timelake maintain` run, or in a Lambda. There is still no server. A hosted version needs sandboxing.
 - **Composes:** computed metrics are ordinary tables, so they can feed read models (F2) and events (F3). SQL and Rust functions can follow on the same mechanism.
@@ -1124,7 +1126,7 @@ Let users define a Python function and the result it produces, for example a com
 Pitch: **an optimized time-series store for your Snowflake.** Many data teams, including large oil and gas operators, already land historian and sensor data in Snowflake. Timelake lets them keep that data in their own bucket, laid out for time series, and query it from Snowflake with no copy and no Snowpipe.
 
 - **What the user gets:** Snowflake sees Timelake tables as Iceberg tables. Data never moves into Snowflake storage, so there is no ingest pipeline into Snowflake, no Snowflake storage bill for raw telemetry, and the same tables still serve DuckDB, Spark, dashboards and agents.
-- **Why it is faster and cheaper than plain Iceberg in Snowflake:** Snowflake prunes Iceberg files on manifest column stats. Timelake files are sorted by (series, time), compacted, and time-partitioned, so a query for one asset or a recent window touches few files and burns fewer credits. Rollups (caggs) are Iceberg tables too, so dashboards in Snowflake can read the 1-minute or 1-hour table instead of raw data.
+- **Why it is faster and cheaper than plain Iceberg in Snowflake:** Snowflake prunes Iceberg files on manifest column stats. Timelake files are sorted by (series, time), compacted, and time-partitioned, so a query for one asset or a recent window touches few files and burns fewer credits. Rollups are Iceberg tables too, so dashboards in Snowflake can read the 1-minute or 1-hour table instead of raw data.
 - **Two ways to connect:**
   - **Through the REST catalog (preferred):** Snowflake attaches the Timelake catalog through a catalog integration, discovers tables, and picks up new snapshots automatically. Depends on `timelake-catalog` (§5.2).
   - **Without a catalog server:** each table is registered in Snowflake from its metadata file in object storage, and Timelake refreshes the registration after commits (or on a schedule). Works with today's v0 layout (D17), at the cost of a refresh step.
