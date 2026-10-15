@@ -148,11 +148,11 @@ mod tests {
     #[test]
     fn values_a_column_cannot_hold_match_nothing() {
         // B3: 1.5 used to become 0 and 2^32 + 1 wrapped to 1.
-        assert!(times(json!({ "series": { "tag": [1.5] } })).is_empty());
-        assert!(times(json!({ "series": { "tag": [4_294_967_297_i64] } })).is_empty());
-        assert!(times(json!({ "series": { "tag": [-2_147_483_649_i64] } })).is_empty());
-        assert!(times(json!({ "series": { "tag": ["x"] } })).is_empty());
-        assert!(times(json!({ "series": { "tag": [null] } })).is_empty());
+        assert_eq!(times(json!({ "series": { "tag": [1.5] } })), Vec::<i64>::new());
+        assert_eq!(times(json!({ "series": { "tag": [4_294_967_297_i64] } })), Vec::<i64>::new());
+        assert_eq!(times(json!({ "series": { "tag": [-2_147_483_649_i64] } })), Vec::<i64>::new());
+        assert_eq!(times(json!({ "series": { "tag": ["x"] } })), Vec::<i64>::new());
+        assert_eq!(times(json!({ "series": { "tag": [null] } })), Vec::<i64>::new());
         // Exact conversions still match.
         assert_eq!(times(json!({ "series": { "tag": [2.0] } })), [30]);
         assert_eq!(times(json!({ "series": { "tag": ["2"] } })), [30]);

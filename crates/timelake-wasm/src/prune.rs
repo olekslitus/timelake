@@ -126,7 +126,7 @@ mod tests {
         assert_eq!(planned(&files, &spec(json!({ "series": { "tag": [7] } }))), ["b"]);
         assert_eq!(planned(&files, &spec(json!({ "series": { "tag": [2, 7] } }))), ["a", "b"]);
         assert_eq!(planned(&files, &spec(json!({ "series": { "tag": [] } }))), ["a", "b"]);
-        assert!(planned(&files, &spec(json!({ "series": { "tag": [10] } }))).is_empty());
+        assert_eq!(planned(&files, &spec(json!({ "series": { "tag": [10] } }))), Vec::<String>::new());
         // Fractional values compare numerically; strings don't compare with ints, so keep the file.
         assert_eq!(planned(&files, &spec(json!({ "series": { "tag": [5.5] } }))), Vec::<String>::new());
         assert_eq!(planned(&files, &spec(json!({ "series": { "tag": ["x"] } }))), ["a", "b"]);
