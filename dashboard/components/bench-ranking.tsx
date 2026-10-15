@@ -1,12 +1,9 @@
 import type { Ranking } from "@/lib/benchmarks"
-import { formatSeconds } from "@/lib/format"
+import { formatTime, timeUnit } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
 /** Results within 5% of the fastest get no multiplier. */
 const SAME_AS_FASTEST = 1.05
-
-const format = (value: number, unit: Ranking["unit"]) =>
-  unit === "seconds" ? formatSeconds(value) : `${Math.round(value)} ms`
 
 /**
  * One ranked list: each system's value right after its name, then a bar from zero with the multiplier to the
@@ -15,6 +12,9 @@ const format = (value: number, unit: Ranking["unit"]) =>
 export function BenchRanking({ ranking }: { ranking: Ranking }) {
   const fastest = ranking.rows[0]?.value ?? 0
   const slowest = Math.max(...ranking.rows.map((r) => r.value))
+  // One unit for the whole list; commit times are recorded in milliseconds.
+  const seconds = ranking.rows.map((r) => (ranking.unit === "seconds" ? r.value : r.value / 1000))
+  const unit = timeUnit(seconds)
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-baseline gap-x-2">
@@ -39,7 +39,7 @@ export function BenchRanking({ ranking }: { ranking: Ranking }) {
                   r.timelake ? "font-medium" : "text-muted-foreground",
                 )}
               >
-                {format(r.value, ranking.unit)}
+                {formatTime(seconds[i] ?? 0, unit)}
               </span>
               <span className="flex min-w-0 items-center gap-2">
                 <span

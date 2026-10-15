@@ -10,7 +10,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import type { BenchBar, BenchPanel } from "@/lib/benchmarks"
-import { formatNumber, formatSeconds } from "@/lib/format"
+import { formatNumber, formatTime, timeUnit, type TimeUnit } from "@/lib/format"
 
 const config = { first: { label: "First run", color: "var(--chart-2)" } } satisfies ChartConfig
 
@@ -18,11 +18,11 @@ const config = { first: { label: "First run", color: "var(--chart-2)" } } satisf
 const SAME_AS_FASTEST = 1.05
 
 function BarTooltip({ active, payload }: TooltipContentProps) {
-  const bar = active ? (payload[0]?.payload as BenchBar | undefined) : undefined
+  const bar = active ? (payload[0]?.payload as (BenchBar & { unit: TimeUnit }) | undefined) : undefined
   if (!bar) return null
   const rows: [string, string][] = [
-    ["first run", formatSeconds(bar.first)],
-    ["best repeat", formatSeconds(bar.best)],
+    ["first run", formatTime(bar.first, bar.unit)],
+    ["best repeat", formatTime(bar.best, bar.unit)],
   ]
   if (bar.requests != null) rows.push(["requests", formatNumber(Math.round(bar.requests))])
   return <ChartTooltipCard title={bar.label} rows={rows} />
@@ -30,11 +30,14 @@ function BarTooltip({ active, payload }: TooltipContentProps) {
 
 function PanelChart({ panel }: { panel: BenchPanel }) {
   const fastest = Math.min(...panel.bars.map((b) => b.first))
+  // One unit for the chart, so values compare at a glance.
+  const unit = timeUnit(panel.bars.flatMap((b) => [b.first, b.best]))
   const data = [...panel.bars]
     .sort((a, b) => a.first - b.first)
     .map((b) => ({
       ...b,
-      tag: `${formatSeconds(b.first)}${b.first > fastest * SAME_AS_FASTEST ? ` · ${(b.first / fastest).toFixed(1)}×` : ""}`,
+      unit,
+      tag: `${formatTime(b.first, unit)}${b.first > fastest * SAME_AS_FASTEST ? ` · ${(b.first / fastest).toFixed(1)}×` : ""}`,
     }))
   const engines = panel.bars.map((b) => b.engine)
   return (
@@ -75,19 +78,23 @@ function PanelChart({ panel }: { panel: BenchPanel }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {panel.perQuery.map((q) => (
-                  <TableRow key={q.query}>
-                    <TableCell className="font-mono">{q.query}</TableCell>
-                    {engines.map((e) => {
-                      const time = q.times[e]
-                      return (
-                        <TableCell key={e} className="text-right font-mono tabular-nums">
-                          {time == null ? "—" : formatSeconds(time)}
-                        </TableCell>
-                      )
-                    })}
-                  </TableRow>
-                ))}
+                {panel.perQuery.map((q) => {
+                  // One unit per query: its row compares the engines.
+                  const rowUnit = timeUnit(Object.values(q.times).filter((t) => t != null))
+                  return (
+                    <TableRow key={q.query}>
+                      <TableCell className="font-mono">{q.query}</TableCell>
+                      {engines.map((e) => {
+                        const time = q.times[e]
+                        return (
+                          <TableCell key={e} className="text-right font-mono tabular-nums">
+                            {time == null ? "—" : formatTime(time, rowUnit)}
+                          </TableCell>
+                        )
+                      })}
+                    </TableRow>
+                  )
+                })}
               </TableBody>
             </Table>
           </CollapsibleContent>

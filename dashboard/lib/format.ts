@@ -27,6 +27,20 @@ export function formatSeconds(s: number): string {
   return s < 0.1 ? `${(s * 1000).toFixed(0)} ms` : `${s.toFixed(2)} s`
 }
 
+export type TimeUnit = "ms" | "s"
+
+/** One unit for a set of times shown together: milliseconds when all are under a second. */
+export function timeUnit(seconds: number[]): TimeUnit {
+  return Math.max(...seconds) < 1 ? "ms" : "s"
+}
+
+/** Seconds in a given unit: "48 ms", "0.4 ms" or "1.25 s". */
+export function formatTime(s: number, unit: TimeUnit): string {
+  if (unit === "s") return `${s.toFixed(2)} s`
+  const ms = s * 1000
+  return `${ms < 10 ? ms.toFixed(1).replace(/\.0$/, "") : Math.round(ms)} ms`
+}
+
 /** Epoch milliseconds as "2026-01-03 12:00:00" in UTC, or to the minute. */
 export function formatUtc(ms: number, precision: "seconds" | "minutes" = "seconds"): string {
   return new Date(ms)
