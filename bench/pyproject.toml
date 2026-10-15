@@ -21,7 +21,7 @@ dependencies = [
 # The scripts stay plain files (python run.py, python v0/ingest.py, ...); the code they share is the
 # `benchlib` package next to them, installed editable by `uv sync`.
 [build-system]
-requires = ["uv_build>=0.9,<0.13"]
+requires = ["uv_build>=0.12.23,<0.13"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]
