@@ -42,7 +42,7 @@ Everything is generated: edit `marks.mjs` and run `bun brand/marks.mjs` (marks) 
 
 ## Color
 
-Instrument-panel look (inspired by Oxide): near-black panels with hairline borders, mono labels, ASCII illustrations, and **one accent**.
+Instrument-panel look: near-black panels with hairline borders, mono labels, ASCII illustrations, and **one accent**.
 
 | Token | Dark | Light |
 |---|---|---|

@@ -28,6 +28,7 @@
 | D19 | Inline maintenance uses **size-tiered compaction** (merge ≥ N files of similar size within a partition) to keep write amplification logarithmic under micro-batches. Explicit `maintain` rewrites each partition into one sorted, deduplicated file. | **Accepted (v0)** |
 | D20 | v0 pins **DataFusion 54.1**, the newest release on Arrow 58, which iceberg-rust 0.10 requires. Revisit when iceberg-rust moves to Arrow 59+. | **Accepted (v0)** |
 | D21 | Benchmarks compare against every opponent (InfluxDB 3, TimescaleDB, ClickHouse, QuestDB, naive Iceberg, Lance), publish where Timelake is worse as well as better, and always report cost per month and behavior as data grows next to latency (§17.6). | **Accepted** |
+| D22 | Time-series functions take their names from pandas first, then Polars and DuckDB (`ffill`, `resample`, `ohlc`, `quantile`, `asof`) (§11.2) | **Accepted** |
 
 ---
 
@@ -553,7 +554,7 @@ These tasks can be triggered by a schedule, by commit events (catalog events, S3
   SELECT device_id, metric,
          time_bucket('1 minute', ts) AS bucket,
          avg(value), min(value), max(value),
-         time_weight('linear', ts, value) AS tw,
+         time_weighted_mean(ts, value, 'linear') AS twa,
          count(*)
   FROM iot.sensor
   GROUP BY 1, 2, 3
@@ -567,20 +568,22 @@ These tasks can be triggered by a schedule, by commit events (catalog events, S3
 - **Mergeable state:** Aggregates that can't be re-merged from final values (percentiles, time-weighted averages) store intermediate **state** (sketches, partial sums).
 
 ### 11.2 Function library
+Names come from pandas first, then Polars and DuckDB, because that's what people who work with data already know
+(D22). A new function takes the pandas name when pandas has one.
+
 | Category | Functions |
 |----------|-----------|
-| Bucketing | `time_bucket` (with origin, offset, timezone, months), `time_bucket_gapfill` |
-| Gap filling | `locf`, `interpolate`, `gapfill` |
-| Selection | `first`, `last`, `last_value_before`, ASOF JOIN |
-| Statistics | `stats_agg` (mean, stddev, regression…), `histogram` |
-| Percentiles | `approx_percentile` (t-digest / UDDSketch), `percentile_agg` |
-| Counters | `counter_agg`: `rate`, `delta`, `irate`, reset handling |
-| Gauges | `gauge_agg` |
-| Time-weighted | `time_weight` (LOCF / linear), `average`, `integral`. **Critical for IoT** because sampling is irregular |
-| State / uptime | `state_agg`, `heartbeat_agg` (uptime, downtime, gaps), `duration_in` |
-| Finance | `candlestick_agg` (OHLC + volume) |
-| Downsampling for viz | `lttb`, `asap_smooth`, `min_max` per pixel |
-| Anomaly helpers | rolling z-score, rate-of-change, flatline/stuck detection |
+| Bucketing | `time_bucket` (with origin, offset, timezone, months), `resample` (buckets, including empty ones) |
+| Gap filling | `ffill`, `bfill`, `interpolate` (linear or by time) |
+| Selection | `first`, `last`, `asof` (the latest value at or before a time), ASOF JOIN |
+| Statistics | `mean`, `std`, `var`, `skew`, `kurt`, `corr`, `cov`, `regr_slope`, `regr_intercept`, `regr_r2`, `histogram` |
+| Quantiles | `quantile`, `approx_quantile` (mergeable sketch state, so it rolls up across buckets) |
+| Changes | `diff`, `pct_change`, `rate` (per second); `counter_diff` and `counter_rate` also handle counter resets |
+| Time-weighted | `time_weighted_mean` (`ffill` or `linear`), `integral`. **Critical for IoT** because sampling is irregular |
+| States and uptime | `state_duration` (time spent in each state), `uptime`, `gaps` (silences longer than a threshold) |
+| Finance | `ohlc` (open, high, low, close; volume is a `sum`) |
+| Downsampling for charts | `lttb`, `minmax` per pixel |
+| Rolling and anomalies | `rolling_mean`, `rolling_std`, `zscore`, flatline (stuck sensor) detection |
 
 **Availability by engine:**
 - **Timelake reader (DataFusion):** Full library as Rust UDFs/UDAFs.
@@ -617,7 +620,7 @@ lake = tl.connect("s3://bucket/warehouse", catalog="rest://…")
 tbl = lake.table("iot.sensor")
 df = tbl.query(series={"site": "plant-3", "metric": "temp"},
                start="-24h", bucket="5m", agg=["avg", "max"]).to_polars()
-lake.sql("SELECT … time_weight(…) …").to_arrow()   # full SQL via DataFusion
+lake.sql("SELECT … time_weighted_mean(…) …").to_arrow()   # full SQL via DataFusion
 tbl.to_duckdb()                                     # hand off an Arrow stream to DuckDB zero-copy
 ```
 
@@ -680,7 +683,7 @@ Plus examples for credential vending via the REST catalog, per-tenant retention 
 
 **Planned setup guides, one per object store:** AWS S3 (and S3 Express One Zone), Cloudflare R2, Tigris, Wasabi, Backblaze B2, Azure Blob, Google Cloud Storage, and self-hosted RustFS. Each covers the bucket, credentials, endpoint and region settings, conditional-write support, and the cost to expect.
 
-**Other planned doc recipes:** factory sensor monitoring, fleet/GPS tracking, energy metering (counters → `counter_agg`), building management, observability metrics, crypto/stock ticks, migrating from S3 Tables + Glue, and migrating from TimescaleDB/InfluxDB.
+**Other planned doc recipes:** factory sensor monitoring, fleet/GPS tracking, energy metering (counters → `counter_diff`), building management, observability metrics, crypto/stock ticks, migrating from S3 Tables + Glue, and migrating from TimescaleDB/InfluxDB.
 
 ---
 
@@ -762,10 +765,10 @@ We adopt the **TSBS IoT use case** (Timescale's Time Series Benchmark Suite) rat
 | `last-loc` | Last value per series |
 | `low-fuel`, `high-load` | Latest-state filter across the fleet |
 | `stationary-trucks` | Recent-window aggregate per series |
-| `long-driving-sessions`, `long-daily-sessions` | Session/state analysis over a window (≈ `state_agg`) |
+| `long-driving-sessions`, `long-daily-sessions` | Session/state analysis over a window (≈ `state_duration`) |
 | `avg-vs-projected-fuel-consumption`, `avg-load` | Group-by aggregate over tags |
 | `avg-daily-driving-duration`, `avg-daily-driving-session` | Daily bucketing + sessions |
-| `daily-activity` | Uptime/downtime per day (≈ `heartbeat_agg`) |
+| `daily-activity` | Uptime/downtime per day (≈ `uptime`) |
 | `breakdown-frequency` | Event detection over history |
 
 **Data generation:** Use the TSBS generator (`tsbs_generate_data --use-case=iot`), then convert it once to Parquet as the common input for every system. This keeps results comparable with published TSBS numbers.
@@ -953,7 +956,7 @@ Open from v0:
 | 0 | This spec. `timelake-bench` skeleton: TSBS IoT generator → Parquet, adapters for DuckDB+Iceberg and TimescaleDB as first baselines. Spikes: ✅ `iceberg-rust` write maturity (Q7); `replace` + deletion-vector commits via our own commit layer (D13); DataFusion vs. embedded DuckDB (Q12); Lakekeeper evaluation (Q2); Iceberg v3 engine-support survey (Q1). Benchmark harness. |
 | 1 | `timelake-core` writer (contract, sorting, partitioning, batching, commits); `timelake-catalog` (object-store backend, REST spec); CLI create/adopt/query; **import** (CSV, Parquet, Iceberg/S3 Tables) and **backfill** (plan, final-layout write, branch staging, publish, resume); DuckDB reads committed tables |
 | 2 | `timelake-maintain`: compaction, re-sort, dedup, retention, snapshot expiry, triggered by catalog events. Immutable deletes + audit table; GDPR erasure workflow. **TimescaleDB/Postgres import** with `--sync` cutover. Snowflake connection (F5, §21.5), first through metadata-file registration, then through the REST catalog. |
-| 3 | Caggs (incremental, hierarchical) + `timelake-functions` core (`time_bucket`, gapfill, locf, `time_weight`, `counter_agg`, percentiles) |
+| 3 | Caggs (incremental, hierarchical) + `timelake-functions` core (`time_bucket`, `resample`, `ffill`, `time_weighted_mean`, `counter_diff`, quantiles) |
 | 4 | DuckDB extension (functions, dedup-on-read, index-aware scans) |
 | 5 | Hot tier (profile WAL vs. Valkey; ship both behind `HotStore`) + Timelake reader with merge, Puffin indexes, fast paths |
 | 6 | `timelake-ingest` with MQTT/HTTP/Kafka and the rule engine + events table; data → events with pluggable sinks and commit-driven triggers (F3, §21.3); edge gateway (F7) and device sync (F6) |
