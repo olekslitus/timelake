@@ -16,7 +16,7 @@ import pyarrow.parquet as pq
 
 from timebench.meta import version
 from timebench.s3 import BUCKET, PROXY
-from timebench.systems import Runner, System, duckdb_connection, duckdb_runner
+from timebench.systems import Runner, System, arrow_result, duckdb_connection, duckdb_runner
 
 if TYPE_CHECKING:
     from timebench.targets import Place
@@ -67,11 +67,14 @@ class ParquetFiles(System):
             self.write(f"{self.dir(table)}/day={day_name(int(day))}/{uuid.uuid4().hex}.parquet", part)
 
     def write(self, path: str, data: pa.Table) -> None:
-        """Writes one file."""
+        """Writes one file, atomically: readers listing the directory never see it half-written."""
         fs = self.fs
-        if not self.target.s3:
-            fs.create_dir(path.rsplit("/", 1)[0], recursive=True)
-        pq.write_table(data, path, filesystem=fs, compression="zstd")
+        if self.target.s3:
+            pq.write_table(data, path, filesystem=fs, compression="zstd")  # a PUT is atomic
+            return
+        fs.create_dir(path.rsplit("/", 1)[0], recursive=True)
+        pq.write_table(data, f"{path}.tmp", filesystem=fs, compression="zstd")  # readers list *.parquet only
+        fs.move(f"{path}.tmp", path)
 
     @override
     def maintain(self) -> None:
@@ -129,7 +132,7 @@ class ParquetFiles(System):
         for t, location in state["tables"].items():
             days = [("day", "string")] if state["specs"][t]["time_column"] else []
             ctx.register_parquet(t, f"{location}/", table_partition_cols=days)
-        return lambda sql: ctx.sql(sql).to_arrow_table().num_rows
+        return lambda sql: arrow_result(ctx.sql(sql).to_arrow_table())
 
 
 def day_name(day: int) -> str:

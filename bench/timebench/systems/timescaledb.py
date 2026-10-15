@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, LiteralString, cast, override
 import pyarrow as pa
 import pyarrow.csv as pacsv
 
-from timebench.systems import Runner, System
+from timebench.systems import Result, Runner, System
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -173,5 +173,10 @@ class TimescaleDB(System):
     @classmethod
     def open_reader(cls, reader: str, place: Place, state: dict[str, Any]) -> Runner:
         conn = connect(state["schema"])
-        # The query text comes from queries/, so it is trusted SQL.
-        return lambda sql: len(conn.execute(cast("LiteralString", sql)).fetchall())
+
+        def run(sql: str) -> Result:
+            # The query text comes from queries/, so it is trusted SQL.
+            rows = conn.execute(cast("LiteralString", sql)).fetchall()
+            return Result(len(rows), rows[0][0] if rows and rows[0] else None)
+
+        return run

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import statistics
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any, cast
 
 from timebench import RUNS
-from timebench.results import QueryRecord, best_time, first_time, geomean, read_jsonl
+from timebench.cost import phase_cost, query_cost, storage_month
+from timebench.results import IngestRecord, QueryRecord, best_time, first_time, geomean, read_jsonl
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -23,6 +25,8 @@ class Run:
         self.ingest = [r for r in records if r.get("kind") == "ingest"]
         self.maintain = [r for r in records if r.get("kind") == "maintain"]
         self.queries = [cast("QueryRecord", r) for r in records if r.get("kind") == "query"]
+        self.live = [r for r in records if r.get("kind") == "live"]
+        self.concurrency = [r for r in records if r.get("kind") == "concurrency"]
 
     @property
     def id(self) -> str:
@@ -111,6 +115,7 @@ def markdown(run: Run) -> str:
                 "",
                 "Failed: " + ", ".join(f"{q['system']}+{q['reader']} {q['query']} ({q['status']})" for q in failed),
             ]
+    lines += live_section(run) + concurrency_section(run) + cost_section(run)
     if run.end and run.end.get("mismatches"):
         lines += ["", "Row counts differ: " + "; ".join(run.end["mismatches"])]
     return "\n".join(lines) + "\n"
@@ -134,3 +139,91 @@ def cell(record: dict[str, Any], key: str) -> str:
     """A table cell: the value, or nothing when it's missing or null."""
     value = record.get(key)
     return "" if value is None else str(value)
+
+
+def live_section(run: Run) -> list[str]:
+    """Probes during ingest: how far behind fresh readers were, and the dashboard queries' latency."""
+    if not run.live:
+        return []
+    lines = [
+        "",
+        "## While ingesting",
+        "",
+        "Fresh readers every few seconds during ingest. Behind: probes that missed a finished commit.",
+        "",
+        "| System | Rounds | Behind | Lag p50 | Lag max | Dashboard query p50 | Errors |",
+        "|---|--:|--:|--:|--:|--:|--:|",
+    ]
+    for r in run.live:
+        lags = r["lag_s"] or [0.0]
+        times = [t for ts in r["queries"].values() for t in ts]
+        p50 = f"{statistics.median(times):.3f} s" if times else ""
+        behind = sum(1 for x in r["lag_s"] if x > 0)
+        lines.append(
+            f"| {r['system']} | {r['rounds']} | {behind}/{len(r['lag_s'])} | {statistics.median(lags):.2f} s | "
+            f"{max(lags):.2f} s | {p50} | {len(r['errors'])} |"
+        )
+    return lines
+
+
+def concurrency_section(run: Run) -> list[str]:
+    """Concurrent dashboards: throughput and latency by client count."""
+    if not run.concurrency:
+        return []
+    lines = [
+        "",
+        "## Concurrent dashboards",
+        "",
+        "| System | Clients | Queries/s | p50 | p95 | p99 | Errors |",
+        "|---|--:|--:|--:|--:|--:|--:|",
+    ]
+    lines += [
+        f"| {r['system']}+{r['reader']} | {r['clients']} | {r['qps']} | {cell(r, 'p50_s')} | {cell(r, 'p95_s')} | "
+        f"{cell(r, 'p99_s')} | {r['errors']} |"
+        for r in run.concurrency
+    ]
+    return lines
+
+
+def cost_section(run: Run) -> list[str]:
+    """Dollars at the target's list prices: ingest and storage per system, and queries per engine."""
+    target = run.header["target"]
+    span = run.header.get("params", {}).get("span_days") or 3
+    month = 30 / span
+
+    def money(x: float | None, digits: int = 2) -> str:
+        return "" if x is None else f"${x:.{digits}f}"
+
+    rows = []
+    for r in run.ingest:
+        ingest = r.get("usd", phase_cost(cast("IngestRecord", r), target))
+        maintained = next((m for m in run.maintain if m["system"] == r["system"]), r)
+        stored = maintained.get("storage_usd_month", storage_month(maintained.get("bytes", 0), target))
+        if ingest is None and stored is None:
+            continue
+        per_month = None if ingest is None else ingest * month
+        rows.append(f"| {r['system']} | {money(ingest)} | {money(per_month)} | {money(stored, 4)} |")
+    by_engine: dict[str, list[float]] = defaultdict(list)
+    for q in run.queries:
+        c = q.get("usd", query_cost(q, target))
+        if q["status"] == "ok" and q["checkpoint"] == "maintained" and c is not None:
+            by_engine[f"{q['system']}+{q['reader']}"].append(c)
+    if not rows and not by_engine:
+        return []
+    lines = [
+        "",
+        f"## Cost on {target}",
+        "",
+        f"Requests and storage at list prices; {span:g} days of data. Compute is not included.",
+    ]
+    if rows:
+        lines += [
+            "",
+            "| System | Ingest requests | Per month at this rate | Storage per month |",
+            "|---|--:|--:|--:|",
+            *rows,
+        ]
+    if by_engine:
+        lines += ["", "| Engine | $ per 1M queries (first run, mean) |", "|---|--:|"]
+        lines += [f"| {e} | ${statistics.mean(cs) * 1e6:.2f} |" for e, cs in sorted(by_engine.items())]
+    return lines

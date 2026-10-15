@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import time
 from typing import TYPE_CHECKING, ClassVar, override
 
 import pyarrow as pa
@@ -10,8 +11,12 @@ import pyarrow.csv as pacsv
 import pytest
 
 from timebench import harness, targets
+from timebench.cost import PRICES, phase_cost, query_cost, requests_cost, storage_month
+from timebench.live import Commit, lag
+from timebench.queries import apply_dialect
 from timebench.report import Run, markdown
 from timebench.results import QueryRecord, read_jsonl
+from timebench.systems import DIALECTS
 from timebench.systems.timescaledb import csv_chunks, pg_type
 from timebench.targets import Target
 from timebench.workloads import Batch, Query, TableSpec, Workload
@@ -34,6 +39,11 @@ class Tiny(Workload):
     namespace = "tiny"
     tables = (TableSpec("devices"), TableSpec("readings", "time", ("device",)))
     suites = ()
+    dashboard_suite = "tiny"
+    live_table = "readings"
+    span_days = 2
+    arrival_pause = 0.0
+    """Seconds between arrivals, so probes have time to run."""
 
     @override
     def prepare(self) -> None:
@@ -50,6 +60,7 @@ class Tiny(Workload):
     @override
     def stream(self) -> Iterator[list[Batch]]:
         for hour in range(48):
+            time.sleep(self.arrival_pause)
             times = [START + dt.timedelta(hours=hour, minutes=m) for m in range(60)]
             yield [
                 (
@@ -152,3 +163,58 @@ def test_csv_for_copy_round_trips() -> None:
     read = pacsv.ReadOptions(column_names=table.column_names)
     convert = pacsv.ConvertOptions(strings_can_be_null=True, quoted_strings_can_be_null=False)
     assert pacsv.read_csv(pa.py_buffer(csv), read_options=read, convert_options=convert).cast(table.schema) == table
+
+
+@pytest.mark.usefixtures("bench_dirs")
+def test_probes_during_ingest_and_concurrent_dashboards() -> None:
+    workload = Tiny()
+    workload.arrival_pause = 0.1  # about 5 s of ingest
+    spec = harness.RunSpec(
+        workload=workload,
+        target=Target("local"),
+        systems=["parquet"],
+        checkpoints=("maintained",),
+        runs=0,
+        live_interval=0.5,
+        concurrency=(1, 2),
+        concurrency_seconds=1,
+    )
+    records = read_jsonl(harness.run(spec))
+    assert records[0]["live_interval_s"] == 0.5
+    assert next(r for r in records if r["kind"] == "ingest")["probed"]
+    live = next(r for r in records if r["kind"] == "live")
+    assert live["rounds"] >= 1
+    assert live["lag_s"], live["errors"]
+    assert all(x >= 0 for x in live["lag_s"])
+    assert not live["errors"]
+    concurrency = [r for r in records if r["kind"] == "concurrency"]
+    assert [c["clients"] for c in concurrency] == [1, 2]
+    assert all(c["queries"] > 0 and c["errors"] == 0 and c["p50_s"] > 0 for c in concurrency), concurrency
+
+
+@pytest.mark.parametrize("reader", ["duckdb", "datafusion", "postgres"])
+def test_the_freshness_probe_is_fully_translated(reader: str) -> None:
+    probe = Tiny().freshness_query()
+    assert probe is not None
+    assert "@" not in apply_dialect(probe.sql, DIALECTS[reader])
+
+
+def test_lag_counts_from_the_oldest_commit_the_reader_missed() -> None:
+    commits = [Commit(10.0, 100), Commit(11.0, 200), Commit(12.0, 300), Commit(20.0, 400)]
+    assert lag(commits, 15.0, 300) == 0.0  # saw everything finished before the probe
+    assert lag(commits, 15.0, 200) == 3.0  # missed the commit that finished at 12
+    assert lag(commits, 15.0, 100) == 4.0
+    assert lag(commits, 15.0, None) == 5.0  # an empty table: missed them all
+
+
+def test_costs_at_list_prices() -> None:
+    s3 = PRICES["aws-s3"]
+    assert requests_cost({"PUT": 1000, "GET": 1000, "DELETE": 5, "HTTP 404": 3}, 0, s3) == pytest.approx(0.0054)
+    first: QueryRecord = {"kinds": [{"GET": 10, "HEAD": 2}], "bytes": [1000], "requests": [12]}
+    assert query_cost(first, "aws-s3") == pytest.approx(12 * 0.0004 / 1000)
+    # Counts over all runs, scaled to the first run's request count.
+    split: QueryRecord = {"kinds_total": {"GET": 30, "LIST": 10}, "bytes": [0], "requests": [4]}
+    assert query_cost(split, "aws-s3") == pytest.approx(3 * 0.0004 / 1000 + 1 * 0.005 / 1000)
+    assert query_cost(first, "local") is None
+    assert phase_cost({"kind": "maintain", "kinds": {"PUT": 2000}}, "aws-s3") == pytest.approx(0.01)
+    assert storage_month(1024**3, "aws-s3") == pytest.approx(0.023)

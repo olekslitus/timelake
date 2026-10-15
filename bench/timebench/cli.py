@@ -3,6 +3,7 @@
 uv run timebench list
 uv run timebench run tsbs-iot --scale small --systems timelake,iceberg
 uv run timebench run tsbs-iot --target s3 --ttfb-ms 20        # local RustFS behind tools/s3proxy
+uv run timebench run tsbs-iot --pace 1 --live-interval 15 --concurrency 1,4,16   # probes during ingest; dashboards
 uv run timebench profile weekly                                # bench/profiles/weekly.toml
 uv run timebench report latest
 uv run timebench history --workload tsbs-iot
@@ -78,6 +79,10 @@ def cmd_run(args: argparse.Namespace) -> None:
         ttfb_ms=args.ttfb_ms,
         label=args.label,
         reuse=args.reuse,
+        live_interval=args.live_interval,
+        concurrency=tuple(int(n) for n in split(args.concurrency) or []),
+        concurrency_seconds=args.concurrency_seconds,
+        pace=args.pace,
     )
     print(markdown(Run(run(spec))))
 
@@ -95,6 +100,10 @@ def cmd_profile(args: argparse.Namespace) -> None:
             runs=entry.get("runs", profile.get("runs", 2)),
             timeout=entry.get("timeout", profile.get("timeout", 600)),
             label=profile.get("label", args.name),
+            live_interval=entry.get("live_interval", profile.get("live_interval", 0)),
+            concurrency=tuple(entry.get("concurrency", profile.get("concurrency", []))),
+            concurrency_seconds=entry.get("concurrency_seconds", profile.get("concurrency_seconds", 30)),
+            pace=entry.get("pace", profile.get("pace", 0)),
         )
         print(markdown(Run(run(spec))))
 
@@ -140,6 +149,12 @@ def main() -> None:
     r.add_argument("--param", action="append", default=[], help="workload parameter key=value (repeatable)")
     r.add_argument("--label", default="", help="free text recorded with the run")
     r.add_argument("--reuse", action="store_true", help="query the tables an earlier run left (no ingest)")
+    r.add_argument(
+        "--live-interval", type=float, default=0, help="seconds between probe rounds during ingest (0 = no probes)"
+    )
+    r.add_argument("--concurrency", help="client counts for concurrent dashboards, e.g. 1,4,16 (default: none)")
+    r.add_argument("--concurrency-seconds", type=float, default=30, help="how long each client count runs")
+    r.add_argument("--pace", type=float, default=0, help="at least this many seconds between arrivals (0 = no pacing)")
     r.set_defaults(func=cmd_run)
 
     pr = commands.add_parser("profile", help="run a set of runs (profiles/<name>.toml)")

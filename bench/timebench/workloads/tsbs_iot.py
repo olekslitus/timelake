@@ -56,6 +56,9 @@ class TsbsIot(Workload):
         TableSpec("diagnostics", "time", ("tags_id",)),
     )
     suites = ("tsbs_iot", "iot_point")
+    dashboard_suite = "iot_point"
+    live_table = "readings"
+    span_days = 3
 
     def __init__(self, scale: str | None = None, *, window_minutes: int = 5, max_windows: int = 0) -> None:
         super().__init__(scale)

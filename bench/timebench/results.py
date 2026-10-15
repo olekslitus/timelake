@@ -45,6 +45,13 @@ class RunRecord(TypedDict, total=False):
     """Package -> version, for Timelake and every system and reader."""
     runs: int
     """Repeat runs per query after the first run."""
+    live_interval_s: float
+    """Seconds between probe rounds during ingest (absent: no probes)."""
+    pace_s: float
+    """At least this many seconds between arrivals (absent: as fast as each system commits)."""
+    concurrency: list[int]
+    """Client counts of the concurrency phase (absent: none)."""
+    concurrency_seconds: float
     imported: str
     """For runs converted from the older result files: where they came from."""
 
@@ -93,6 +100,52 @@ class QueryRecord(TypedDict, total=False):
     """S3 requests by kind over all runs, for engines that don't report them per run."""
     rtt_ms: float
     server_ms: list[float]
+    value: float
+    """The first value of the result, for probes (the newest timestamp a reader sees, in epoch seconds)."""
+    usd: float
+    """The first run's requests at the target's list prices (priced targets only, timebench/cost.py)."""
+
+
+class LiveRecord(TypedDict, total=False):
+    """Probes while one system ingests (``kind`` = ``live``).
+
+    Fresh readers run the dashboard queries, and a freshness probe tells how far behind the newest commit they see.
+    """
+
+    kind: Literal["live"]
+    system: str
+    reader: str
+    interval_s: float
+    rounds: int
+    """Probe rounds: each runs the freshness probe and every dashboard query once, each in a fresh process."""
+    lag_s: list[float]
+    """Per freshness probe: seconds since the oldest commit the reader didn't see had finished (0 = up to date)."""
+    queries: dict[str, list[float]]
+    """Dashboard query -> first-run seconds of each probe."""
+    errors: list[str]
+
+
+class ConcurrencyRecord(TypedDict, total=False):
+    """N dashboard clients at once (``kind`` = ``concurrency``).
+
+    Each client keeps a reader open and runs the dashboard queries in turn for a fixed time.
+    """
+
+    kind: Literal["concurrency"]
+    system: str
+    reader: str
+    checkpoint: str
+    clients: int
+    seconds: float
+    queries: int
+    """Queries completed by all clients."""
+    qps: float
+    p50_s: float
+    p95_s: float
+    p99_s: float
+    errors: int
+    error: str
+    """The first error, if any."""
 
 
 class IngestRecord(TypedDict, total=False):
@@ -107,6 +160,9 @@ class IngestRecord(TypedDict, total=False):
     commits: int
     rows: int
     seconds: float
+    """Wall-clock time of the phase (with pacing, mostly waiting between arrivals)."""
+    commit_seconds: float
+    """Time spent committing: the sum of all commits."""
     commit_ms_p50: float
     commit_ms_p95: float
     commit_ms_max: float
@@ -126,6 +182,12 @@ class IngestRecord(TypedDict, total=False):
     status: str
     """``ok`` or ``error``; a failed system is recorded and the run goes on without it."""
     error: str
+    usd: float
+    """The phase's requests (and uploads) at the target's list prices (priced targets only)."""
+    storage_usd_month: float
+    """What keeping ``bytes`` costs a month at the target's list prices."""
+    probed: bool
+    """Fresh readers queried the tables during ingest (a ``live`` record follows), so ingest shared the machine."""
 
 
 ENGINE_ORDER = (

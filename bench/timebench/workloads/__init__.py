@@ -57,6 +57,12 @@ class Workload(ABC):
     tables: ClassVar[tuple[TableSpec, ...]]
     suites: ClassVar[tuple[str, ...]]
     """Query suites (``queries/<suite>``)."""
+    dashboard_suite: ClassVar[str | None] = None
+    """The suite a dashboard runs: probed during ingest and run by the concurrency clients."""
+    live_table: ClassVar[str | None] = None
+    """The time-series table whose newest timestamp tells how fresh a reader's view is."""
+    span_days: ClassVar[float]
+    """How many days of data the workload holds (scales its costs to a month)."""
 
     def __init__(self, scale: str | None = None) -> None:
         scale = scale or self.default_scale
@@ -102,6 +108,20 @@ class Workload(ABC):
     def queries(self) -> list[Query]:
         """All queries of the workload's suites."""
         return [Query(suite, name, sql) for suite in self.suites for name, sql in raw_queries(suite)]
+
+    def dashboard_queries(self) -> list[Query]:
+        """The dashboard's queries (none if the workload has no dashboard suite)."""
+        return [q for q in self.queries() if q.suite == self.dashboard_suite]
+
+    def freshness_query(self) -> Query | None:
+        """The newest timestamp of the live table, in whole epoch seconds."""
+        if not self.live_table:
+            return None
+        time_column = self.spec(self.live_table).time_column
+        # Placeholders take no nested parentheses: the maximum comes from a subquery.
+        newest = f"SELECT max({time_column}) AS newest FROM {self.live_table}"
+        sql = f"SELECT CAST(floor(@EPOCH(newest)) AS BIGINT) AS newest FROM ({newest}) AS t"
+        return Query("probe", "freshness", sql)
 
 
 def workloads() -> dict[str, type[Workload]]:

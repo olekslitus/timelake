@@ -65,6 +65,15 @@ uv run timebench history --workload tsbs-iot                  # one line per run
 - On S3 targets every request goes through the proxy, which counts requests (by kind, in AWS mode) and bytes for
   ingest, maintenance and each query run. With `--ttfb-ms` it adds a fixed delay per request (local stores).
 - A failing system or query is recorded and the run goes on.
+- `--live-interval S`: while each system ingests, a probe round every S seconds runs the dashboard queries (the
+  workload's `dashboard_suite`) in fresh processes with the system's own reader, plus a freshness probe (the newest
+  timestamp of `live_table`). Recorded per system as a `live` record: query latency under writes, and how far behind
+  the newest finished commit each probe was (`lag_s`).
+- `--concurrency 1,4,16`: after the last checkpoint, that many client processes per system, each keeping a reader open
+  and running the dashboard queries in turn for `--concurrency-seconds` (30): queries per second and p50/p95/p99, as
+  `concurrency` records.
+- Cost: on AWS targets, every query, ingest and maintenance record carries `usd` (its requests at S3 list prices,
+  `timebench/cost.py`), and ingest and maintenance `storage_usd_month`. Machines aren't priced yet.
 
 ### Results
 `results/runs/<started>-<workload>-<scale>-<target>.jsonl`, one per run: a `run` record (commit, uncommitted changes,

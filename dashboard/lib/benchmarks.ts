@@ -25,6 +25,8 @@ export type RunHeader = {
   readers: Record<string, string[]>
   versions: Record<string, string>
   runs: number
+  live_interval_s?: number
+  concurrency?: number[]
   imported?: string
 }
 
@@ -34,6 +36,8 @@ export type PhaseRecord = {
   status: string
   error?: string
   seconds?: number
+  /** Time spent committing; with pacing, `seconds` is mostly waiting between arrivals. */
+  commit_seconds?: number
   commits?: number
   rows?: number
   commit_ms_p50?: number
@@ -44,6 +48,36 @@ export type PhaseRecord = {
   data_bytes?: number
   requests?: number
   compaction_after_ingest_s?: Record<string, number>
+  /** The phase's requests at the store's list prices. */
+  usd?: number
+  /** Keeping the tables a month at the store's list prices. */
+  storage_usd_month?: number
+}
+
+/** Fresh readers probing a system while it ingests. */
+export type LiveRecord = {
+  system: string
+  reader: string
+  interval_s: number
+  rounds: number
+  /** Per freshness probe: seconds behind the oldest commit it missed (0 = up to date). */
+  lag_s: number[]
+  /** Dashboard query -> first-run seconds of each probe. */
+  queries: Record<string, number[]>
+  errors: string[]
+}
+
+/** N dashboard clients querying at once. */
+export type ConcurrencyRecord = {
+  system: string
+  reader: string
+  clients: number
+  seconds: number
+  queries: number
+  qps: number
+  p50_s?: number
+  p95_s?: number
+  errors: number
 }
 
 export type QueryRecord = {
@@ -58,12 +92,16 @@ export type QueryRecord = {
   rows?: number
   requests?: Times
   server_ms?: Times
+  /** The first run's requests at the store's list prices. */
+  usd?: number
 }
 
 export type Run = {
   header: RunHeader
   phases: PhaseRecord[]
   queries: QueryRecord[]
+  live: LiveRecord[]
+  concurrency: ConcurrencyRecord[]
   finished: string | null
 }
 
@@ -145,6 +183,8 @@ async function readRun(file: string): Promise<Run> {
     header: records[0] as unknown as RunHeader,
     phases: records.filter((r) => r.kind === "ingest" || r.kind === "maintain") as unknown as PhaseRecord[],
     queries: records.filter((r) => r.kind === "query") as unknown as QueryRecord[],
+    live: records.filter((r) => r.kind === "live") as unknown as LiveRecord[],
+    concurrency: records.filter((r) => r.kind === "concurrency") as unknown as ConcurrencyRecord[],
     finished: (end?.finished as string | undefined) ?? null,
   }
 }
@@ -324,4 +364,58 @@ export function rankings(run: Run): Ranking[] {
     })
   }
   return out
+}
+
+const median = (xs: number[]) => {
+  const sorted = xs.toSorted((a, b) => a - b)
+  const mid = Math.floor(sorted.length / 2)
+  return sorted.length % 2 ? (sorted[mid] ?? 0) : ((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2
+}
+
+export type LiveRow = { system: string; probes: number; behind: number; maxLag: number; queryMedian: number | null }
+
+/** While ingesting: how often fresh readers were behind, and the dashboard queries' median first run. */
+export function liveRows(run: Run): LiveRow[] {
+  return run.live.map((r) => {
+    const times = Object.values(r.queries).flat()
+    return {
+      system: r.system,
+      probes: r.lag_s.length,
+      behind: r.lag_s.filter((x) => x > 0).length,
+      maxLag: Math.max(0, ...r.lag_s),
+      queryMedian: times.length ? median(times) : null,
+    }
+  })
+}
+
+export type CostRow = {
+  system: string
+  ingestMonth: number | null
+  storageMonth: number | null
+  perMillionQueries: number | null
+}
+
+/**
+ * At the store's list prices: ingest requests scaled to a month at the run's data rate, storage after maintenance per
+ * month, and a million first-run queries on the system's own reader after maintenance.
+ */
+export function costRows(run: Run): CostRow[] {
+  const span = Number(run.header.params.span_days ?? 3)
+  const rows: CostRow[] = []
+  for (const system of Object.keys(run.header.readers)) {
+    const ingest = run.phases.find((p) => p.kind === "ingest" && p.system === system)
+    const maintain = run.phases.find((p) => p.kind === "maintain" && p.system === system)
+    const own = `${system}+${run.header.readers[system]?.[0]}`
+    const costs = run.queries.flatMap((q) =>
+      engineOf(q) === own && q.checkpoint === "maintained" && q.usd != null ? [q.usd] : [],
+    )
+    const row = {
+      system,
+      ingestMonth: ingest?.usd != null ? (ingest.usd * 30) / span : null,
+      storageMonth: (maintain ?? ingest)?.storage_usd_month ?? null,
+      perMillionQueries: costs.length ? (costs.reduce((a, b) => a + b, 0) / costs.length) * 1e6 : null,
+    }
+    if (row.ingestMonth != null || row.storageMonth != null || row.perMillionQueries != null) rows.push(row)
+  }
+  return rows
 }

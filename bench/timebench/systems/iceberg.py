@@ -82,8 +82,12 @@ class Iceberg(System):
 
     @override
     def state(self) -> dict[str, Any]:
+        return {"namespace": self.namespace, "tables": self.current_tables()}
+
+    def current_tables(self) -> dict[str, str]:
+        """Each table's current metadata file, from the catalog."""
         names = [t for _, t in self.catalog.list_tables(self.namespace)]
-        return {"tables": {n: self.catalog.load_table(f"{self.namespace}.{n}").metadata_location for n in names}}
+        return {n: self.catalog.load_table(f"{self.namespace}.{n}").metadata_location for n in names}
 
     @override
     @classmethod
@@ -93,9 +97,11 @@ class Iceberg(System):
     @override
     @classmethod
     def open_reader(cls, reader: str, place: Place, state: dict[str, Any]) -> Runner:
+        # The tables' current versions, as a reader asking the catalog sees them (they change with every commit).
+        tables = cls(place, state["namespace"]).current_tables() if "namespace" in state else state["tables"]
         con = duckdb_connection(place.target)
         con.execute("INSTALL iceberg; LOAD iceberg")
-        for t, metadata in state["tables"].items():
+        for t, metadata in tables.items():
             con.execute(f"CREATE VIEW {t} AS SELECT * FROM iceberg_scan('{metadata}')")
         return duckdb_runner(con)
 
@@ -109,6 +115,7 @@ class S3Tables(Iceberg):
 
     name = "s3tables"
     title = "S3 Tables (PyIceberg)"
+    s3_storage_prices = False  # S3 Tables bills storage, monitoring and compaction at its own prices (not modeled)
     poll_seconds = 120
 
     def __init__(self, place: Place, namespace: str) -> None:

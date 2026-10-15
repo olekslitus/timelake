@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from timebench.queries import DATAFUSION, DUCKDB, POLARS, TIMESCALEDB, Dialect
@@ -22,8 +23,27 @@ if TYPE_CHECKING:
     from timebench.targets import Place, StorageStats, Target
     from timebench.workloads import TableSpec
 
-Runner = Callable[[str], int]
-"""Runs one query, fully materializing the result; returns the number of rows."""
+
+@dataclass(frozen=True)
+class Result:
+    """What a query returned.
+
+    Its row count, and the first value of the first row (for probes such as the newest timestamp a reader sees).
+    """
+
+    rows: int
+    value: object = None
+
+
+Runner = Callable[[str], Result]
+"""Runs one query, fully materializing the result."""
+
+
+def arrow_result(table: pa.Table) -> Result:
+    """The result of a query answered as an Arrow table."""
+    value = table.column(0)[0].as_py() if table.num_rows and table.num_columns else None
+    return Result(table.num_rows, value)
+
 
 DIALECTS: dict[str, Dialect] = {
     "duckdb": DUCKDB,
@@ -47,6 +67,8 @@ class System(ABC):
     """Readers that are their own binary (``reader_command``) instead of Python in the worker (``open_reader``)."""
     server: ClassVar[bool] = False
     """A database server keeps its data on its own disk: the run's target doesn't apply."""
+    s3_storage_prices: ClassVar[bool] = True
+    """Its storage is billed at the target's plain object-storage prices (timebench/cost.py)."""
 
     def __init__(self, place: Place, namespace: str) -> None:
         self.place = place
@@ -123,7 +145,7 @@ def duckdb_connection(target: Target) -> Any:  # noqa: ANN401 (duckdb is importe
 
 def duckdb_runner(con: Any) -> Runner:  # noqa: ANN401
     """A runner over a DuckDB connection."""
-    return lambda sql: con.execute(sql).fetch_arrow_table().num_rows
+    return lambda sql: arrow_result(con.execute(sql).fetch_arrow_table())
 
 
 def systems() -> dict[str, type[System]]:

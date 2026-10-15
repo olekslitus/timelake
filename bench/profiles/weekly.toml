@@ -2,6 +2,10 @@
 # Same workloads, scales and systems every week, so the history shows what changed between commits.
 label = "weekly"
 runs = 2
+pace = 1                    # one 5-minute window per second: the 3 days replay in about 15 minutes per system
+live_interval = 15          # fresh readers probe each system every 15 s while it ingests
+concurrency = [1, 4, 16]    # then 1, 4 and 16 dashboard clients at once, 30 s each
+concurrency_seconds = 30
 
 [[run]]
 workload = "tsbs-iot"

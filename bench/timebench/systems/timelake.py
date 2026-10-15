@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, override
 from timebench import BENCH
 from timebench.meta import version
 from timebench.s3 import PROXY
-from timebench.systems import Runner, System, duckdb_connection, duckdb_runner
+from timebench.systems import Runner, System, arrow_result, duckdb_connection, duckdb_runner
 
 if TYPE_CHECKING:
     import pyarrow as pa
@@ -84,6 +84,13 @@ class Timelake(System):
     @override
     @classmethod
     def open_reader(cls, reader: str, place: Place, state: dict[str, Any]) -> Runner:
+        if reader == "timelake":
+            # Timelake's reader in this process, for probes and long-lived clients; single queries run the CLI.
+            import timelake
+
+            options = PROXY.object_store_options() if place.target.s3 else None
+            lake = timelake.Lake(state["root"], storage_options=options)
+            return lambda sql: arrow_result(lake.sql(sql, namespace=state["namespace"]))
         # Plain DuckDB over the Iceberg tables Timelake wrote.
         con = duckdb_connection(place.target)
         con.execute("INSTALL iceberg; LOAD iceberg")

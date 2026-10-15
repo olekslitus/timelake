@@ -1,7 +1,8 @@
 """One benchmark run: a workload streamed into each system, then its queries on every reader, at each checkpoint.
 
-The checkpoints are right after ingest and after each system's maintenance. The run writes
-``results/runs/<run id>.jsonl`` as it goes.
+The checkpoints are right after ingest and after each system's maintenance. Optionally, fresh readers probe each
+system while it ingests (``live.py``), and N dashboard clients query it at once after the last checkpoint
+(``concurrency.py``). The run writes ``results/runs/<run id>.jsonl`` as it goes.
 """
 
 from __future__ import annotations
@@ -10,7 +11,6 @@ import datetime as dt
 import json
 import statistics
 import subprocess
-import sys
 import time
 import urllib.request
 from dataclasses import dataclass, field
@@ -19,15 +19,30 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from timebench import RUNS, meta
+from timebench.concurrency import dashboards
+from timebench.cost import phase_cost, query_cost, storage_month
+from timebench.live import Prober
 from timebench.queries import apply_dialect
-from timebench.results import EndRecord, IngestRecord, QueryRecord, RunRecord, append_jsonl, best_time, first_time
+from timebench.results import (
+    ConcurrencyRecord,
+    EndRecord,
+    IngestRecord,
+    LiveRecord,
+    QueryRecord,
+    RunRecord,
+    append_jsonl,
+    best_time,
+    first_time,
+)
 from timebench.s3 import PROXY, ProxyStats
 from timebench.systems import DIALECTS, System, systems
 from timebench.targets import Place
-from timebench.worker import request_kinds
+from timebench.worker import command, request_kinds
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    import pyarrow as pa
 
     from timebench.targets import Target
     from timebench.workloads import Query, Workload
@@ -56,6 +71,15 @@ class RunSpec:
     label: str = ""
     reuse: bool = False
     """Query the tables an earlier run left instead of ingesting (``--checkpoints`` then picks the passes)."""
+    live_interval: float = 0
+    """Seconds between probe rounds while each system ingests; 0 = no probes."""
+    concurrency: tuple[int, ...] = ()
+    """Client counts for the concurrent-dashboards phase after the last checkpoint; empty = none."""
+    concurrency_seconds: float = 30
+    """How long each client count runs."""
+    pace: float = 0
+    """At least this many seconds between arrivals (0 = as fast as the system commits), so the replay is closer to
+    real time and probes have something to see."""
     _systems: dict[str, System] = field(default_factory=dict)
 
     def system(self, name: str) -> System:
@@ -73,22 +97,53 @@ class RunSpec:
 
 def run(spec: RunSpec) -> Path:
     """Runs everything and returns the run file."""
-    workload, target = spec.workload, spec.target
-    workload.prepare()
-    if target.s3 and spec.ttfb_ms is not None:
+    spec.workload.prepare()
+    if spec.target.s3 and spec.ttfb_ms is not None:
         set_ttfb(spec.ttfb_ms)
     started = dt.datetime.now(dt.timezone.utc)
-    run_id = f"{started:%Y%m%dT%H%M%SZ}-{workload.dataset}-{target.name}"
-    path = RUNS / f"{run_id}.jsonl"
+    header = run_header(spec, started)
+    path = RUNS / f"{header['id']}.jsonl"
+    append_jsonl(path, header)
+    print(f"run {header['id']} → {path}", flush=True)
+
+    live = list(spec.systems) if spec.reuse else ingest_all(spec, path)
+    results: list[QueryRecord] = []
+    for checkpoint in spec.checkpoints:
+        if checkpoint == "maintained" and not spec.reuse:
+            live = [s for s in live if record(path, maintain(spec.system(s)))]
+        results += query_pass(spec, path, live, checkpoint)
+    if spec.concurrency and spec.workload.dashboard_queries() and spec.checkpoints:
+        for s in live:
+            for clients in spec.concurrency:
+                c = dashboards(spec.workload, spec.system(s), spec.checkpoints[-1], clients, spec.concurrency_seconds)
+                append_jsonl(path, c)
+                print(concurrency_line(c), flush=True)
+
+    finished = dt.datetime.now(dt.timezone.utc)
+    end: EndRecord = {
+        "kind": "end",
+        "finished": finished.isoformat(timespec="seconds"),
+        "seconds": round((finished - started).total_seconds(), 1),
+        "mismatches": mismatches(results),
+    }
+    append_jsonl(path, end)
+    for m in end["mismatches"]:
+        print(f"ROW COUNT MISMATCH {m}", flush=True)
+    return path
+
+
+def run_header(spec: RunSpec, started: dt.datetime) -> RunRecord:
+    """The first record of a run: what runs, where, and on which commit."""
+    workload, target = spec.workload, spec.target
     versions: dict[str, str] = {}
     for name in spec.systems:
         versions.update(systems()[name].version())
     header: RunRecord = {
         "kind": "run",
-        "id": run_id,
+        "id": f"{started:%Y%m%dT%H%M%SZ}-{workload.dataset}-{target.name}",
         "workload": workload.name,
         "scale": workload.scale,
-        "params": workload.params(),
+        "params": {**workload.params(), "span_days": workload.span_days},
         "target": target.name,
         "storage": target.storage,
         "machine": meta.machine(),
@@ -102,36 +157,41 @@ def run(spec: RunSpec) -> Path:
     }
     if target.s3 and spec.ttfb_ms is not None:
         header["ttfb_ms"] = spec.ttfb_ms
-    append_jsonl(path, header)
-    print(f"run {run_id} → {path}", flush=True)
+    if spec.live_interval:
+        header["live_interval_s"] = spec.live_interval
+    if spec.pace:
+        header["pace_s"] = spec.pace
+    if spec.concurrency:
+        header.update(concurrency=list(spec.concurrency), concurrency_seconds=spec.concurrency_seconds)
+    return header
 
-    live = list(spec.systems)
-    if not spec.reuse:
-        live = [s for s in live if record(path, ingest(spec, spec.system(s)))]
-    results: list[QueryRecord] = []
-    for checkpoint in spec.checkpoints:
-        if checkpoint == "maintained" and not spec.reuse:
-            live = [s for s in live if record(path, maintain(spec.system(s)))]
-        for s in live:
-            for reader in spec.readers_of(s):
-                for query in workload.queries():
-                    if spec.queries and query.name not in spec.queries:
-                        continue
-                    r = measure(spec, spec.system(s), reader, query, checkpoint)
-                    append_jsonl(path, r)
-                    results.append(r)
-                    print(summary_line(r), flush=True)
 
-    end: EndRecord = {
-        "kind": "end",
-        "finished": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
-        "seconds": round((dt.datetime.now(dt.timezone.utc) - started).total_seconds(), 1),
-        "mismatches": mismatches(results),
-    }
-    append_jsonl(path, end)
-    for m in end["mismatches"]:
-        print(f"ROW COUNT MISMATCH {m}", flush=True)
-    return path
+def ingest_all(spec: RunSpec, path: Path) -> list[str]:
+    """Ingests into every system, one at a time; the systems that succeeded."""
+    ingested = []
+    for s in spec.systems:
+        done, probes = ingest(spec, spec.system(s))
+        if record(path, done):
+            ingested.append(s)
+        if probes:
+            append_jsonl(path, probes)
+            print(live_line(probes), flush=True)
+    return ingested
+
+
+def query_pass(spec: RunSpec, path: Path, systems_: list[str], checkpoint: str) -> list[QueryRecord]:
+    """Every query on every reader of the systems, each in a fresh process."""
+    results = []
+    for s in systems_:
+        for reader in spec.readers_of(s):
+            for query in spec.workload.queries():
+                if spec.queries and query.name not in spec.queries:
+                    continue
+                r = measure(spec, spec.system(s), reader, query, checkpoint)
+                append_jsonl(path, r)
+                results.append(r)
+                print(summary_line(r), flush=True)
+    return results
 
 
 def record(path: Path, r: IngestRecord) -> bool:
@@ -147,28 +207,41 @@ def counted(system: System) -> bool:
     return system.target.s3 and not system.server
 
 
-def ingest(spec: RunSpec, system: System) -> IngestRecord:
-    """Creates the tables, loads the initial rows, then commits every arrival of the stream."""
+def ingest(spec: RunSpec, system: System) -> tuple[IngestRecord, LiveRecord | None]:
+    """Creates the tables, loads the initial rows, then commits every arrival of the stream.
+
+    With ``live_interval`` set, fresh readers probe the tables while it runs.
+    """
     out: IngestRecord = {"kind": "ingest", "system": system.name}
+    workload = spec.workload
+    prober = Prober(workload, system, spec.live_interval) if spec.live_interval and workload.live_table else None
     before = PROXY.stats() if counted(system) else None
     latencies: list[float] = []
     rows = 0
     start = time.perf_counter()
     try:
         system.reset()
-        workload = spec.workload
         for t in workload.tables:
             system.create(t, workload.schema(t.name))
         for table, data in workload.initial():
             system.append(table, data)
         for i, arrival in enumerate(workload.stream()):
+            arrived = time.perf_counter()
             for table, data in arrival:
                 t = time.perf_counter()
                 system.append(table, data)
                 latencies.append(time.perf_counter() - t)
                 rows += data.num_rows
+                if prober and table == workload.live_table:
+                    prober.committed(newest_second(data, workload.spec(table).time_column))
+            if i == 0 and prober:
+                # The tables exist now: readers can find them, so probing can start.
+                system.place.save_state({**system.state(), "phase": "ingesting"})
+                prober.start()
             if i % 100 == 0:
                 print(f"  {system.name}: arrival {i}, {time.perf_counter() - start:.1f}s", flush=True)
+            if spec.pace:
+                time.sleep(max(0.0, arrived + spec.pace - time.perf_counter()))
         seconds = time.perf_counter() - start
         state = {**system.state(), "phase": "ingested", "ingested_at": now()}
         system.place.save_state(state)
@@ -177,6 +250,7 @@ def ingest(spec: RunSpec, system: System) -> IngestRecord:
             commits=len(latencies),
             rows=rows,
             seconds=round(seconds, 2),
+            commit_seconds=round(sum(latencies), 2),
             commit_ms_p50=round(statistics.median(latencies) * 1000, 1),
             commit_ms_p95=round(float(np.percentile(latencies, 95)) * 1000, 1),
             commit_ms_max=round(max(latencies) * 1000, 1),
@@ -185,7 +259,18 @@ def ingest(spec: RunSpec, system: System) -> IngestRecord:
         out.update(system.ingest_extras())
     except Exception as e:  # noqa: BLE001 (a failing system is a result; the run goes on without it)
         out.update(status="error", error=f"{type(e).__name__}: {e}"[:300], commits=len(latencies))
-    return {**out, **proxy_delta(before)}
+    probes = prober.finish() if prober and prober.thread.is_alive() else None
+    if probes:
+        out["probed"] = True
+    return priced({**out, **proxy_delta(before)}, system), probes
+
+
+def newest_second(data: pa.Table, time_column: str | None) -> int:
+    """The newest timestamp in a batch, in whole epoch seconds."""
+    if not time_column or data.num_rows == 0:
+        return 0
+    newest = np.max(data[time_column].to_numpy())  # datetime64, in the column's unit
+    return int(newest.astype("datetime64[s]").astype(np.int64))
 
 
 def maintain(system: System) -> IngestRecord:
@@ -203,7 +288,7 @@ def maintain(system: System) -> IngestRecord:
         out.update(system.maintain_extras())
     except Exception as e:  # noqa: BLE001 (as in ingest)
         out.update(status="error", error=f"{type(e).__name__}: {e}"[:300])
-    return {**out, **proxy_delta(before)}
+    return priced({**out, **proxy_delta(before)}, system)
 
 
 def storage(system: System) -> IngestRecord:
@@ -215,6 +300,21 @@ def storage(system: System) -> IngestRecord:
         "data_files": stats["data_files"],
         "data_bytes": stats["data_bytes"],
     }
+
+
+def priced(r: IngestRecord, system: System) -> IngestRecord:
+    """Adds the phase's request cost and the storage's monthly cost at the target's list prices, where priced."""
+    target = system.target.name
+    if (usd := phase_cost(r, target)) is not None:
+        r["usd"] = usd
+    if (
+        "bytes" in r
+        and system.s3_storage_prices
+        and not system.server
+        and (month := storage_month(r["bytes"], target)) is not None
+    ):
+        r["storage_usd_month"] = month
+    return r
 
 
 def proxy_delta(before: ProxyStats | None) -> IngestRecord:
@@ -244,7 +344,7 @@ def measure(spec: RunSpec, system: System, reader: str, query: Query, checkpoint
         cmd = type(system).reader_command(reader, place, place.load_state(), spec.runs)
     else:
         job = {"system": system.name, "reader": reader, "target": place.target.name, "dataset": place.dataset}
-        cmd = [sys.executable, "-m", "timebench.worker", json.dumps({**job, "runs": spec.runs})]
+        cmd = command({**job, "runs": spec.runs})
     before = PROXY.stats() if counted(system) else None
     try:
         # A failing query is a result to record, not a reason to stop: no check=True.
@@ -260,6 +360,8 @@ def measure(spec: RunSpec, system: System, reader: str, query: Query, checkpoint
     # Requests by kind over all runs, for readers that don't report them per run (the Timelake CLI).
     if before and "kinds" not in out and (total := request_kinds(before, PROXY.stats())):
         out["kinds_total"] = total
+    if (usd := query_cost(out, spec.target.name)) is not None:
+        out["usd"] = usd
     return out
 
 
@@ -283,6 +385,23 @@ def summary_line(r: QueryRecord) -> str:
         return f"{prefix} {r['status'].upper()}: {r.get('error', '')[:120]}"
     reqs = f"  reqs {r['requests'][0]}/{min(r['requests'])}" if "requests" in r else ""
     return f"{prefix} first {first_time(r):8.3f}s  best {best_time(r):8.3f}s  rows {r['rows']}{reqs}"
+
+
+def live_line(r: LiveRecord) -> str:
+    """The probes of one system, for the console."""
+    lags = r["lag_s"]
+    stale = sum(1 for x in lags if x > 0)
+    return (
+        f"live     {r['system']}: {r['rounds']} rounds, {len(lags)} freshness probes, {stale} behind "
+        f"(max {max(lags, default=0):.1f}s), {len(r['errors'])} errors"
+    )
+
+
+def concurrency_line(r: ConcurrencyRecord) -> str:
+    """One client count of one system, for the console."""
+    p50, p95 = r.get("p50_s"), r.get("p95_s")
+    times = f"p50 {p50:.3f}s p95 {p95:.3f}s" if p50 is not None and p95 is not None else "no queries"
+    return f"clients  {r['system']}+{r['reader']} x{r['clients']}: {r['qps']} q/s, {times}, {r['errors']} errors"
 
 
 def set_ttfb(ms: int) -> None:

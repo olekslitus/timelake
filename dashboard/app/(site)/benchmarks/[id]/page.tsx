@@ -15,10 +15,12 @@ import {
   SYSTEMS,
   SYSTEM_COLORS,
   WORKLOADS,
+  costRows,
   engineLabel,
   failures,
   history,
   latestByTarget,
+  liveRows,
   loadRuns,
   panels,
   s3TablesDelay,
@@ -26,7 +28,7 @@ import {
   type Run,
   type Workload,
 } from "@/lib/benchmarks"
-import { formatBytes, formatNumber } from "@/lib/format"
+import { formatBytes, formatNumber, formatTime, timeUnit } from "@/lib/format"
 import { REPO_URL } from "@/lib/site"
 
 type Props = { params: Promise<{ id: string }> }
@@ -235,7 +237,8 @@ function RunResults({ run, workload }: { run: Run; workload: Workload }) {
           <CardHeader>
             <CardTitle className="text-base">Ingest and maintenance</CardTitle>
             <CardDescription>
-              Storage is all files after maintenance; replaced files still waiting for cleanup count too.
+              Committing is the time spent in all commits together. Storage is all files after maintenance, counting
+              replaced files still waiting for cleanup.
             </CardDescription>
           </CardHeader>
           <CardContent className="overflow-x-auto">
@@ -243,7 +246,7 @@ function RunResults({ run, workload }: { run: Run; workload: Workload }) {
               <TableHeader>
                 <TableRow>
                   <TableHead>System</TableHead>
-                  <TableHead className="text-right">Ingest</TableHead>
+                  <TableHead className="text-right">Committing</TableHead>
                   <TableHead className="text-right">Commit p50</TableHead>
                   <TableHead className="text-right">Commit p95</TableHead>
                   <TableHead className="text-right">Maintenance</TableHead>
@@ -260,7 +263,9 @@ function RunResults({ run, workload }: { run: Run; workload: Workload }) {
                       <TableCell className={p.system === "timelake" ? "font-medium" : undefined}>
                         {SYSTEMS[p.system] ?? p.system}
                       </TableCell>
-                      <TableCell className="text-right font-mono tabular-nums">{seconds(p.seconds)}</TableCell>
+                      <TableCell className="text-right font-mono tabular-nums">
+                        {seconds(p.commit_seconds ?? p.seconds)}
+                      </TableCell>
                       <TableCell className="text-right font-mono tabular-nums">{ms(p.commit_ms_p50)}</TableCell>
                       <TableCell className="text-right font-mono tabular-nums">{ms(p.commit_ms_p95)}</TableCell>
                       <TableCell className="text-right font-mono tabular-nums">
@@ -281,6 +286,10 @@ function RunResults({ run, workload }: { run: Run; workload: Workload }) {
         </Card>
       )}
 
+      <LiveCard run={run} />
+      <ConcurrencyCard run={run} />
+      <CostCard run={run} />
+
       {failed.length > 0 && (
         <p className="text-sm text-muted-foreground">
           Failed and left out of the charts:{" "}
@@ -299,3 +308,148 @@ function RunResults({ run, workload }: { run: Run; workload: Workload }) {
 const seconds = (s: number | undefined) =>
   s == null ? "—" : s < 100 ? `${s.toFixed(1)} s` : s < 600 ? `${Math.round(s)} s` : `${Math.round(s / 60)} min`
 const ms = (v: number | undefined) => (v == null ? "—" : `${Math.round(v)} ms`)
+
+const systemName = (system: string) => SYSTEMS[system] ?? system
+
+/** Fresh readers during ingest: how often they were behind, and dashboard queries under writes. */
+function LiveCard({ run }: { run: Run }) {
+  const rows = liveRows(run)
+  if (rows.length === 0) return null
+  const unit = timeUnit(rows.flatMap((r) => (r.queryMedian == null ? [] : [r.queryMedian])))
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">While ingesting</CardTitle>
+        <CardDescription>
+          Every {run.header.live_interval_s} s during ingest, a fresh reader ran the dashboard queries and checked the
+          newest row it could see. Behind: probes that missed a commit that had already finished.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="overflow-x-auto">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>System</TableHead>
+              <TableHead className="text-right">Probes behind</TableHead>
+              <TableHead className="text-right">Most behind</TableHead>
+              <TableHead className="text-right">Dashboard query, median</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((r) => (
+              <TableRow key={r.system}>
+                <TableCell className={r.system === "timelake" ? "font-medium" : undefined}>
+                  {systemName(r.system)}
+                </TableCell>
+                <TableCell className="text-right font-mono tabular-nums">
+                  {r.behind} of {r.probes}
+                </TableCell>
+                <TableCell className="text-right font-mono tabular-nums">
+                  {r.behind ? `${r.maxLag.toFixed(1)} s` : "—"}
+                </TableCell>
+                <TableCell className="text-right font-mono tabular-nums">
+                  {r.queryMedian == null ? "—" : formatTime(r.queryMedian, unit)}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  )
+}
+
+/** N dashboard clients at once: throughput and slow queries per client count. */
+function ConcurrencyCard({ run }: { run: Run }) {
+  if (run.concurrency.length === 0) return null
+  const counts = [...new Set(run.concurrency.map((c) => c.clients))].sort((a, b) => a - b)
+  const systems = [...new Set(run.concurrency.map((c) => c.system))]
+  const unit = timeUnit(run.concurrency.flatMap((c) => (c.p95_s == null ? [] : [c.p95_s])))
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Concurrent dashboards</CardTitle>
+        <CardDescription>
+          After maintenance, {counts.join(", ")} clients at once, each with its own reader open, running the dashboard
+          queries in turn for {run.concurrency[0]?.seconds} s. Queries per second over all clients, and the 95th
+          percentile latency.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="overflow-x-auto">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>System</TableHead>
+              {counts.map((n) => (
+                <TableHead key={n} className="text-right">
+                  {n} {n === 1 ? "client" : "clients"}
+                </TableHead>
+              ))}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {systems.map((system) => (
+              <TableRow key={system}>
+                <TableCell className={system === "timelake" ? "font-medium" : undefined}>
+                  {systemName(system)}
+                </TableCell>
+                {counts.map((n) => {
+                  const c = run.concurrency.find((x) => x.system === system && x.clients === n)
+                  return (
+                    <TableCell key={n} className="text-right font-mono whitespace-nowrap tabular-nums">
+                      {c ? `${c.qps.toFixed(1)} q/s · ${c.p95_s == null ? "—" : formatTime(c.p95_s, unit)}` : "—"}
+                      {c && c.errors > 0 ? ` (${c.errors} errors)` : ""}
+                    </TableCell>
+                  )
+                })}
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  )
+}
+
+const usd = (x: number | null) => (x == null ? "—" : x < 0.01 ? `$${x.toFixed(4)}` : `$${x.toFixed(2)}`)
+
+/** What the object-store traffic and storage cost at list prices. */
+function CostCard({ run }: { run: Run }) {
+  const rows = costRows(run)
+  if (rows.length === 0) return null
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Cost on {targetLabel(run.header.target)}</CardTitle>
+        <CardDescription>
+          Requests and storage at the store&apos;s list prices; machines are not included. Ingest is scaled to a month
+          of data arriving at this rate.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="overflow-x-auto">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>System</TableHead>
+              <TableHead className="text-right">Ingest, per month</TableHead>
+              <TableHead className="text-right">Storage, per month</TableHead>
+              <TableHead className="text-right">1M queries</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((r) => (
+              <TableRow key={r.system}>
+                <TableCell className={r.system === "timelake" ? "font-medium" : undefined}>
+                  {systemName(r.system)}
+                </TableCell>
+                <TableCell className="text-right font-mono tabular-nums">{usd(r.ingestMonth)}</TableCell>
+                <TableCell className="text-right font-mono tabular-nums">{usd(r.storageMonth)}</TableCell>
+                <TableCell className="text-right font-mono tabular-nums">{usd(r.perMillionQueries)}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  )
+}

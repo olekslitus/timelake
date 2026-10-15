@@ -79,6 +79,11 @@ export default function TimebenchPage() {
             by batch. Each commit is timed, and the files and requests it took are counted.
           </li>
           <li>
+            <span className="text-foreground">Probes while ingesting.</span> Every few seconds, a fresh reader runs the
+            dashboard queries and asks for the newest row it can see. That gives query latency while data is being
+            written, and whether a reader sees every commit that has finished.
+          </li>
+          <li>
             <span className="text-foreground">Queries right after ingest.</span> What readers see before any cleanup:
             many small files and a long history of commits. Systems whose compaction runs later, as a scheduled job or a
             managed service, look like this until it has run.
@@ -90,6 +95,11 @@ export default function TimebenchPage() {
           <li>
             <span className="text-foreground">Queries after maintenance.</span> The same queries on tidy tables, the
             best case for each system.
+          </li>
+          <li>
+            <span className="text-foreground">Concurrent dashboards.</span> 1, 4 and then 16 clients at once, each
+            keeping a reader open like a dashboard backend, run the dashboard queries in turn for 30 seconds: queries
+            per second over all clients, and how slow the slowest 5% were.
           </li>
           <li>Row counts are compared across systems. A mismatch is recorded with the run.</li>
         </ol>
@@ -119,6 +129,12 @@ export default function TimebenchPage() {
           <li>
             <span className="text-foreground">Requests and bytes.</span> On S3, every request goes through a proxy that
             counts requests and bytes: what object storage bills for, and the same wherever the client runs.
+          </li>
+          <li>
+            <span className="text-foreground">Cost.</span> On AWS, requests by kind and the bytes stored are priced at
+            S3&apos;s list prices for the region, recorded with each run so later price changes don&apos;t rewrite
+            history. Ingest is scaled to a month of data arriving at the benchmark&apos;s rate. Machines aren&apos;t
+            included yet, and S3 Tables&apos; own storage and compaction fees aren&apos;t modeled.
           </li>
           <li>
             <span className="text-foreground">Database servers</span> keep data in memory between queries, so their

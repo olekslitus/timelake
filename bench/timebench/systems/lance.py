@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, override
 
 from timebench.meta import version
 from timebench.s3 import PROXY, SETUP_PROXY
-from timebench.systems import Runner, System, duckdb_connection, duckdb_runner
+from timebench.systems import Runner, System, arrow_result, duckdb_connection, duckdb_runner
 
 if TYPE_CHECKING:
     import pyarrow as pa
@@ -89,4 +89,4 @@ class Lance(System):
         ctx = SessionContext()
         for t, ds in datasets.items():
             ctx.register_table(t, lance.FFILanceTableProvider(ds))
-        return lambda sql: ctx.sql(sql).to_arrow_table().num_rows
+        return lambda sql: arrow_result(ctx.sql(sql).to_arrow_table())
