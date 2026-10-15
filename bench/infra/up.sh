@@ -23,7 +23,12 @@ if [ "${INSTANCE:-false}" = true ]; then
     *[0-9]g*) params+=(ImageId=/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64) ;;
   esac
   # The weekly stack: a role GitHub Actions of this repository's main branch can assume (README, "Weekly runs").
-  params+=(${GITHUB_REPO:+GitHubRepo=$GITHUB_REPO} ${GITHUB_OIDC_PROVIDER_ARN:+GitHubOidcProviderArn=$GITHUB_OIDC_PROVIDER_ARN})
+  # The subject's form depends on the repository's settings (immutable subjects carry owner and repository ids).
+  if [ -n "${GITHUB_REPO:-}" ]; then
+    subject=$(gh api "repos/$GITHUB_REPO/actions/oidc/customization/sub" --jq '.sub_claim_prefix // empty')
+    params+=(GitHubSubject="${subject:-repo:$GITHUB_REPO}")
+  fi
+  params+=(${GITHUB_OIDC_PROVIDER_ARN:+GitHubOidcProviderArn=$GITHUB_OIDC_PROVIDER_ARN})
 fi
 aws cloudformation deploy --stack-name "$STACK" --template-file stack.yaml --capabilities CAPABILITY_IAM \
   --tags project=timelake-bench --parameter-overrides "${params[@]}"

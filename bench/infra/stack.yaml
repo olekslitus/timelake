@@ -2,7 +2,7 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
   timelake-bench (SPEC 17.4): an S3 Standard bucket, an S3 Express One Zone bucket and an S3 Tables table bucket,
   plus (Instance=true) one benchmark instance in the same zone. Access via SSM only (no SSH, no inbound ports).
-  The instance stops itself after AutoStopMinutes. Delete with bench/infra/down.sh. With GitHubRepo set (the
+  The instance stops itself after AutoStopMinutes. Delete with bench/infra/down.sh. With GitHubSubject set (the
   weekly stack, bench/infra/weekly.sh), a role GitHub Actions of that repository's main branch can assume to start
   the instance, run the weekly benchmark on it and read its results.
 
@@ -38,10 +38,12 @@ Parameters:
   AutoStopMinutes:
     Type: Number
     Default: 720
-  GitHubRepo:
+  GitHubSubject:
     Type: String
     Default: ""
-    Description: owner/name of the repository whose main branch may run the weekly benchmark (empty = no role).
+    Description: >-
+      The OIDC subject prefix of the repository whose main branch may run the weekly benchmark, as GitHub sends it
+      (repo:owner/name, or repo:owner@id/name@id with immutable subjects; up.sh looks it up). Empty = no role.
   GitHubOidcProviderArn:
     Type: String
     Default: ""
@@ -51,7 +53,7 @@ Parameters:
 
 Conditions:
   WithInstance: !Equals [!Ref Instance, "true"]
-  WithGitHub: !And [!Condition WithInstance, !Not [!Equals [!Ref GitHubRepo, ""]]]
+  WithGitHub: !And [!Condition WithInstance, !Not [!Equals [!Ref GitHubSubject, ""]]]
   CreateOidcProvider: !And [!Condition WithGitHub, !Equals [!Ref GitHubOidcProviderArn, ""]]
 
 Resources:
@@ -168,7 +170,7 @@ Resources:
             Condition:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
-                token.actions.githubusercontent.com:sub: !Sub "repo:${GitHubRepo}:ref:refs/heads/main"
+                token.actions.githubusercontent.com:sub: !Sub "${GitHubSubject}:ref:refs/heads/main"
       Policies:
         - PolicyName: weekly-benchmark
           PolicyDocument:
