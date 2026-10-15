@@ -1,10 +1,11 @@
 # Prior art
 
-Timelake stands on other open-source projects and learns from many more. This file credits what we took and keeps
-our notes on what we're studying, so good ideas don't get lost and their authors get the recognition they're due.
+Timelake stands on other open-source projects and learns from many more. This file credits the ideas we took and
+keeps our notes on what we're studying, so good ideas don't get lost and their authors get the recognition they're
+due. We take ideas, never code: every line of Timelake is our own.
 
-How to credit a project (in code, docs and [NOTICE](NOTICE)) is in [CONTRIBUTING.md](CONTRIBUTING.md#credit). For
-how Timelake compares with these projects as products, see SPEC.md §16. This file is about what we learn from them.
+Which projects we credit, and how, is in [CONTRIBUTING.md](CONTRIBUTING.md#credit). For how Timelake compares with
+other systems as products, see SPEC.md §16.
 
 ## What we took
 
@@ -23,23 +24,19 @@ Timelake is built on these. Their licenses ship with our packages through the no
 
 ### Ideas
 
-Designs we adopted or plan to. None of these involved copying code.
+Methods we adopted or plan to, and implemented ourselves.
 
 | Idea | From | License of the source | Where in Timelake |
 |---|---|---|---|
-| Hypertable-like table contract, chunk interval, series key, `time_bucket`, continuous aggregates | [TimescaleDB](https://github.com/timescale/timescaledb) | Apache-2.0 core; continuous aggregates are under the Timescale License | SPEC §7, §11; `query/session.rs`, `query/mod.rs`; docs Concepts, Querying |
-| Two-step aggregates and the target function library (planned) | [TimescaleDB Toolkit](https://github.com/timescale/timescaledb-toolkit) | Timescale License (source-available: learn from the docs, don't port the code) | SPEC §11 |
 | Size-tiered compaction (D19) | [Apache Cassandra](https://cassandra.apache.org) (SizeTieredCompactionStrategy) | Apache-2.0 | `maintain.rs` |
 | Table layout readable with no catalog service (D17) | Iceberg's Hadoop catalog | Apache-2.0 | `lake.rs`; docs Architecture |
-| Stage on a branch, check, then publish (backfill, planned) | Write-audit-publish, from Netflix's Iceberg practice | Pattern | SPEC §8.4 |
-| Ingest pipeline config `inputs → processors → rules → outputs` (planned) | [Telegraf](https://github.com/influxdata/telegraf) | MIT | SPEC §13 |
+| Stage on a branch, check, then publish (backfill, planned) | Iceberg branches (write-audit-publish) | Apache-2.0 | SPEC §8.4 |
 | `quality` column (good / uncertain / bad) | OPC UA | Specification | SPEC §7 |
-| Commit operations to port (rewrite, row delta, branches, expiry) | [Iceberg Java](https://github.com/apache/iceberg), [iceberg-cpp](https://github.com/apache/iceberg-cpp), [iceberg-go](https://github.com/apache/iceberg-go) | Apache-2.0 | Reference implementations and test oracles (D13, `spikes/iceberg-write`). No code ported yet |
-| Instrument-panel visual style | [Oxide](https://oxide.computer) | Design inspiration | `brand/README.md`, the website |
+| How commit operations work (rewrite, row delta, branches, expiry) | [Iceberg Java](https://github.com/apache/iceberg), [iceberg-cpp](https://github.com/apache/iceberg-cpp), [iceberg-go](https://github.com/apache/iceberg-go) | Apache-2.0 | References to learn from and test oracles (D13, `spikes/iceberg-write`); our commit layer is our own code |
 
-### Copied files
+### Third-party files
 
-Third-party files in this repository. Each keeps its license, listed in [NOTICE](NOTICE).
+Files we use as they are, not code we write. Each keeps its license, listed in [NOTICE](NOTICE).
 
 | Files | From | License |
 |---|---|---|
@@ -47,7 +44,6 @@ Third-party files in this repository. Each keeps its license, listed in [NOTICE]
 | `dashboard/components/ui/` | Generated with [shadcn/ui](https://ui.shadcn.com) | MIT |
 | `bench/queries/tsbs_iot/` | Ported from [TSBS](https://github.com/timescale/tsbs) | MIT |
 | `bench/queries/tpch/` | DuckDB's `tpch` extension (TPC-H queries) | MIT |
-| `bench/queries/clickbench/` | [ClickBench](https://github.com/ClickHouse/ClickBench) | CC BY-NC-SA 4.0 (not Apache-2.0) |
 
 ## Studies
 
@@ -99,12 +95,12 @@ columns such as `trace_id`, which aren't in the sort order.
 
 - Iceberg write support across Java, C++, Go and Rust: [spikes/iceberg-write](spikes/iceberg-write/README.md).
 - Vortex as a file format: [bench/results/VORTEX.md](bench/results/VORTEX.md).
-- Lance, S3 Tables and PyIceberg on the same workload: [bench/results/S3.md](bench/results/S3.md).
-- TimescaleDB on Tiger Cloud on the same workload: [bench/results/TIMESCALE.md](bench/results/TIMESCALE.md).
+
+Comparisons with other systems on the same workload are benchmark results, not studies: see `bench/results/`.
 
 ### Adding a study
 
 Add a section with the link, license, language and the date you studied it; what it is in two lines; what it does
-differently and the trade-off; and a checklist of ideas to adopt. Before reading a project's code, check its license:
-from copyleft or source-available projects, learn from the docs and design, not the code
+differently and the trade-off; and a checklist of ideas to adopt. Study the method, not code to copy, and check the
+project's license first: open-core, dual-licensed and commercial projects aren't named as a source
 ([CONTRIBUTING.md](CONTRIBUTING.md#credit)).

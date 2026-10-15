@@ -6,7 +6,7 @@ The Timelake reader is Apache DataFusion with a Timelake table provider. You wri
 
 ## Time buckets
 
-`time_bucket(interval, ts [, origin])` groups rows into fixed time windows, like TimescaleDB's function of the same name. It is DataFusion's `date_bin` under another name: buckets are aligned to the Unix epoch (1970-01-01) unless you pass an origin. TimescaleDB aligns weekly buckets to Monday 2000-01-03, so for weeks pass that origin to get the same buckets.
+`time_bucket(interval, ts [, origin])` groups rows into fixed time windows. It is DataFusion's `date_bin` under another name: buckets are aligned to the Unix epoch (1970-01-01) unless you pass an origin. DuckDB's `time_bucket` aligns to Monday 2000-01-03 instead, which gives different buckets for widths of several days, such as weeks: pass that origin to match plain DuckDB.
 
 ```sql
 SELECT device_id, time_bucket(INTERVAL '5 minutes', time) AS bucket, avg(temp), max(temp)

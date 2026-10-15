@@ -6,7 +6,7 @@
 //! - **Last-value rewrite:** "newest row per series" queries (`ROW_NUMBER() OVER (PARTITION BY
 //!   <series key> ORDER BY <time> DESC) = 1`) and "newest row" queries (`ORDER BY <time> DESC
 //!   LIMIT 1` filtered on the series key) are answered from the last-value index instead of a scan.
-//! - `time_bucket(interval, ts [, origin])` as in `TimescaleDB`.
+//! - `time_bucket(interval, ts [, origin])`, an alias of `date_bin`.
 //! - Namespaces as SQL schemas: `SELECT … FROM iot.readings`.
 
 mod catalog;

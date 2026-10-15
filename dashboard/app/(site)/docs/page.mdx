@@ -8,7 +8,7 @@ It is a Rust library with a command-line tool (`timelake`), a Python package and
 
 ## What it does
 
-- **Time-series tables.** You declare a time column and a series key (such as `device_id`), like a TimescaleDB hypertable. Data is partitioned by hour, day or month and every file is sorted by `(series key, time)`.
+- **Time-series tables.** You declare a time column and a series key (such as `device_id`). Data is partitioned by hour, day or month and every file is sorted by `(series key, time)`.
 - **Streaming-friendly writes.** Each append is one atomic Iceberg snapshot. Retries can be made idempotent with a batch id, and concurrent writers are safe.
 - **Built-in maintenance.** Small files from frequent appends are compacted inline, duplicates are removed (the latest write wins), old data is dropped by retention, and old snapshots are expired.
 - **Fast latest values.** A last-value index holds the newest row of every series; queries for the latest row are rewritten to read it.

@@ -22,8 +22,9 @@ Next.js website (`dashboard/`) and benchmarks (`bench/`).
   the same commit. A change to the Python bindings updates `_timelake.pyi`. A change to `timelake-wasm` or
   `timelake-format` gets a rebuilt WASM bundle (`bun run build:wasm` in `packages/timelake-client`).
   A change to the plan in SPEC.md (§19, §21) updates the public roadmap, `dashboard/lib/roadmap.ts`.
-- **Credit other projects.** An idea or code taken from another project is credited where it's used and in
-  `PRIOR_ART.md`, and copied code comes only from permissive licenses (CONTRIBUTING.md, "Credit").
+- **Ideas, not code.** Never copy or translate another project's code. Credit ideas from open-source projects
+  where they're used and in `PRIOR_ART.md`; never name open-core, dual-licensed or commercial products as a source
+  (CONTRIBUTING.md, "Credit").
 - **Don't run Prettier or ESLint.** Formatting is oxfmt, linting oxlint, Python ruff, Rust rustfmt and clippy.
 - **Never commit secrets** or `.env*` files. Don't touch AWS, Vercel settings, Docker containers or other services
   unless asked.

@@ -125,7 +125,7 @@ const HOW = [
   {
     icon: Rows3,
     title: "A time-series contract",
-    body: "Declare a time column and a series key, like a TimescaleDB hypertable. Tables are partitioned by hour, day or month, and every file is sorted by (series key, time).",
+    body: "Declare a time column and a series key. Tables are partitioned by hour, day or month, and every file is sorted by (series key, time).",
   },
   {
     icon: Layers,

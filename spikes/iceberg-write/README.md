@@ -63,7 +63,7 @@ Recommendation: **no fork. Build a Timelake commit layer on iceberg-rust's publi
 2. Write a v3 deletion vector + row-delta commit and check DuckDB honors it. This decides Q1 (v2 vs. v3) for deletes.
 3. Run against S3/MinIO + a REST catalog to get real commit latencies.
 
-## Reference implementations to port from (surveyed 2026-10-11)
+## Reference implementations to learn from (surveyed 2026-10-11)
 
 | Implementation | Rewrite / overwrite | Row delta + DV writer | Branch commits | Expire w/ file cleanup | Manifest merging | Orphan cleanup |
 |---|---|---|---|---|---|---|
@@ -73,5 +73,5 @@ Recommendation: **no fork. Build a Timelake commit layer on iceberg-rust's publi
 | RisingWave fork of iceberg-rust + `iceberg-compaction` | ✅ via DataFusion | applies deletes on rewrite | ✅ `with_to_branch` | ❌ | ? | ❌ |
 | Apache iceberg-rust 0.10.1 | ❌ | ❌ | ❌ | metadata only | ❌ | ❌ |
 
-- **iceberg-cpp** is now the most complete non-JVM implementation. Its structure mirrors Java, which makes it the best source to port our commit layer from.
+- **iceberg-cpp** is now the most complete non-JVM implementation. Its structure mirrors Java, which makes it the best reference for how each commit operation works.
 - We don't link it via FFI: it needs a C++23 toolchain, which is the same cross-compilation concern as embedding DuckDB (SPEC D3).

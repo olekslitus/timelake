@@ -11,7 +11,7 @@
 | D2 | Ship our own Iceberg REST catalog, `timelake-catalog`, that is optional and scales to zero (§5.2) | **Accepted** |
 | D3 | DataFusion as the embedded engine; shared function kernels; DuckDB extension as the user-facing SQL path (§5.3) | Proposed, pending a Phase 0 spike |
 | D4 | Any database-backed component (hot store, catalog DB) is an optional performance upgrade, never a requirement | **Accepted** |
-| D5 | User-defined schemas with a hypertable-like contract (§7) | **Accepted** |
+| D5 | User-defined schemas with a time-series table contract (§7) | **Accepted** |
 | D6 | Deletes are immutable: logical, audited, and reversible; physical purge is a separate explicit operation (§9.2) | **Accepted** |
 | D7 | License: **Apache License 2.0** for everything in this repository. Apache 2.0's explicit patent grant suits infrastructure that companies embed, and it matches Iceberg, Arrow, DataFusion and Parquet. The repository is public (2026-10-12). AGPLv3 + CLA and FSL were considered to keep cloud vendors from hosting it, and rejected: an open-format, no-lock-in project wins by adoption (the PostgreSQL/Iceberg/DuckDB path), late restrictions are answered by forks (Valkey, OpenSearch), and an API can be reimplemented regardless of license (DocumentDB). Protection comes from the trademark, being the reference implementation, and a hosted service plus premium add-ons (§20). | **Accepted** |
 | D8 | GDPR erasure is supported: immediate logical delete, then a batched physical purge (daily by default, `--now` on demand, alert past 7 days), covering every copy of the data (§9.3). No legal hold / WORM in v1. | **Accepted** |
@@ -19,7 +19,7 @@
 | D10 | `import` = contract inference + create/adopt + backfill, with smart defaults for CSV, lake formats, and databases (TimescaleDB first) (§8.5) | **Accepted** |
 | D11 | Ingestion is a library-first pipeline (ingest + rules) deployable embedded, as AWS Lambda, as a container, or at the edge (§13) | **Accepted** |
 | D12 | Open core: the lake, ingestion, caggs, import of open formats/DBs, and the DuckDB extension are open source. Industrial historian connectors are a **premium** offering (§20). | Proposed |
-| D13 | Timelake owns its commit layer (append, replace, row-delta, overwrite, branch commits, rewrite-manifests) on iceberg-rust's public types. Forking and maintaining our own iceberg-rust is acceptable if needed. Upstreaming is welcome but low priority. Iceberg Java, iceberg-cpp, and iceberg-go serve as **reference implementations** to port from and as **conformance oracles** in tests (Phase 0 finding, `spikes/iceberg-write`) | **Accepted** |
+| D13 | Timelake owns its commit layer (append, replace, row-delta, overwrite, branch commits, rewrite-manifests) on iceberg-rust's public types. Forking and maintaining our own iceberg-rust is acceptable if needed. Upstreaming is welcome but low priority. Iceberg Java, iceberg-cpp, and iceberg-go serve as **reference implementations** to learn from (never to copy) and as **conformance oracles** in tests (Phase 0 finding, `spikes/iceberg-write`) | **Accepted** |
 | D14 | Rust for the core, even where we must implement Iceberg operations ourselves. Python is the client/API layer (PyO3), not the engine. | **Accepted** |
 | D15 | `timelake-bench`: TSBS IoT as the base workload plus lake extensions, run against every alternative in §16 (§17) | **Accepted** |
 | D16 | Parquet stays the lake's source of truth (Iceberg-compatible). Vortex is used where Timelake owns the read path and data is local: reader SSD cache, hot tier, edge. Re-evaluate when Iceberg supports Vortex files or Vortex object-store I/O matures (`bench/results/VORTEX.md`). | Proposed |
@@ -51,7 +51,7 @@ The problem we replace: teams today run S3 Tables (or self-managed Iceberg) plus
 | R2 | Build on Apache Iceberg. Open-source alternative to S3 Tables, works on any object storage, specialized for time series (frequent writes, late-arriving data, …). |
 | R3 | Parquet as the first file format; keep the door open for Vortex once Iceberg supports it. |
 | R4 | Pluggable in-memory cache/hot layer for recent data (Valkey/Redis, DuckDB). |
-| R5 | Simple continuous aggregates (caggs) and a time-series function library on par with TimescaleDB (+ Toolkit). |
+| R5 | Simple continuous aggregates (caggs) and a rich time-series function library. |
 | R6 | Willing to build a custom table format *if justified* — to be decided (see §5). |
 | R7 | Easier to use and faster for time series than DuckLake, S3 Tables, Lance, etc. |
 | R8 | Support all time-series shapes; IoT is the primary target. |
@@ -242,15 +242,15 @@ Writing all of that by hand would mean reimplementing a query engine.
 
 ## 7. Data model and table layout (IoT-first)
 
-### 7.1 Timelake tables: a hypertable-like contract (D5)
-Users define their own schema, as with TimescaleDB hypertables. A table becomes a **Timelake table** when it meets this contract:
+### 7.1 Timelake tables: a time-series table contract (D5)
+Users define their own schema. A table becomes a **Timelake table** when it meets this contract:
 
 | Element | Required? | Meaning |
 |---------|-----------|---------|
 | `time_column` | **Required**, exactly one | `timestamp` / `timestamptz` (µs; ns on Iceberg v3). Drives partitioning, retention, caggs, late-data detection. |
-| `series_key` | Optional (strongly recommended) | One or more columns identifying a series, e.g. `(device_id, metric)`. Similar to Timescale's `segmentby` or Influx tags. Drives sort order, dedup, series indexes, bucket partitioning. If absent, the table is treated as a single stream (e.g. an event log). |
+| `series_key` | Optional (strongly recommended) | One or more columns identifying a series, e.g. `(device_id, metric)`. Drives sort order, dedup, series indexes, bucket partitioning. If absent, the table is treated as a single stream (e.g. an event log). |
 | `dedup_key` | Optional | Defaults to `series_key + time_column`. Set to none to disable dedup. |
-| `chunk_interval` | Optional | Time partition granularity (like Timescale's `chunk_time_interval`). Auto-chosen from expected volume if omitted. |
+| `chunk_interval` | Optional | Time partition granularity. Auto-chosen from expected volume if omitted. |
 | `_ingest_ts` | Added automatically (opt-out) | Arrival time. Powers late-data detection, last-write-wins dedup, and freshness metrics. |
 | All other columns | Free-form | Any Iceberg type, including `variant` on v3. Evolves via Iceberg schema evolution (add / rename / widen / drop). |
 
@@ -266,7 +266,7 @@ lake.create_table("iot.sensor", schema=arrow_schema,
                   time_column="ts", series_key=["device_id", "metric"])
 ```
 
-**Adopting existing tables:** `timelake adopt <table>` turns an existing Iceberg table (e.g. one in S3 Tables) into a Timelake table, like Timescale's `create_hypertable` on an existing table. It validates the contract, sets `timelake.*` properties, and lets compaction gradually re-lay out the data. This is the main migration path from "S3 Tables + Glue".
+**Adopting existing tables:** `timelake adopt <table>` turns an existing Iceberg table (e.g. one in S3 Tables) into a Timelake table. It validates the contract, sets `timelake.*` properties, and lets compaction gradually re-lay out the data. This is the main migration path from "S3 Tables + Glue".
 
 **Internal series ID:** Timelake computes a stable 64-bit hash of `series_key` for indexing and bucketing. *Open question Q4: whether to materialize it as a hidden `_series_id` column (faster bucketing and pruning) or keep it only in indexes (cleaner schema for plain-DuckDB users).*
 
@@ -335,7 +335,7 @@ Backfill means loading historical data (months to years) into a table, usually *
 2. **Write in the final layout:** Workers write files that are already sorted, sized, and partitioned at the granularity appropriate for the data's age.
    - This bypasses the WAL, the hot tier, and later compaction, so nothing gets written twice.
    - Work units are independent, so the job fans out across threads, processes, or Lambdas.
-3. **Stage on an Iceberg branch** (`backfill/<job_id>`), the write-audit-publish pattern popularized by Netflix. Readers of `main` see nothing yet.
+3. **Stage on an Iceberg branch** (`backfill/<job_id>`), the write-audit-publish pattern. Readers of `main` see nothing yet.
 4. **Validate:** Row counts vs. the source, dedup-key conflicts, time bounds, null checks, and optional user SQL assertions.
 5. **Publish:** Apply the branch's changes onto the current `main` in one atomic commit.
    - Live ingestion keeps committing meanwhile; append-only commits don't conflict.
@@ -564,9 +564,9 @@ These tasks can be triggered by a schedule, by commit events (catalog events, S3
 - **Hierarchical caggs:** 1 min → 1 h → 1 d, each built from the previous level.
 - **Real-time aggregation (Timelake reader):** Combines materialized buckets with on-the-fly aggregation of the not-yet-materialized tail and hot-tier data.
 - **Automatic query routing:** The Timelake reader rewrites `GROUP BY time_bucket(...)` queries to use the best matching cagg.
-- **Mergeable state:** Aggregates that can't be re-merged from final values (percentiles, time-weighted averages) store intermediate **state** (sketches, partial sums), as in TimescaleDB Toolkit's two-step aggregates.
+- **Mergeable state:** Aggregates that can't be re-merged from final values (percentiles, time-weighted averages) store intermediate **state** (sketches, partial sums).
 
-### 11.2 Function library (target parity with TimescaleDB + Toolkit)
+### 11.2 Function library
 | Category | Functions |
 |----------|-----------|
 | Bucketing | `time_bucket` (with origin, offset, timezone, months), `time_bucket_gapfill` |
@@ -625,7 +625,7 @@ tbl.to_duckdb()                                     # hand off an Arrow stream t
 
 ## 13. Ingestion: `timelake-ingest` (R11, D11)
 
-A Telegraf / Firehose-style pipeline that does **ingestion and in-stream analytics in one place**. It is a **library first**: the same pipeline code runs in every deployment form, and the binary, container, and Lambda handler are thin wrappers around it.
+A pipeline that does **ingestion and in-stream analytics in one place**. It is a **library first**: the same pipeline code runs in every deployment form, and the binary, container, and Lambda handler are thin wrappers around it.
 
 ### 13.1 Deployment forms
 | Form | Triggered by | Best for |
@@ -635,7 +635,7 @@ A Telegraf / Firehose-style pipeline that does **ingestion and in-stream analyti
 | **Container / microservice** | Long-lived consumers: MQTT, Kafka/Redpanda, NATS, HTTP, Arrow Flight | Steady high volume; persistent MQTT connections |
 | **Edge binary** | Same as container, on a gateway | Factories and sites with unreliable uplinks: buffers locally, then catches up |
 
-All forms share a single config file in the spirit of Telegraf's (`inputs → processors → rules → outputs`), so a pipeline can move from Lambda to a container without changes.
+All forms share a single config file (`inputs → processors → rules → outputs`), so a pipeline can move from Lambda to a container without changes.
 
 ### 13.2 Pipeline
 - **Inputs:** MQTT (IoT first-class), HTTP (JSON/NDJSON), Arrow Flight / Arrow IPC, Kafka/Redpanda, Kinesis, NATS, InfluxDB line protocol, OTLP metrics. OPC-UA and Sparkplug B are candidates.

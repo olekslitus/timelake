@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import re
+import urllib.request
 from collections.abc import Iterator, Mapping
 
-from benchlib import QUERIES
+from benchlib import DATA, QUERIES
 
 SUITES = ("tpch", "clickbench", "tsbs_iot", "iot_point")
 TSBS_SUITES = ("tsbs_iot", "iot_point")
@@ -63,7 +64,24 @@ def raw_queries(suite: str) -> Iterator[tuple[str, str]]:
         yield name.strip(), body.strip().rstrip(";")
 
 
+CLICKBENCH_COMMIT = "f02259ad000e6a7963366fd262fccfa466fd3173"
+"""ClickBench revision the SQL comes from. Its license (CC BY-NC-SA 4.0) doesn't fit this repository, so the files are
+downloaded, not committed."""
+
+
+def clickbench_sql(variant: str, name: str) -> str:
+    """ClickBench's ``<variant>/<name>.sql`` (``queries`` or ``create``), downloaded once to ``data/clickbench``."""
+    path = DATA / "clickbench" / "sql" / CLICKBENCH_COMMIT[:12] / variant / f"{name}.sql"
+    if not path.exists():
+        url = f"https://raw.githubusercontent.com/ClickHouse/ClickBench/{CLICKBENCH_COMMIT}/{variant}/{name}.sql"
+        with urllib.request.urlopen(url, timeout=30) as response:
+            body = response.read()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(body)
+    return path.read_text()
+
+
 def clickbench_queries(variant: str) -> list[tuple[str, str]]:
     """ClickBench queries named ``q00``... from one engine variant's file (one query per line)."""
-    lines = (QUERIES / "clickbench" / f"{variant}_queries.sql").read_text().strip().splitlines()
+    lines = clickbench_sql(variant, "queries").strip().splitlines()
     return [(f"q{i:02d}", q) for i, q in enumerate(lines)]

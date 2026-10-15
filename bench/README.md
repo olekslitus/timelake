@@ -33,7 +33,7 @@ TPC-H SF10 comes from `uv run python scripts/tpch_to_parquet.py data/tpch`; the 
 | `tsbs_iot` | TSBS IoT, 500 trucks × 3 days at 10 s (11.7M readings + 11.7M diagnostics, ~10% missing points by design), seed 123 | 12 TSBS IoT queries ported to portable SQL (`queries/tsbs_iot/queries.sql`, porting rules in its header) |
 | `iot_point` | the same data | 5 single-truck queries (`queries/iot_point`) |
 | `tpch` | TPC-H SF10 as Parquet (zstd), from DuckDB `dbgen` | 22 TPC-H queries from DuckDB's `tpch` extension |
-| `clickbench` | ClickBench `hits`, 10% subset (partitions 0–9 of 100, ~10M rows) | 43 official queries, each engine's own SQL |
+| `clickbench` | ClickBench `hits`, 10% subset (partitions 0–9 of 100, ~10M rows) | 43 official queries, each engine's own SQL, downloaded from ClickBench at a pinned commit (`queries/README.md`) |
 
 ## Engines
 - `duckdb`, `datafusion`, `polars`: the Python packages over Parquet (versions recorded in every result).

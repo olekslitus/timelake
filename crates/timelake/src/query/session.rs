@@ -73,7 +73,7 @@ impl Session {
         ctx.register_object_store(lake.storage().url(), lake.storage().object_store());
         let catalog = Arc::new(LakeCatalog::new(lake.clone()));
         ctx.register_catalog(CATALOG, catalog.clone());
-        // TimescaleDB's time_bucket(width, ts [, origin]) has date_bin's semantics for fixed widths.
+        // time_bucket(width, ts [, origin]) is the name time-series users know for date_bin.
         let time_bucket = datafusion::functions::datetime::date_bin().as_ref().clone().with_aliases(["time_bucket"]);
         ctx.register_udf(time_bucket);
         Self { lake, ctx, catalog }

@@ -5,12 +5,15 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
-from benchlib.queries import DATAFUSION, DUCKDB, apply_dialect, raw_queries
+from benchlib import queries
+from benchlib.queries import CLICKBENCH_COMMIT, DATAFUSION, DUCKDB, apply_dialect, clickbench_queries, raw_queries
 from benchlib.results import append_jsonl, best_time, geomean, load_ok, order_engines, read_jsonl
 from benchlib.v0 import Target
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    import pytest
 
 
 def test_geomean() -> None:
@@ -73,3 +76,11 @@ def test_s3_tables_live_in_the_bench_bucket() -> None:
 
 def test_local_target_keeps_tables_on_disk() -> None:
     assert Target("local", "local").root("lance").endswith("data/v0/local/lance/lake")
+
+
+def test_clickbench_queries_come_from_the_download_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(queries, "DATA", tmp_path)
+    cached = tmp_path / "clickbench" / "sql" / CLICKBENCH_COMMIT[:12] / "duckdb-parquet-partitioned" / "queries.sql"
+    cached.parent.mkdir(parents=True)
+    cached.write_text("SELECT 1;\nSELECT 2;\n")
+    assert clickbench_queries("duckdb-parquet-partitioned") == [("q00", "SELECT 1;"), ("q01", "SELECT 2;")]

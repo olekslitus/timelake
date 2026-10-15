@@ -16,9 +16,5 @@ The benchmarks include the following third-party query text (see bench/queries/R
 - TPC-H queries as shipped in DuckDB's tpch extension, Copyright 2018-2026 Stichting DuckDB Foundation, licensed
   under the MIT License (see bench/queries/tpch/LICENSE-duckdb.txt). TPC-H is a benchmark of the Transaction
   Processing Performance Council (TPC); results from these queries are not TPC-H results.
-- ClickBench queries from ClickHouse/ClickBench (https://github.com/ClickHouse/ClickBench), licensed under the
-  Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License
-  (https://creativecommons.org/licenses/by-nc-sa/4.0/). The files in bench/queries/clickbench are not covered by the
-  Apache License.
 
 Ideas Timelake borrowed from other projects are credited in PRIOR_ART.md.

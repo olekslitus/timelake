@@ -41,16 +41,20 @@ const COMPACT_MIN_FILES: usize = 8;
 
 ## Credit
 
-Timelake learns from other projects and says so. [PRIOR_ART.md](PRIOR_ART.md) lists what we took and what we're
-studying.
+Timelake learns from other projects' ideas, never from copying their code. [PRIOR_ART.md](PRIOR_ART.md) lists the
+ideas we took and the projects we're studying.
 
-- **An idea from another project** (a design, an algorithm, a file layout, an API shape) gets a row in PRIOR_ART.md
-  and a short comment where it's implemented, for example `// Size-tiered compaction, as in Apache Cassandra.` If
-  the docs explain the feature, they name the project too.
-- **Code from another project**, copied or translated into Rust, must come from a permissive license (Apache-2.0,
-  MIT, BSD). Keep its copyright line in a comment above the code, say what changed, and add the project to
-  [NOTICE](NOTICE). Never copy or translate code from copyleft (GPL, AGPL) or source-available (BSL, SSPL, Elastic)
-  projects: learn from their docs and design, then write our own.
+- **Never copy code**, whatever its license: not by pasting, and not by translating it into Rust. Understand the
+  method, then write our own, better code for it.
+- **Credit ideas from open-source projects**: ones under a single open-source license, best of all run by a
+  foundation, such as the Apache Software Foundation's (Iceberg, Parquet, Cassandra) or DuckDB. Add a row in
+  PRIOR_ART.md and a short comment where the idea is implemented, for example
+  `// Size-tiered compaction, as in Apache Cassandra.` The docs may name them too.
+- **Don't name open-core, dual-licensed or source-available projects, or commercial products, as a source.** Learn
+  from their public docs at most, and don't present a Timelake feature as taken from them in code, docs or on the
+  website. Naming them in comparisons and benchmark results is fine.
+- **Third-party files used as they are** (fonts, generated UI components, benchmark query sets) keep their license
+  in [NOTICE](NOTICE). Files whose license doesn't fit Apache-2.0 are downloaded when needed, not committed.
 - **Studying a project** without adopting anything yet still gets notes in PRIOR_ART.md, so the next person
   doesn't start from zero.
 

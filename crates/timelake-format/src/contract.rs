@@ -16,7 +16,7 @@ const HOUR_MICROS: i64 = 3_600_000_000;
 const DAY_MICROS: i64 = 24 * HOUR_MICROS;
 const DAY_SECS: u64 = 86_400;
 
-/// Time partition granularity, like TimescaleDB's `chunk_time_interval`.
+/// Time partition granularity: how much time one partition covers.
 ///
 /// Parses from `hour`, `day` or `month` (and spellings such as `1h`, `1 day`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

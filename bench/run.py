@@ -25,7 +25,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from benchlib import BENCH, DATA, QUERIES, RESULTS, TPCH_TABLES, TSBS_TABLES
+from benchlib import BENCH, DATA, RESULTS, TPCH_TABLES, TSBS_TABLES
 from benchlib.queries import (
     DATAFUSION,
     DUCKDB,
@@ -35,6 +35,7 @@ from benchlib.queries import (
     Dialect,
     apply_dialect,
     clickbench_queries,
+    clickbench_sql,
     raw_queries,
 )
 from benchlib.results import QueryRecord, append_jsonl, best_time, first_time, utc_timestamp
@@ -187,7 +188,7 @@ def _duckdb_parquet_views(con: duckdb.DuckDBPyConnection, cfg: RunConfig) -> Non
         for t in TSBS_TABLES:
             con.execute(f"CREATE VIEW {t} AS SELECT * FROM read_parquet('{cfg.tsbs_path('parquet', t)}')")
     elif cfg.suite == "clickbench":
-        create = (QUERIES / "clickbench" / "duckdb-parquet-partitioned_create.sql").read_text()
+        create = clickbench_sql("duckdb-parquet-partitioned", "create")
         # "*.parquet", not "hits_*": S3 Express rejects list prefixes that don't end in "/". Same 10 files.
         con.execute(create.replace("'hits_*.parquet'", f"'{cfg.base}/clickbench/*.parquet'"))
 
@@ -212,7 +213,7 @@ def _duckdb_vortex_views(con: duckdb.DuckDBPyConnection, cfg: RunConfig) -> None
         for t in TSBS_TABLES:
             con.execute(f"CREATE VIEW {t} AS SELECT * FROM read_vortex('{cfg.tsbs_path('vortex', t)}')")
     elif cfg.suite == "clickbench":
-        create = (QUERIES / "clickbench" / "duckdb-parquet-partitioned_create.sql").read_text()
+        create = clickbench_sql("duckdb-parquet-partitioned", "create")
         create = create.replace(
             "read_parquet('hits_*.parquet', binary_as_string=True)",
             f"read_vortex('{cfg.base}/clickbench/vortex/*.vortex')",
@@ -234,7 +235,7 @@ def setup_datafusion(cfg: RunConfig) -> Runner:
         for t in TSBS_TABLES:
             ctx.register_parquet(t, cfg.tsbs_path("parquet", t))
     elif cfg.suite == "clickbench":
-        create = (QUERIES / "clickbench" / "datafusion-partitioned_create.sql").read_text()
+        create = clickbench_sql("datafusion-partitioned", "create")
         create = create.replace("LOCATION 'partitioned'", f"LOCATION '{cfg.base}/clickbench/'")
         for statement in filter(str.strip, create.split(";")):
             ctx.sql(statement).collect()

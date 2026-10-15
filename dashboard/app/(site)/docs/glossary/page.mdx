@@ -33,7 +33,7 @@ The words used in these docs, in plain terms.
 | **Snapshot, version** | The state of a table after one commit. Old snapshots are kept for a while (one hour by default) so running queries and other engines can finish, then expired. |
 | **Snapshot expiry** | Removing old snapshots and deleting the files that only they used. |
 | **Table contract** | A table's time column, series key, chunk interval, dedup and retention. It is stored in the table's properties (timelake.*), so every writer follows it. |
-| **Time bucket** | Grouping rows into fixed time windows, such as 5 minutes or 1 hour. time_bucket(INTERVAL '1 hour', time) works as in TimescaleDB. |
+| **Time bucket** | Grouping rows into fixed time windows, such as 5 minutes or 1 hour. For example, time_bucket(INTERVAL '1 hour', time). |
 | **TSBS** | Time Series Benchmark Suite, a standard benchmark from Timescale. Timelake's benchmarks use its IoT dataset: a fleet of trucks reporting position, speed and fuel. |
 | **Warehouse** | The root folder or bucket prefix that holds a set of tables, such as s3://my-bucket/lake or ./warehouse. |
 | **WASM (WebAssembly)** | A way to run compiled code in browsers and JavaScript runtimes. Timelake's TypeScript client uses a WebAssembly build of its reader. |
