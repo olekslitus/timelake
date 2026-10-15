@@ -17,8 +17,10 @@ set -euo pipefail
 SELF=$(realpath "$0")
 source /etc/profile.d/timelake-bench.sh
 export PATH=$HOME/.cargo/bin:$HOME/.local/bin:$PATH GOTOOLCHAIN=auto
-# Amazon Linux's Go turns the checksum database off, and Go then refuses to download the toolchain go.mod asks for.
-export GOSUMDB=sum.golang.org
+# Amazon Linux's Go skips the module proxy and the checksum database: without the proxy, modules deleted from GitHub
+# (a TSBS dependency) can't be fetched, and without the checksum database Go won't download the toolchain go.mod asks
+# for.
+export GOPROXY=https://proxy.golang.org,direct GOSUMDB=sum.golang.org
 cd ~/timelake/bench
 PY="uv run python"
 LOGS=/mnt/bench/logs
@@ -53,7 +55,7 @@ build_timebench() {
   uv sync  # Python (.python-version), the engines, and timelake built from crates/timelake-py
   (cd .. && cargo build --release -p timelake-cli)
   (cd tools/s3proxy && go build -o ../../.bin/s3proxy .)
-  GOBIN=$PWD/.bin go install github.com/timescale/tsbs/cmd/tsbs_generate_data@latest
+  GOBIN=$PWD/.bin go install github.com/timescale/tsbs/cmd/tsbs_generate_data@v0.0.0-20260527045238-8323e59c7402  # pinned: the data must not change
 }
 
 build() {

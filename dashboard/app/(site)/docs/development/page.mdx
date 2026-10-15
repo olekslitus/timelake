@@ -102,7 +102,7 @@ The Explorer runs the local CLI against `TIMELAKE_WAREHOUSE` (default: the v0 be
 ```bash
 uv sync                                       # at the repo root; the same environment as above
 cargo build --release -p timelake-cli         # the Timelake reader
-GOBIN=$PWD/bench/.bin go install github.com/timescale/tsbs/cmd/tsbs_generate_data@latest
+GOBIN=$PWD/bench/.bin go install github.com/timescale/tsbs/cmd/tsbs_generate_data@v0.0.0-20260527045238-8323e59c7402
 uv run timebench run tsbs-iot --scale small
 uv run timebench report latest
 ```

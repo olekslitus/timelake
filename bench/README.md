@@ -20,7 +20,7 @@ timebench lives here for now and may move to its own repository: only its Timela
 uv sync                                                    # at the repo root: Python, the engines, and timelake (built from crates/timelake-py)
 cargo build --release -p timelake-cli                      # the Timelake reader (target/release/timelake)
 (cd bench/tools/s3proxy && go build -o ../../.bin/s3proxy .)   # request-counting S3 proxy
-GOBIN=$PWD/bench/.bin go install github.com/timescale/tsbs/cmd/tsbs_generate_data@latest
+GOBIN=$PWD/bench/.bin go install github.com/timescale/tsbs/cmd/tsbs_generate_data@v0.0.0-20260527045238-8323e59c7402
 ```
 Run Python from anywhere in the repo with `uv run …`; it uses the root `.venv`. Tests: `uv run pytest bench/tests`
 (offline, on a tiny generated workload).
