@@ -6,3 +6,19 @@ This product is licensed under the Apache License, Version 2.0 (see LICENSE).
 This product includes the Geist and Geist Mono fonts, Copyright (c) 2023 Vercel, in collaboration with
 basement.studio, licensed under the SIL Open Font License, Version 1.1 (see dashboard/assets/fonts/OFL-Geist.txt).
 The Timelake wordmark is set in Geist and outlined.
+
+This product includes user interface components generated with shadcn/ui, Copyright (c) 2023 shadcn, licensed under
+the MIT License (see dashboard/components/ui/LICENSE-shadcn.md).
+
+The benchmarks include the following third-party query text (see bench/queries/README.md):
+- TSBS IoT queries, ported from TSBS, Copyright (c) 2017-2021 Timescale, Inc. and Copyright (c) 2016 InfluxData,
+  licensed under the MIT License (see bench/queries/tsbs_iot/LICENSE-tsbs.txt).
+- TPC-H queries as shipped in DuckDB's tpch extension, Copyright 2018-2026 Stichting DuckDB Foundation, licensed
+  under the MIT License (see bench/queries/tpch/LICENSE-duckdb.txt). TPC-H is a benchmark of the Transaction
+  Processing Performance Council (TPC); results from these queries are not TPC-H results.
+- ClickBench queries from ClickHouse/ClickBench (https://github.com/ClickHouse/ClickBench), licensed under the
+  Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License
+  (https://creativecommons.org/licenses/by-nc-sa/4.0/). The files in bench/queries/clickbench are not covered by the
+  Apache License.
+
+Ideas Timelake borrowed from other projects are credited in PRIOR_ART.md.

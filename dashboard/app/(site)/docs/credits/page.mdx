@@ -1,0 +1,37 @@
+export const metadata = { title: "Credits" }
+
+# Credits
+
+Timelake is built on other open-source projects and borrows ideas from many more. Thank you to everyone behind them.
+
+## Built on
+
+| Project | What it does in Timelake |
+| --- | --- |
+| [Apache Iceberg](https://iceberg.apache.org) | The table format |
+| [Apache Parquet](https://parquet.apache.org) | The data files |
+| [Apache Arrow](https://arrow.apache.org) | Data in memory |
+| [Apache DataFusion](https://datafusion.apache.org) | The query engine |
+| [iceberg-rust](https://github.com/apache/iceberg-rust), [object_store](https://github.com/apache/arrow-rs-object-store) | Iceberg types, and every read and write to storage |
+| [DuckDB](https://duckdb.org) | Reading tables with plain SQL |
+
+## Ideas we borrowed
+
+| Idea | From |
+| --- | --- |
+| Time-series table contract, `time_bucket`, continuous aggregates | [TimescaleDB](https://github.com/timescale/timescaledb) |
+| Size-tiered compaction | [Apache Cassandra](https://cassandra.apache.org) |
+| Tables readable with no catalog service | Iceberg's Hadoop catalog |
+| Staging a backfill on a branch, then publishing it | Write-audit-publish, from Netflix |
+| The look of this site | [Oxide](https://oxide.computer) |
+
+## Benchmarks, fonts and components
+
+| What | From |
+| --- | --- |
+| Benchmark queries | [TSBS](https://github.com/timescale/tsbs), [ClickBench](https://github.com/ClickHouse/ClickBench), TPC-H via DuckDB |
+| Fonts | [Geist](https://vercel.com/font), by Vercel and basement.studio |
+| UI components | [shadcn/ui](https://ui.shadcn.com) |
+
+Licenses are in [NOTICE](https://github.com/polythings/timelake/blob/main/NOTICE). Our notes on these projects, and on
+the ones we're studying, are in [PRIOR_ART.md](https://github.com/polythings/timelake/blob/main/PRIOR_ART.md).

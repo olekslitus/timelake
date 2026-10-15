@@ -147,5 +147,8 @@ cargo build -p timelake-cli && (cd packages/timelake-client && bun test)   # TS 
 ```
 See [Development](https://timelake.dev/docs/development) for each part, the tools and CI, [CONTRIBUTING.md](CONTRIBUTING.md) for the code guide, and [CHANGELOG.md](CHANGELOG.md) for what changed.
 
+## Acknowledgements
+Timelake is built on [Apache Iceberg](https://iceberg.apache.org), [Apache Parquet](https://parquet.apache.org), [Apache Arrow](https://arrow.apache.org) and [Apache DataFusion](https://datafusion.apache.org). Its table contract, `time_bucket` and continuous aggregates follow [TimescaleDB](https://github.com/timescale/timescaledb); its compaction follows [Apache Cassandra](https://cassandra.apache.org)'s size tiers; its benchmarks use [TSBS](https://github.com/timescale/tsbs), [ClickBench](https://github.com/ClickHouse/ClickBench) and TPC-H via [DuckDB](https://duckdb.org). [PRIOR_ART.md](PRIOR_ART.md) credits every project we learned from, and [NOTICE](NOTICE) lists third-party files and their licenses.
+
 ## License
 Licensed under the [Apache License, Version 2.0](LICENSE). Unless you state otherwise, any contribution you submit for inclusion in Timelake is licensed under the same terms, without additional conditions (Apache 2.0, §5).

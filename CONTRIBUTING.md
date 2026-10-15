@@ -39,6 +39,21 @@ let bytes: u64 = files.iter().map(|f| f.size).sum();
 const COMPACT_MIN_FILES: usize = 8;
 ```
 
+## Credit
+
+Timelake learns from other projects and says so. [PRIOR_ART.md](PRIOR_ART.md) lists what we took and what we're
+studying.
+
+- **An idea from another project** (a design, an algorithm, a file layout, an API shape) gets a row in PRIOR_ART.md
+  and a short comment where it's implemented, for example `// Size-tiered compaction, as in Apache Cassandra.` If
+  the docs explain the feature, they name the project too.
+- **Code from another project**, copied or translated into Rust, must come from a permissive license (Apache-2.0,
+  MIT, BSD). Keep its copyright line in a comment above the code, say what changed, and add the project to
+  [NOTICE](NOTICE). Never copy or translate code from copyleft (GPL, AGPL) or source-available (BSL, SSPL, Elastic)
+  projects: learn from their docs and design, then write our own.
+- **Studying a project** without adopting anything yet still gets notes in PRIOR_ART.md, so the next person
+  doesn't start from zero.
+
 ## Rust
 
 - **Errors:** `thiserror` enums in libraries, `anyhow` in binaries. Keep the cause: use `#[from]` or `#[source]`,

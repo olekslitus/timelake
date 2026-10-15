@@ -27,7 +27,8 @@ use crate::write::{file_partition, row_groups, write_partition, writer_propertie
 const SMALL_FILE_NUMERATOR: u64 = 3;
 const SMALL_FILE_DENOMINATOR: u64 = 4;
 /// Tiered compaction groups small files by size: tier `n` holds files of
-/// `TIER_BASE × TIER_GROWTH^n` bytes and up (64 KiB, 256 KiB, 1 MiB, …).
+/// `TIER_BASE × TIER_GROWTH^n` bytes and up (64 KiB, 256 KiB, 1 MiB, …). The idea is Apache
+/// Cassandra's size-tiered compaction strategy.
 const TIER_BASE_SHIFT: u32 = 16;
 const TIER_GROWTH: u64 = 4;
 /// A partition whose files total at most this many target sizes is rewritten whole.

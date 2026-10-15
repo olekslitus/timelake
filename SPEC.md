@@ -1,7 +1,7 @@
 # Timelake — Specification
 
 > **Status:** Draft v0.8 — v0 implementation in progress (§19.0)
-> **Last updated:** 2026-10-13
+> **Last updated:** 2026-10-15
 > **Scope of this document:** product requirements, architecture, and the key design decisions (with open questions). Not an implementation guide yet.
 
 ### Decision log
@@ -335,7 +335,7 @@ Backfill means loading historical data (months to years) into a table, usually *
 2. **Write in the final layout:** Workers write files that are already sorted, sized, and partitioned at the granularity appropriate for the data's age.
    - This bypasses the WAL, the hot tier, and later compaction, so nothing gets written twice.
    - Work units are independent, so the job fans out across threads, processes, or Lambdas.
-3. **Stage on an Iceberg branch** (`backfill/<job_id>`), the write-audit-publish pattern. Readers of `main` see nothing yet.
+3. **Stage on an Iceberg branch** (`backfill/<job_id>`), the write-audit-publish pattern popularized by Netflix. Readers of `main` see nothing yet.
 4. **Validate:** Row counts vs. the source, dedup-key conflicts, time bounds, null checks, and optional user SQL assertions.
 5. **Publish:** Apply the branch's changes onto the current `main` in one atomic commit.
    - Live ingestion keeps committing meanwhile; append-only commits don't conflict.
@@ -700,6 +700,8 @@ Plus examples for credential vending via the REST catalog, per-tenant retention 
 
 ## 16. Landscape and positioning (R7)
 
+This section compares products. What we learned from them, and how we credit it, is in [PRIOR_ART.md](PRIOR_ART.md).
+
 ### 16.1 Table formats
 
 | | Iceberg (plain) | Delta Lake | Apache Hudi | Apache Paimon | DuckLake | Lance | **Timelake** |
@@ -725,6 +727,8 @@ Plus examples for credential vending via the REST catalog, per-tenant retention 
 | Runs serverless / scale to zero | Managed | Managed | ✗ (resident server) | Server | ✓ |
 
 **Also watch:** RustFS 1.0 (Apache-2.0, Rust, GA 2026-09) is an S3-compatible object store that ships an **Iceberg REST catalog / S3 Tables-style API**. It's a likely integration target (storage + catalog in one binary) and a potential competitor for the "open-source S3 Tables" position.
+
+**Also watch:** IceGate (Apache-2.0, Rust, prototype) is an OpenTelemetry observability lake on Iceberg + Parquet with a DataFusion engine and an object-store Parquet WAL. It shares our stack, not our use case; notes and ideas to adopt are in PRIOR_ART.md.
 
 ### 16.3 Time-series databases (baselines, not lakes)
 TimescaleDB, InfluxDB 3, QuestDB, TDengine, GreptimeDB. They are fast and feature-rich, but they own the storage. Long retention is expensive, and the data is not an open table that other engines can read. They are the **performance and ergonomics bar** Timelake is measured against (§17).
