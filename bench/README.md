@@ -34,9 +34,15 @@ uv run timebench report latest                                # one run as Markd
 uv run timebench history --workload tsbs-iot                  # one line per run
 ```
 - **Workloads** (`timebench/workloads/`): data at a named scale, the order its rows arrive in, and the queries. The
-  data is generated on first use into `data/workloads/<workload>-<scale>/`. Now: `tsbs-iot` (SPEC §17.1) at `small`
-  (50 trucks), `standard` (500 trucks, the published runs) and `large` (5,000 trucks), streamed in 5-minute windows
-  (`--param window_minutes=…`; `--param max_windows=N` for a quick check).
+  data is generated on first use into `data/workloads/<workload>-<scale>/`. Both stream in 5-minute windows
+  (`--param window_minutes=…`; `--param max_windows=N` for a quick check):
+  - `tsbs-iot` (SPEC §17.1): `small` (50 trucks), `standard` (500 trucks, the published runs), `large` (5,000).
+  - `tsbs-devops`, TSBS's cpu-only use case and its 15 query types: `small` (100 hosts), `standard` (4,000 hosts,
+    104M rows, the size published TSBS results use). Its file is in time order, so it streams without being held in
+    memory.
+- **Variants** (`--variant NAME`): a different kind of run of the same workload and target, kept apart in reports and
+  on the site. The weekly `bulk` variant loads TSBS DevOps in 1-hour windows as fast as each system commits, with no
+  queries (`--checkpoints ""`), and is judged by rows per second.
 - **Systems** (`timebench/systems/`), each written and read the way its docs suggest:
 
   | System | Writes | Maintenance | Readers |

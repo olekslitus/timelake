@@ -48,23 +48,27 @@ bench/infra/down.sh                             # empties the buckets and delete
 
 ## Weekly runs
 A second, long-lived stack (`timelake-bench-weekly`) holds one fixed instance, stopped between runs, plus a role that
-GitHub Actions on `main` can assume to start it, run commands on it, read its results and stop it, and nothing else.
-Every Monday `.github/workflows/bench-weekly.yml` runs `weekly.sh`:
-1. start the instance and mount its NVMe SSD (stopping wipes it);
-2. check out the commit and run `remote.sh weekly`: build, start TimescaleDB in a container, then
-   `timebench profile weekly` on the local disk and on S3;
-3. copy the run files into `bench/results/runs`, stop the instance, and commit them to `main`.
+GitHub Actions on `main` can assume to start it, run commands on it and read its results, and nothing else.
+`.github/workflows/bench-weekly.yml` runs `weekly.sh` in two parts, so a run can take longer than a GitHub job may:
+1. **start** (Mondays 06:00 UTC): start the instance, mount its NVMe SSD (stopping wipes it), check out the commit and
+   start `remote.sh weekly` in the background: build, start TimescaleDB in a container, then
+   `timebench profile weekly` on the local disk and on S3. Each target's run files go to the bucket as soon as they're
+   done, and the instance stops itself at the end (or after 12 hours).
+2. **collect** (hourly, Monday to Wednesday): copy the finished run files from the bucket into `bench/results/runs`
+   and commit them to `main` with the website's copy.
 
-The instance runs about 2–3 hours a week; stopped, it costs only its 100 GB EBS volume. Same machine, workloads and
-pinned competitor versions every week, so the history shows Timelake's changes.
+Same machine, workloads and pinned competitor versions every week, so the history shows Timelake's changes. Stopped,
+the instance costs only its 100 GB EBS volume.
 
 One-time setup (with `aws login --profile timelake`; the commit must be pushed):
 ```bash
 export STACK=timelake-bench-weekly
 INSTANCE=true INSTANCE_TYPE=c8gd.2xlarge GITHUB_REPO=polythings/timelake bench/infra/up.sh
-bench/infra/ssm.sh 'test -f /var/lib/timelake-bootstrap.done && echo ready'   # first boot takes ~10 minutes
+bench/infra/ssm.sh 'test -f /var/lib/timelake-bootstrap.done && echo ready'   # the first boot installs toolchains
 gh variable set BENCH_ROLE_ARN --body "$(source bench/infra/env.sh && output GitHubRoleArn)"
-gh workflow run bench-weekly.yml                                              # a first run now
+gh workflow run bench-weekly.yml -f action=start                              # a first run now
 ```
-If the account already has an OIDC provider for `token.actions.githubusercontent.com`, pass its ARN as
-`GITHUB_OIDC_PROVIDER_ARN=…` to `up.sh`. By hand: `STACK=timelake-bench-weekly bench/infra/weekly.sh`.
+`up.sh` asks GitHub for the repository's OIDC subject (immutable subjects carry owner and repository ids). If the
+account already has an OIDC provider for `token.actions.githubusercontent.com`, pass its ARN as
+`GITHUB_OIDC_PROVIDER_ARN=…`. By hand: `STACK=timelake-bench-weekly bench/infra/weekly.sh start`, later
+`weekly.sh collect`.

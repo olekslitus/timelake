@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, ClassVar, override
 
 import pyarrow as pa
 import pyarrow.csv as pacsv
+import pyarrow.parquet as pq
 import pytest
 
 from timebench import harness, targets
@@ -20,6 +21,7 @@ from timebench.systems import DIALECTS
 from timebench.systems.timescaledb import csv_chunks, pg_type
 from timebench.targets import Target
 from timebench.workloads import Batch, Query, TableSpec, Workload
+from timebench.workloads.tsbs import stream_windows, windows
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -218,3 +220,17 @@ def test_costs_at_list_prices() -> None:
     assert query_cost(first, "local") is None
     assert phase_cost({"kind": "maintain", "kinds": {"PUT": 2000}}, "aws-s3") == pytest.approx(0.01)
     assert storage_month(1024**3, "aws-s3") == pytest.approx(0.023)
+
+
+@pytest.mark.parametrize("ordered", [True, False])
+def test_streamed_windows_match_the_in_memory_split(tmp_path: Path, *, ordered: bool) -> None:
+    """Windows read batch by batch from a time-ordered file are the ones ``windows`` makes; out of order, the same."""
+    minutes = [0, 1, 2, 7, 8, 13, 14, 15, 29, 31] * 3
+    if ordered:
+        minutes.sort()
+    times = [START + dt.timedelta(minutes=m) for m in minutes]
+    table = pa.table({"time": pa.array(times, pa.timestamp("us", tz="UTC")), "v": list(range(len(times)))})
+    path = tmp_path / "t.parquet"
+    pq.write_table(table, path, row_group_size=4)  # windows span row groups
+    expected = windows(table, 5)
+    assert [t.to_pylist() for t in stream_windows(str(path), 5)] == [t.to_pylist() for t in expected]

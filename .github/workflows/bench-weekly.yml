@@ -1,12 +1,20 @@
 # The weekly regression benchmark (SPEC §17.4): bench/profiles/weekly.toml on a fixed instance in us-east-2, at the
-# newest commit on main. The run files are committed to bench/results/runs and the website's copy, so the history
-# on timelake.dev/benchmarks grows by one point a week. Setup: bench/infra/README.md, "Weekly runs".
+# newest commit on main. "start" (Mondays) starts the instance and the run; the instance stops itself when done.
+# "collect" (hourly, Monday to Wednesday) commits finished run files to bench/results/runs and the website's copy,
+# so the history on timelake.dev/benchmarks grows each week. Setup: bench/infra/README.md, "Weekly runs".
 name: Weekly benchmark
 
 on:
   schedule:
-    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+    - cron: "0 6 * * 1" # start: Mondays 06:00 UTC
+    - cron: "30 * * * 1-3" # collect: hourly, Monday to Wednesday
   workflow_dispatch:
+    inputs:
+      action:
+        description: start a run, or collect finished ones
+        type: choice
+        options: [start, collect]
+        default: start
 
 permissions:
   contents: write # commit the results
@@ -16,22 +24,37 @@ concurrency:
   group: bench-weekly
   cancel-in-progress: false
 
+env:
+  STACK: timelake-bench-weekly
+
 jobs:
-  run:
-    name: Run and commit results
+  start:
+    name: Start the run
+    if: vars.BENCH_ROLE_ARN != '' && (github.event.schedule == '0 6 * * 1' || inputs.action == 'start')
     runs-on: ubuntu-latest
-    timeout-minutes: 360
-    if: vars.BENCH_ROLE_ARN != ''
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.BENCH_ROLE_ARN }}
+          aws-region: us-east-2
+      - run: bench/infra/weekly.sh start "$GITHUB_SHA"
+
+  collect:
+    name: Commit finished runs
+    if: vars.BENCH_ROLE_ARN != '' && (github.event.schedule == '30 * * * 1-3' || inputs.action == 'collect')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ vars.BENCH_ROLE_ARN }}
           aws-region: us-east-2
-          role-duration-seconds: 21600
-      - run: bench/infra/weekly.sh "$GITHUB_SHA"
-        env:
-          STACK: timelake-bench-weekly
+      - run: bench/infra/weekly.sh collect
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: dashboard/package.json
@@ -42,6 +65,6 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add bench/results/runs dashboard/data
           git diff --cached --quiet && { echo "no new runs"; exit 0; }
-          git commit -m "Bench: weekly run of $(git rev-parse --short "$GITHUB_SHA")"
+          git commit -m "Bench: weekly runs of $(date -u +%F)"
           git pull --rebase origin main
           git push origin HEAD:main

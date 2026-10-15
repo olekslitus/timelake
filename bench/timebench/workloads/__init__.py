@@ -59,6 +59,8 @@ class Workload(ABC):
     """Query suites (``queries/<suite>``)."""
     dashboard_suite: ClassVar[str | None] = None
     """The suite a dashboard runs: probed during ingest and run by the concurrency clients."""
+    dashboard: ClassVar[tuple[str, ...]] = ()
+    """Only these queries of the dashboard suite (all of it when empty)."""
     live_table: ClassVar[str | None] = None
     """The time-series table whose newest timestamp tells how fresh a reader's view is."""
     span_days: ClassVar[float]
@@ -111,7 +113,11 @@ class Workload(ABC):
 
     def dashboard_queries(self) -> list[Query]:
         """The dashboard's queries (none if the workload has no dashboard suite)."""
-        return [q for q in self.queries() if q.suite == self.dashboard_suite]
+        return [
+            q
+            for q in self.queries()
+            if q.suite == self.dashboard_suite and (not self.dashboard or q.name in self.dashboard)
+        ]
 
     def freshness_query(self) -> Query | None:
         """The newest timestamp of the live table, in whole epoch seconds."""
@@ -126,6 +132,6 @@ class Workload(ABC):
 
 def workloads() -> dict[str, type[Workload]]:
     """All workloads by name."""
-    from timebench.workloads.tsbs_iot import TsbsIot
+    from timebench.workloads.tsbs import TsbsDevops, TsbsIot
 
-    return {w.name: w for w in (TsbsIot,)}
+    return {w.name: w for w in (TsbsIot, TsbsDevops)}

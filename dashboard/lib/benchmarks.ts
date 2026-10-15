@@ -21,6 +21,8 @@ export type RunHeader = {
   commit: string
   dirty: boolean
   label: string
+  /** A kind of run kept apart from the others of its workload and target, e.g. "bulk". */
+  variant?: string
   started: string
   readers: Record<string, string[]>
   versions: Record<string, string>
@@ -114,6 +116,7 @@ export const WORKLOADS = [
       { id: "iot_point", label: "Single truck (5 queries)" },
     ],
   },
+  { id: "tsbs-devops", suites: [{ id: "tsbs_devops", label: "TSBS DevOps (15 queries)" }] },
 ] as const
 
 export type Workload = (typeof WORKLOADS)[number]
@@ -271,11 +274,24 @@ export function failures(run: Run): { engine: string; query: string; checkpoint:
 }
 
 /** The newest run of a workload on each target, newest target first. */
+const VARIANTS: Record<string, string> = { bulk: "bulk load" }
+
+/** A run's storage and variant, e.g. "AWS S3" or "Local disk · bulk load". */
+export const runLabel = (run: Run) =>
+  targetLabel(run.header.target) +
+  (run.header.variant ? ` · ${VARIANTS[run.header.variant] ?? run.header.variant}` : "")
+
+/** Tells runs of a workload apart: target and variant. */
+export const runKey = (run: Run) => `${run.header.target}|${run.header.variant ?? ""}`
+
+/** The newest run of a workload on each target (and variant), the default variant first, then by target. */
 export function latestByTarget(runs: Run[], workload: string): Run[] {
   const latest = new Map<string, Run>()
-  for (const r of runs) if (r.header.workload === workload) latest.set(r.header.target, r)
+  for (const r of runs)
+    if (r.header.workload === workload) latest.set(`${r.header.target}|${r.header.variant ?? ""}`, r)
   const order = Object.keys(TARGETS)
-  return [...latest.values()].sort((a, b) => order.indexOf(a.header.target) - order.indexOf(b.header.target))
+  const rank = (r: Run) => (r.header.variant ? 100 : 0) + order.indexOf(r.header.target)
+  return [...latest.values()].sort((a, b) => rank(a) - rank(b))
 }
 
 export type HistoryPoint = { run: string; date: string; commit: string } & Record<string, number | string>
@@ -293,7 +309,7 @@ export function history(
   const points: HistoryPoint[] = []
   const engines = new Set<string>()
   for (const r of runs) {
-    if (r.header.workload !== workload || r.header.target !== target) continue
+    if (r.header.workload !== workload || r.header.target !== target || r.header.variant) continue
     const point: HistoryPoint = { run: r.header.id, date: r.header.started.slice(0, 10), commit: r.header.commit }
     for (const [system, readers] of Object.entries(r.header.readers)) {
       const engine = `${system}+${readers[0]}`
@@ -315,7 +331,14 @@ export function s3TablesDelay(run: Run): [number, number] | null {
 }
 
 export type Rank = { key: string; label: string; system: string; value: number; timelake: boolean }
-export type Ranking = { title: string; note: string; unit: "seconds" | "milliseconds"; rows: Rank[] }
+export type Ranking = {
+  title: string
+  note: string
+  unit: "seconds" | "milliseconds" | "rows/s"
+  /** Rows come best first; for rates, higher is better. */
+  higherIsBetter?: boolean
+  rows: Rank[]
+}
 
 /**
  * The top-level results of a run: query time after maintenance and right after ingest (geometric mean of first runs
@@ -347,7 +370,24 @@ export function rankings(run: Run): Ranking[] {
     })
   }
   const ingest = run.phases.filter((p) => p.kind === "ingest" && p.status === "ok" && p.commit_ms_p50 != null)
-  if (ingest.length > 1) {
+  if (run.header.variant === "bulk" && ingest.length > 1) {
+    // A bulk load is judged by its rate: rows per second spent committing.
+    out.push({
+      title: "Load",
+      note: `rows per second, in commits of ${Number(run.header.params.window_minutes ?? 0) / 60} h of data`,
+      unit: "rows/s",
+      higherIsBetter: true,
+      rows: ingest
+        .map((p) => ({
+          key: p.system,
+          label: SYSTEMS[p.system] ?? p.system,
+          system: p.system,
+          value: (p.rows ?? 0) / (p.commit_seconds ?? p.seconds ?? 1),
+          timelake: p.system === "timelake",
+        }))
+        .sort((a, b) => b.value - a.value),
+    })
+  } else if (ingest.length > 1) {
     out.push({
       title: "Commit",
       note: "median time per commit while streaming",

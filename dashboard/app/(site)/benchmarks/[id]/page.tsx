@@ -20,6 +20,8 @@ import {
   failures,
   history,
   latestByTarget,
+  runKey,
+  runLabel,
   liveRows,
   loadRuns,
   panels,
@@ -98,16 +100,16 @@ async function Results({ workload }: { workload: Workload }) {
             the fastest.
           </p>
         </div>
-        <Tabs defaultValue={first.header.target}>
+        <Tabs defaultValue={runKey(first)}>
           <TabsList>
             {latest.map((r) => (
-              <TabsTrigger key={r.header.target} value={r.header.target}>
-                {targetLabel(r.header.target)}
+              <TabsTrigger key={runKey(r)} value={runKey(r)}>
+                {runLabel(r)}
               </TabsTrigger>
             ))}
           </TabsList>
           {latest.map((r) => (
-            <TabsContent key={r.header.target} value={r.header.target} className="space-y-6 pt-4">
+            <TabsContent key={runKey(r)} value={runKey(r)} className="space-y-6 pt-4">
               <RunResults run={r} workload={workload} />
             </TabsContent>
           ))}
@@ -123,29 +125,31 @@ async function Results({ workload }: { workload: Workload }) {
           </p>
         </div>
         <div className="grid gap-4 lg:grid-cols-2">
-          {latest.map((r) => {
-            const h = history(runs, workload.id, r.header.target, "maintained")
-            return (
-              <Card key={r.header.target}>
-                <CardHeader>
-                  <CardTitle className="text-base">{targetLabel(r.header.target)}</CardTitle>
-                  <CardDescription>
-                    {h.points.length} {h.points.length === 1 ? "run" : "runs"}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <BenchHistory
-                    lines={h.engines.map((e) => ({
-                      engine: e,
-                      label: engineLabel(e),
-                      color: SYSTEM_COLORS[e.split("+", 1)[0] ?? ""] ?? "var(--chart-2)",
-                    }))}
-                    rows={h.points}
-                  />
-                </CardContent>
-              </Card>
-            )
-          })}
+          {latest
+            .filter((r) => !r.header.variant)
+            .map((r) => {
+              const h = history(runs, workload.id, r.header.target, "maintained")
+              return (
+                <Card key={r.header.target}>
+                  <CardHeader>
+                    <CardTitle className="text-base">{targetLabel(r.header.target)}</CardTitle>
+                    <CardDescription>
+                      {h.points.length} {h.points.length === 1 ? "run" : "runs"}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <BenchHistory
+                      lines={h.engines.map((e) => ({
+                        engine: e,
+                        label: engineLabel(e),
+                        color: SYSTEM_COLORS[e.split("+", 1)[0] ?? ""] ?? "var(--chart-2)",
+                      }))}
+                      rows={h.points}
+                    />
+                  </CardContent>
+                </Card>
+              )
+            })}
         </div>
         <Card>
           <CardHeader>
@@ -169,7 +173,7 @@ async function Results({ workload }: { workload: Workload }) {
                     <TableCell className="font-mono whitespace-nowrap tabular-nums">
                       {r.header.started.slice(0, 10)}
                     </TableCell>
-                    <TableCell>{targetLabel(r.header.target)}</TableCell>
+                    <TableCell>{runLabel(r)}</TableCell>
                     <TableCell className="min-w-48 whitespace-normal text-muted-foreground">
                       {r.header.machine}
                     </TableCell>

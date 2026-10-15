@@ -9,6 +9,7 @@ from collections.abc import Iterator, Mapping
 from timebench import DATA, QUERIES
 
 SUITES = ("tpch", "clickbench", "tsbs_iot", "iot_point")
+"""The suites ``run.py`` (the Phase 0 engine comparison) runs."""
 TSBS_SUITES = ("tsbs_iot", "iot_point")
 """Suites over the TSBS tables, written with dialect placeholders."""
 
@@ -16,6 +17,7 @@ Dialect = Mapping[str, str]
 """Placeholder name -> format string with the placeholder's argument as ``{0}``."""
 
 DUCKDB: Dialect = {
+    "B1M": "time_bucket(INTERVAL '1 minute', {})",
     "B10M": "time_bucket(INTERVAL '10 minutes', {})",
     "B1D": "time_bucket(INTERVAL '24 hours', {})",  # '1 day' takes DuckDB's ~130x slower calendar path on timestamptz
     "B1H": "time_bucket(INTERVAL '1 hour', {})",
@@ -23,6 +25,7 @@ DUCKDB: Dialect = {
     "TS": "TIMESTAMPTZ {}",
 }
 DATAFUSION: Dialect = {
+    "B1M": "date_bin(INTERVAL '1 minute', {})",
     "B10M": "date_bin(INTERVAL '10 minutes', {})",
     "B1D": "date_bin(INTERVAL '24 hours', {})",
     "B1H": "date_bin(INTERVAL '1 hour', {})",
@@ -32,6 +35,7 @@ DATAFUSION: Dialect = {
 POLARS: Dialect = {
     # Polars SQL has no time bucketing and can't compare tz-aware timestamps with literals, so `time` is
     # exposed as naive UTC (run.setup_polars) and buckets are integer arithmetic on epoch microseconds.
+    "B1M": "(CAST({0} AS BIGINT) - CAST({0} AS BIGINT) % 60000000)",
     "B10M": "(CAST({0} AS BIGINT) - CAST({0} AS BIGINT) % 600000000)",
     "B1D": "(CAST({0} AS BIGINT) - CAST({0} AS BIGINT) % 86400000000)",
     "B1H": "(CAST({0} AS BIGINT) - CAST({0} AS BIGINT) % 3600000000)",
@@ -40,6 +44,7 @@ POLARS: Dialect = {
 }
 TIMESCALEDB: Dialect = {
     # timebench/systems/timescaledb.py; the session runs with TimeZone = UTC.
+    "B1M": "time_bucket('1 minute', {})",
     "B10M": "time_bucket('10 minutes', {})",
     "B1D": "time_bucket('1 day', {})",
     "B1H": "time_bucket('1 hour', {})",
@@ -47,7 +52,7 @@ TIMESCALEDB: Dialect = {
     "TS": "TIMESTAMPTZ {}",
 }
 
-_PLACEHOLDER = re.compile(r"@(B10M|B1D|B1H|EPOCH|TS)\(([^()]*)\)")  # arguments contain no nested parentheses
+_PLACEHOLDER = re.compile(r"@(B1M|B10M|B1D|B1H|EPOCH|TS)\(([^()]*)\)")  # arguments contain no nested parentheses
 
 
 def apply_dialect(sql: str, dialect: Dialect) -> str:

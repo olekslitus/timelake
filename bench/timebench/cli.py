@@ -72,7 +72,9 @@ def cmd_run(args: argparse.Namespace) -> None:
         target=Target(args.target),
         systems=names,
         readers=split(args.readers),
-        checkpoints=tuple(split(args.checkpoints) or CHECKPOINTS),
+        checkpoints=tuple(
+            c for c in (args.checkpoints if args.checkpoints is not None else ",".join(CHECKPOINTS)).split(",") if c
+        ),
         queries=set(split(args.queries) or []) or None,
         runs=args.runs,
         timeout=args.timeout,
@@ -83,6 +85,7 @@ def cmd_run(args: argparse.Namespace) -> None:
         concurrency=tuple(int(n) for n in split(args.concurrency) or []),
         concurrency_seconds=args.concurrency_seconds,
         pace=args.pace,
+        variant=args.variant,
     )
     print(markdown(Run(run(spec))))
 
@@ -104,8 +107,13 @@ def cmd_profile(args: argparse.Namespace) -> None:
             concurrency=tuple(entry.get("concurrency", profile.get("concurrency", []))),
             concurrency_seconds=entry.get("concurrency_seconds", profile.get("concurrency_seconds", 30)),
             pace=entry.get("pace", profile.get("pace", 0)),
+            variant=entry.get("variant", ""),
+            checkpoints=tuple(entry.get("checkpoints", CHECKPOINTS)),
         )
-        print(markdown(Run(run(spec))))
+        try:
+            print(markdown(Run(run(spec))))
+        except Exception as e:  # noqa: BLE001 (one failed entry is reported; the others still run)
+            print(f"PROFILE ENTRY FAILED {entry['workload']} {entry['target']}: {type(e).__name__}: {e}", flush=True)
 
 
 def cmd_report(args: argparse.Namespace) -> None:
@@ -141,13 +149,16 @@ def main() -> None:
     r.add_argument("--systems", help="comma-separated (default: every lake system)")
     r.add_argument("--readers", help="comma-separated (default: every reader of each system)")
     r.add_argument("--target", default="local", help="local, s3 (RustFS via the proxy), or an AWS target name")
-    r.add_argument("--checkpoints", help=f"comma-separated, of {', '.join(CHECKPOINTS)} (default: both)")
+    r.add_argument(
+        "--checkpoints", help=f"comma-separated, of {', '.join(CHECKPOINTS)} (default: both; empty: ingest only)"
+    )
     r.add_argument("--queries", help="comma-separated query names (default: all)")
     r.add_argument("--runs", type=int, default=2, help="repeat runs per query after the first run")
     r.add_argument("--timeout", type=int, default=600, help="seconds per query, all runs")
     r.add_argument("--ttfb-ms", type=int, help="latency the proxy adds per request (local object stores)")
     r.add_argument("--param", action="append", default=[], help="workload parameter key=value (repeatable)")
     r.add_argument("--label", default="", help="free text recorded with the run")
+    r.add_argument("--variant", default="", help="names a kind of run kept apart from the others, e.g. bulk")
     r.add_argument("--reuse", action="store_true", help="query the tables an earlier run left (no ingest)")
     r.add_argument(
         "--live-interval", type=float, default=0, help="seconds between probe rounds during ingest (0 = no probes)"

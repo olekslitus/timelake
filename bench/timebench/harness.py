@@ -77,6 +77,8 @@ class RunSpec:
     """Client counts for the concurrent-dashboards phase after the last checkpoint; empty = none."""
     concurrency_seconds: float = 30
     """How long each client count runs."""
+    variant: str = ""
+    """Names a kind of run of the same workload and target (e.g. ``bulk``), kept apart in reports and on the site."""
     pace: float = 0
     """At least this many seconds between arrivals (0 = as fast as the system commits), so the replay is closer to
     real time and probes have something to see."""
@@ -140,7 +142,8 @@ def run_header(spec: RunSpec, started: dt.datetime) -> RunRecord:
         versions.update(systems()[name].version())
     header: RunRecord = {
         "kind": "run",
-        "id": f"{started:%Y%m%dT%H%M%SZ}-{workload.dataset}-{target.name}",
+        "id": f"{started:%Y%m%dT%H%M%SZ}-{workload.dataset}-{target.name}"
+        + (f"-{spec.variant}" if spec.variant else ""),
         "workload": workload.name,
         "scale": workload.scale,
         "params": {**workload.params(), "span_days": workload.span_days},
@@ -161,6 +164,8 @@ def run_header(spec: RunSpec, started: dt.datetime) -> RunRecord:
         header["live_interval_s"] = spec.live_interval
     if spec.pace:
         header["pace_s"] = spec.pace
+    if spec.variant:
+        header["variant"] = spec.variant
     if spec.concurrency:
         header.update(concurrency=list(spec.concurrency), concurrency_seconds=spec.concurrency_seconds)
     return header

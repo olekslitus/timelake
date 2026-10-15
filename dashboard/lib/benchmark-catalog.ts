@@ -120,22 +120,51 @@ export const BENCHMARKS: Benchmark[] = [
     id: "tsbs-devops",
     name: "TSBS DevOps",
     origin: TSBS,
-    status: "planned",
-    summary: "Server metrics, 100 per host every 10 seconds; 15 query types.",
-    why: "The TSBS use case most databases publish. Same generator as TSBS IoT, so it's next.",
+    status: "running",
+    summary: "Servers' CPU metrics every 10 seconds, queried like a monitoring dashboard.",
+    why: "The TSBS use case most databases publish numbers for.",
+    workload: "tsbs-devops",
     methodology: [
       {
         title: "The original",
         text: [
-          "TSBS's DevOps use case simulates hosts reporting CPU, memory, disk, network, nginx, PostgreSQL and Redis metrics, 100 per host. The cpu-only variant keeps the 10 CPU metrics. Its 15 query types cover single-host and multi-host aggregates over 1 to 12 hours, the hosts above a CPU threshold, the latest point per host, and group-by with order and limit.",
+          "TSBS's DevOps use case simulates servers reporting metrics every 10 seconds. Its cpu-only variant keeps the CPU metrics, 10 per host, and that's the one most databases publish results for: all 15 DevOps query types read only the cpu table.",
+          "The queries range from one host's maximum CPU over an hour to averages per host and hour across all hosts, the moments a host's CPU passed 90%, and the latest reading of every host.",
         ],
       },
       {
-        title: "How we'll run it",
+        title: "Data",
         items: [
-          "The same generator and seed, at host counts that match published results (100 to 4,000 hosts).",
-          "Two modes: streamed in 5-minute windows like TSBS IoT, and loaded in bulk as TSBS does, so its load throughput compares with published numbers.",
-          "All 15 query types ported to every engine, with TSBS's random parameters drawn from a fixed seed.",
+          "TSBS's own generator, `tsbs_generate_data --use-case=cpu-only`, seed 123, one reading every 10 seconds per host from 2026-01-01 to 2026-01-04.",
+          "Standard scale: 4,000 hosts, 104M rows, the size published TSBS results use. Small scale: 100 hosts, for development.",
+          "Converted once to Parquet with the schema TSBS loads into TimescaleDB: a `cpu` table with the host name in it, as TSBS's loader puts it, and a `tags` table describing each host.",
+        ],
+      },
+      {
+        title: "Two ways the data arrives",
+        items: [
+          "Streamed: 5-minute windows like TSBS IoT, 864 commits of 120,000 rows at standard scale. Queries run after this.",
+          "Bulk load: 1-hour windows, 72 commits of 1.44M rows, as fast as each system commits. The rate in rows per second is the number closest to TSBS's own load results, though TSBS loads with many parallel workers and timebench with one writer per system.",
+        ],
+      },
+      {
+        title: "Queries",
+        items: [
+          "All 15 types, named as in TSBS: single-groupby-<metrics>-<hosts>-<hours> (6 combinations), cpu-max-all-1 and -8, double-groupby-1, -5 and -all, high-cpu-1 and -all, lastpoint, groupby-orderby-limit.",
+          "Ported once from TSBS's TimescaleDB SQL to SQL every engine runs. Random hosts and time windows are fixed (hosts below 100, windows ending at 2026-01-03 23:00, TSBS's window lengths). TimescaleDB's `DISTINCT ON` (lastpoint) becomes `ROW_NUMBER() … = 1`.",
+          "The dashboard queries, probed during ingest and run by concurrent clients, are the single-host ones: three single-groupby types, cpu-max-all-1, high-cpu-1 and groupby-orderby-limit.",
+        ],
+      },
+      {
+        title: "Systems and storage",
+        text: [
+          "The same systems, readers and storage as TSBS IoT (see its methodology), with the host name as the series key: Timelake sorts by it, and TimescaleDB indexes it.",
+        ],
+      },
+      {
+        title: "Compared with published TSBS numbers",
+        text: [
+          "Published TSBS DevOps results come from a database server queried by many parallel workers, reporting queries per second at full load. Ours are single queries from a fresh process, so the query times can't be set side by side. The bulk-load rate and the concurrent-dashboard throughput are the closest to TSBS's terms.",
         ],
       },
     ],

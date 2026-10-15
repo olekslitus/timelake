@@ -2,7 +2,7 @@
 # Same workloads, scales and systems every week, so the history shows what changed between commits.
 label = "weekly"
 runs = 2
-pace = 1                    # one 5-minute window per second: the 3 days replay in about 15 minutes per system
+pace = 1                    # one 5-minute window per second: 3 days of data replay in about 15 minutes per system
 live_interval = 15          # fresh readers probe each system every 15 s while it ingests
 concurrency = [1, 4, 16]    # then 1, 4 and 16 dashboard clients at once, 30 s each
 concurrency_seconds = 30
@@ -14,7 +14,32 @@ target = "local"
 systems = ["timelake", "iceberg", "lance", "parquet", "timescaledb"]
 
 [[run]]
+workload = "tsbs-devops"
+scale = "standard"
+target = "local"
+systems = ["timelake", "iceberg", "lance", "parquet", "timescaledb"]
+
+# Bulk load: 1-hour windows as fast as each system commits; judged by rows per second, no queries.
+[[run]]
+workload = "tsbs-devops"
+scale = "standard"
+target = "local"
+variant = "bulk"
+systems = ["timelake", "iceberg", "lance", "parquet", "timescaledb"]
+params = { window_minutes = 60 }
+pace = 0
+live_interval = 0
+concurrency = []
+checkpoints = []
+
+[[run]]
 workload = "tsbs-iot"
+scale = "standard"
+target = "aws-s3"
+systems = ["timelake", "iceberg", "lance", "parquet"]
+
+[[run]]
+workload = "tsbs-devops"
 scale = "standard"
 target = "aws-s3"
 systems = ["timelake", "iceberg", "lance", "parquet"]

@@ -8,7 +8,8 @@
 #   remote.sh bench <target>     timebench: TSBS IoT streamed into every lake system, queries before and after
 #                                maintenance (results/runs)
 #   remote.sh all                everything above, in order
-#   remote.sh weekly             the weekly regression run (profiles/weekly.toml), started by weekly.sh
+#   remote.sh weekly             the weekly regression run (profiles/weekly.toml), started by weekly.sh; stops the
+#                                instance when done
 #
 # Targets: local = the instance's disk (/mnt/bench: NVMe SSD if it has one, else EBS); s3 = S3 Standard; s3x = S3
 # Express One Zone (same zone as the instance). S3 traffic goes through tools/s3proxy in AWS mode, which counts
@@ -129,10 +130,11 @@ timescaledb() {
 }
 
 weekly() {
-  sudo shutdown -h +360  # a safety net: weekly.sh stops the instance when the run is done
+  sudo shutdown -h +720  # a safety net; the instance stops itself when the run is done (below)
   build_timebench
   timescaledb
   uv run timebench profile weekly --target local
+  sync_out  # each target's run files reach the bucket as soon as they are done
   target s3
   uv run timebench profile weekly --target aws-s3
   docker rm -f bench-timescaledb > /dev/null
@@ -159,7 +161,8 @@ case ${1:-} in
       stage $s || true  # later stages don't depend on each other
     done
     ;;
-  build | data | direct | weekly) stage "$1" ;;
+  build | data | direct) stage "$1" ;;
+  weekly) stage weekly || true; sudo shutdown -h +1 ;;  # stop when done, failed or not (stage copied the logs)
   queries | bench) stage "$1" "$2" ;;
   *) sed -n '2,16p' "$SELF"; exit 2 ;;
 esac

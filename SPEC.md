@@ -814,13 +814,13 @@ PyIceberg appends are the naive baseline (what v0 compares against today). Publi
 - **Results include:** p50/p99 latency, bytes read, **object-store request counts**, and **estimated $** (per query, per GB ingested, per month of storage).
 - **Configurations:** Every system's configuration and version is committed. Each system is tuned per its own docs, and vendors are invited to review.
 - **Harness (built 2026-10-15):** `timebench` in `bench/timebench`, named on its own because it may move to its own repository: only its Timelake adapter knows Timelake. The website explains its method at /benchmarks/timebench. Our own benchmark system, extended over time with new workloads and systems: public benchmarks miss most of what a time-series lake has to do in practice (streaming commits, late data, maintenance, cost), and it isn't limited to Iceberg.
-  - A **workload** is data at a named scale, the order its rows arrive in, and its queries (written once with dialect placeholders). Now: TSBS IoT (`small`, `standard`, `large`).
+  - A **workload** is data at a named scale, the order its rows arrive in, and its queries (written once with dialect placeholders). Now: TSBS IoT (`small`, `standard`, `large`) and TSBS DevOps cpu-only (`small`, `standard` = 4,000 hosts).
   - A **system** is one adapter: create tables, append a commit, run its own maintenance, open its readers. Now: Timelake, Iceberg (PyIceberg), S3 Tables, Lance, plain Parquet files, TimescaleDB (any server: a container, the benchmark instance, Tiger Cloud).
   - A **run** streams the workload into each system, then runs every query in a fresh process on every reader at each checkpoint (right after ingest, after maintenance), and checks that row counts match across readers.
   - **Under load (2026-10-15):** fresh readers probe each system while it ingests (query latency under writes, and whether they see every finished commit); then 1, 4 and 16 dashboard clients query at once (queries per second, p50/p95/p99). On AWS, every record carries its cost at S3 list prices; machines are not priced yet.
   - **History:** every run is one file in `bench/results/runs/` with the commit, machine, versions and all measurements. The website charts it per target. Runs from before the harness (v0, Tiger Cloud) were converted.
   - `timebench run tsbs-iot --scale small` reproduces a run; `report` and `history` read them back.
-- **Weekly regression run (decided 2026-10-15):** `bench/profiles/weekly.toml` every Monday on one fixed instance in us-east-2 (c8gd.2xlarge, local NVMe), started by a GitHub Actions workflow through a role limited to that instance. Same workloads, scales and pinned competitor versions each week, so changes in the history come from Timelake. No benchmark runs in CI.
+- **Weekly regression run (decided 2026-10-15):** `bench/profiles/weekly.toml` every Monday on one fixed instance in us-east-2 (c8gd.2xlarge, local NVMe), started by a GitHub Actions workflow through a role limited to that instance. The instance stops itself when done; an hourly job commits finished runs, so a run may take longer than a GitHub job. Same workloads, scales and pinned competitor versions each week, so changes in the history come from Timelake. No benchmark runs in CI.
 - **Spike: a CI gate on request and byte counts.** Those counts don't depend on the machine, so they could catch regressions (an extra metadata read, a lost pruning step) on every push. **Measured (2026-10-15, `spikes/request-counts`):** across three identical runs, query request counts were exact or within one or two requests, bytes within 0.5%, and Timelake's ingest within 0.1%. A gate, Timelake only at `small` scale (3–4 minutes), could require exact counts after maintenance (identical in every run) and allow 5% and 3 requests elsewhere. Not built yet: weekly runs only, for now.
 
 ### 17.5 Phase 0 baseline (2026-10-11)
@@ -884,7 +884,7 @@ We run the public benchmarks that fit a time-series lake, so results compare wit
 | Benchmark | Status | Why |
 |---|---|---|
 | TSBS IoT | Running | The base workload (§17.1). |
-| TSBS DevOps / cpu-only | Planned, next | The TSBS use case most databases publish; same generator. |
+| TSBS DevOps / cpu-only | Running (2026-10-15) | The TSBS use case most databases publish; same generator. 4,000 hosts, streamed and as a bulk load (rows per second). |
 | ClickBench | Planned | A 10% subset runs in development. Comparable numbers need the full dataset on its reference machine (c6a.4xlarge). An official entry waits until the system is more refined (issue #90). Its SQL is CC BY-NC-SA, so it stays out of the repository. |
 | RTABench | Planned | Fresh data, selective lookups and joins. Its pre-aggregate queries wait for rollups (§10). |
 | TSM-Bench | Planned | Seven query templates, queries while ingesting, compression. Its repository has no license: ask the authors first. |

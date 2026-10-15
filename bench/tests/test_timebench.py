@@ -5,15 +5,28 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
-from timebench import queries
-from timebench.queries import CLICKBENCH_COMMIT, DATAFUSION, DUCKDB, apply_dialect, clickbench_queries, raw_queries
+import pytest
+import tomllib
+
+from timebench import BENCH, queries
+from timebench.queries import (
+    CLICKBENCH_COMMIT,
+    DATAFUSION,
+    DUCKDB,
+    POLARS,
+    TIMESCALEDB,
+    Dialect,
+    apply_dialect,
+    clickbench_queries,
+    raw_queries,
+)
 from timebench.results import append_jsonl, best_time, geomean, load_ok, order_engines, read_jsonl
+from timebench.systems import systems
 from timebench.targets import Place, Target
+from timebench.workloads import workloads
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 
 def test_geomean() -> None:
@@ -66,8 +79,14 @@ def test_apply_dialect_datafusion_timestamp() -> None:
     assert apply_dialect("@TS('2026-01-01')", DATAFUSION) == "CAST('2026-01-01' AS TIMESTAMP)"
 
 
-def test_every_tsbs_query_is_fully_translated() -> None:
-    assert all("@" not in apply_dialect(sql, DUCKDB) for _, sql in raw_queries("tsbs_iot"))
+@pytest.mark.parametrize("suite", ["tsbs_iot", "iot_point", "tsbs_devops"])
+@pytest.mark.parametrize("dialect", [DUCKDB, DATAFUSION, POLARS, TIMESCALEDB])
+def test_every_tsbs_query_is_fully_translated(suite: str, dialect: Dialect) -> None:
+    assert all("@" not in apply_dialect(sql, dialect) for _, sql in raw_queries(suite))
+
+
+def test_tsbs_devops_has_the_15_query_types() -> None:
+    assert len(list(raw_queries("tsbs_devops"))) == 15
 
 
 def test_s3_tables_live_in_the_bench_bucket() -> None:
@@ -86,3 +105,12 @@ def test_clickbench_queries_come_from_the_download_cache(tmp_path: Path, monkeyp
     cached.parent.mkdir(parents=True)
     cached.write_text("SELECT 1;\nSELECT 2;\n")
     assert clickbench_queries("duckdb-parquet-partitioned") == [("q00", "SELECT 1;"), ("q01", "SELECT 2;")]
+
+
+def test_the_weekly_profile_names_real_workloads_systems_and_scales() -> None:
+    profile = tomllib.loads((BENCH / "profiles" / "weekly.toml").read_text())
+    for entry in profile["run"]:
+        workload = workloads()[entry["workload"]](entry.get("scale"), **entry.get("params", {}))
+        assert set(entry["systems"]) <= set(systems())
+        assert set(entry.get("checkpoints", [])) <= {"ingested", "maintained"}
+        assert workload.dataset

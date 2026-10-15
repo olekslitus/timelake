@@ -156,7 +156,7 @@ Vercel builds and deploys the site on every push to `main` (project root `dashbo
 | --- | --- |
 | `bench/timebench/cli.py` | `timebench`: runs a workload (`run`), a set of runs (`profile weekly`), and prints one run (`report`) or the history (`history`). |
 | `bench/timebench/harness.py` | One run: streams the workload into each system, runs its maintenance, and runs every query in a fresh process (`worker.py`) at each checkpoint. Writes `bench/results/runs/<run>.jsonl`. |
-| `bench/timebench/workloads` | Workloads: data at a named scale, the order rows arrive in, and the queries. `tsbs_iot.py` is TSBS IoT. |
+| `bench/timebench/workloads` | Workloads: data at a named scale, the order rows arrive in, and the queries. `tsbs.py` holds TSBS IoT and DevOps. |
 | `bench/timebench/systems` | One adapter per system under test: Timelake, Iceberg (PyIceberg), S3 Tables, Lance, plain Parquet files, TimescaleDB. Each writes the tables and opens its readers. |
 | `bench/results/runs` | The benchmark history: one file per run, with the commit, machine, versions and every measurement. |
 | `bench/run.py` | The Phase 0 engine comparison: one query suite on one engine over static files (Parquet, Vortex, Iceberg), records to `bench/results/*.jsonl`. |

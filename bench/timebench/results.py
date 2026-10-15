@@ -38,6 +38,8 @@ class RunRecord(TypedDict, total=False):
     """Uncommitted changes outside ``bench/results``: the run isn't exactly ``commit``."""
     label: str
     """``weekly`` for the regression runs; free text otherwise."""
+    variant: str
+    """A kind of run of the same workload and target (``bulk``: loaded in large commits); absent for the default."""
     started: str
     readers: dict[str, list[str]]
     """The systems of the run -> their readers in it."""

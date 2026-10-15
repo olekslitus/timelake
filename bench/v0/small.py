@@ -25,7 +25,7 @@ import pyarrow.parquet as pq
 
 import timelake
 from timebench import DATA, TSBS_TIME_SERIES
-from timebench.workloads.tsbs_iot import windows
+from timebench.workloads.tsbs import windows
 
 QUERIES = {
     "one-truck-latest": "SELECT time, latitude, longitude FROM readings WHERE tags_id = 1 ORDER BY time DESC LIMIT 1",

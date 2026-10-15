@@ -7,7 +7,7 @@ import { BenchRanking } from "@/components/bench-ranking"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { BENCHMARKS, type Benchmark } from "@/lib/benchmark-catalog"
-import { latestByTarget, loadRuns, rankings, targetLabel, type Run } from "@/lib/benchmarks"
+import { latestByTarget, loadRuns, rankings, runKey, runLabel, type Run } from "@/lib/benchmarks"
 import { REPO_URL } from "@/lib/site"
 
 export const metadata: Metadata = { title: "Benchmarks" }
@@ -96,16 +96,16 @@ function BenchmarkResults({ benchmark, latest }: { benchmark: Benchmark; latest:
       </CardHeader>
       <CardContent>
         {first ? (
-          <Tabs defaultValue={first.header.target}>
+          <Tabs defaultValue={runKey(first)}>
             <TabsList>
               {latest.map((r) => (
-                <TabsTrigger key={r.header.target} value={r.header.target}>
-                  {targetLabel(r.header.target)}
+                <TabsTrigger key={runKey(r)} value={runKey(r)}>
+                  {runLabel(r)}
                 </TabsTrigger>
               ))}
             </TabsList>
             {latest.map((r) => (
-              <TabsContent key={r.header.target} value={r.header.target} className="space-y-5 pt-4">
+              <TabsContent key={runKey(r)} value={runKey(r)} className="space-y-5 pt-4">
                 <div className="grid gap-x-10 gap-y-6 lg:grid-cols-2">
                   {rankings(r).map((ranking) => (
                     <BenchRanking key={ranking.title} ranking={ranking} />
@@ -116,7 +116,7 @@ function BenchmarkResults({ benchmark, latest }: { benchmark: Benchmark; latest:
                   <a className="font-mono hover:underline" href={`${REPO_URL}/commit/${r.header.commit}`}>
                     {r.header.commit.slice(0, 7)}
                   </a>
-                  . Lower is better.
+                  . {r.header.variant === "bulk" ? "Higher is better." : "Lower is better."}
                 </p>
               </TabsContent>
             ))}
