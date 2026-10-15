@@ -396,7 +396,7 @@ mod tests {
             (c.head_format.as_str(), c.head_inline_bytes, c.format_version),
             ("arrow", 1 << 20, FormatVersion::UNVERSIONED)
         );
-        assert!(c.sort_columns().is_empty());
+        assert_eq!(c.sort_columns(), [] as [String; 0]);
     }
 
     #[test]
@@ -418,7 +418,7 @@ mod tests {
         assert_eq!(c.sort_columns(), ["site", "device", "time"]);
         assert_eq!(c.chunk, Some(Chunk::Hour));
         assert!(c.dedup && !c.auto_maintain);
-        assert_eq!(c.retention, Some(Duration::from_secs(86_400)));
+        assert_eq!(c.retention, Some(Duration::from_hours(24)));
         assert_eq!((c.min_snapshots, c.target_file_size), (3, 1024));
     }
 

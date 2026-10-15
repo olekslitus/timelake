@@ -37,7 +37,7 @@ convention = "google"
 max-complexity = 12
 
 [tool.ty.environment]
-python-version = "3.13"
+python-version = "3.14"
 extra-paths = ["bench/v0"]                            # bench/tests import the v0 scripts (as pytest does)
 
 [tool.ty.src]

@@ -110,7 +110,7 @@ async fn auto_maintain_retention_idempotency_concurrency() {
     let (_dir, lake) = temp_lake();
     let mut o = opts();
     o.properties.insert(property::COMPACT_MIN_FILES.into(), "4".into());
-    o.retention = Some(Duration::from_secs(3650 * 86_400));
+    o.retention = Some(Duration::from_hours(3650 * 24));
     let mut t = lake.create_table("m", &schema(), o).await.unwrap();
     assert_eq!(t.metadata().properties().get(property::RETENTION).map(String::as_str), Some("3650d"));
 

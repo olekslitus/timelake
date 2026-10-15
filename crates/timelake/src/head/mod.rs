@@ -487,7 +487,7 @@ mod tests {
             None => session.latest("iot.r").await.unwrap(),
             Some(sql) => session.sql(sql).await.unwrap(),
         };
-        assert!(!df.collect().await.unwrap().is_empty());
+        assert_ne!(df.collect().await.unwrap().len(), 0);
         started.elapsed().as_millis() / RTT.as_millis()
     }
 

@@ -36,7 +36,7 @@ pub struct UpgradeOptions {
 
 impl Default for UpgradeOptions {
     fn default() -> Self {
-        Self { dry_run: false, compact: true, keep_snapshots: Duration::from_secs(7 * 24 * 3600) }
+        Self { dry_run: false, compact: true, keep_snapshots: Duration::from_hours(7 * 24) }
     }
 }
 

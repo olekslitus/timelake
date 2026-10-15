@@ -33,7 +33,7 @@ repos:
         stages: [pre-push]
       - id: clippy-wasm
         name: clippy (timelake-wasm)
-        entry: cargo clippy --manifest-path crates/timelake-wasm/Cargo.toml --target wasm32-unknown-unknown --quiet -- -D warnings
+        entry: bash -c 'cd crates/timelake-wasm && cargo clippy --target wasm32-unknown-unknown --quiet -- -D warnings'
         language: system
         files: ^crates/timelake-(wasm|format)/
         types: [rust]

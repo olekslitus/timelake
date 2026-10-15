@@ -3,11 +3,11 @@
 // Proportions follow WORDMARK in marks.mjs and match the editor: text size and gap are fractions of
 // the mark's height, and the text box is centered on the mark the way CSS centers a line-height: 1 box, then raised
 // by markDropOfMark.
-import { mkdirSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import path from "node:path"
 
-import { loadSync } from "opentype.js"
+import { parse } from "opentype.js"
 
 import { MARKS, WORDMARK, markLines } from "./marks.mjs"
 
@@ -16,7 +16,7 @@ const fontFile = path.join(
   path.dirname(require.resolve("geist/package.json")),
   "dist/fonts/geist-sans/Geist-Medium.ttf",
 )
-const font = loadSync(fontFile)
+const font = parse(readFileSync(fontFile))
 
 export function lockupSvg(name, { color }) {
   const m = MARKS[name]

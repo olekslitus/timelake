@@ -8,6 +8,10 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
 
 ## Unreleased
 
+### Changed
+
+- The TypeScript client's WebAssembly reader is about 4% smaller (6.7 MB), built with Rust 1.99.
+
 ## 0.4.0 – 2026-10-14
 
 ### Added

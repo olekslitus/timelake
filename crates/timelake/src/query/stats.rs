@@ -161,7 +161,7 @@ mod tests {
                 DataType::Timestamp(TimeUnit::Nanosecond, None),
                 ScalarValue::TimestampNanosecond(Some(5), None),
             ),
-            (Datum::float(0.5), DataType::Float32, ScalarValue::Float32(Some(0.5))),
+            (Datum::float(0.5_f32), DataType::Float32, ScalarValue::Float32(Some(0.5))),
             (Datum::double(1.5), DataType::Float64, ScalarValue::Float64(Some(1.5))),
             (Datum::string("truck_1"), DataType::Utf8, ScalarValue::Utf8(Some("truck_1".into()))),
         ];

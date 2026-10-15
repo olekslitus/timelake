@@ -47,7 +47,7 @@ What lives where, which technologies are used and why, and how a write and a que
 
 | Technology | Used for | Why |
 | --- | --- | --- |
-| `Rust 1.94` | Language of the engine, CLI, Python bindings and WASM reader | Fast, safe, and the language of the Arrow, Parquet, Iceberg and DataFusion libraries Timelake builds on |
+| `Rust` | Language of the engine, CLI, Python bindings and WASM reader | Fast, safe, and the language of the Arrow, Parquet, Iceberg and DataFusion libraries Timelake builds on |
 | `Apache Arrow (arrow-rs)` | In-memory columns | The common format between the writer, the query engine, Python and DuckDB |
 | `Apache Parquet (parquet-rs)` | Data files | Column storage with compression and min/max statistics |
 | `Apache Iceberg (iceberg-rust 0.10)` | Table metadata types | Timelake uses its types to read and write metadata, but writes its own commits (iceberg-rust only supports simple appends) |
@@ -61,7 +61,7 @@ What lives where, which technologies are used and why, and how a write and a que
 | `Next.js 16, React 19` | Website | Server-rendered pages, route handlers for the Explorer |
 | `Tailwind CSS 4, shadcn/ui (Base UI), Recharts` | Website styling, components and charts |  |
 | `Vercel, Vercel Blob` | Website hosting; demo data | Deploys on every push to main; Blob serves the demo warehouse |
-| `Python 3.13 + uv` | Python package and benchmarks | One uv workspace; uv.lock pins every version |
+| `Python + uv` | Python package and benchmarks | One uv workspace; uv.lock pins every version |
 | `DuckDB, PyIceberg, Lance, Polars` | Benchmark competitors and helpers |  |
 | `Go` | s3proxy | A small proxy that counts S3 requests and signs them for AWS |
 | `AWS CloudFormation, SSM` | Benchmark infrastructure | Creates and deletes the buckets (and an optional instance) with one command |
