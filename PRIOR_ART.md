@@ -80,66 +80,66 @@ columns such as `trace_id`, which aren't in the sort order.
 **Ideas to adopt:**
 - [ ] WAL rules for mode B (SPEC §8.3): delete segments by offset, never by age; size the kept margin to the longest
   query that may still be reading; a reader that meets a missing segment fails instead of returning fewer rows;
-  recover offsets on restart with a search that still works across missing segments.
+  recover offsets on restart with a search that still works across missing segments. ([#53](https://github.com/polythings/timelake/issues/53))
 - [ ] One WAL object per request across all series and tenants, read with fan-out: on S3 a write costs about 10× a
-  read.
+  read. ([#53](https://github.com/polythings/timelake/issues/53))
 - [ ] Evaluate Parquet instead of Arrow IPC for WAL segments: statistics let readers skip segments, and plain DuckDB
-  can read them. It costs CPU on write.
+  can read them. It costs CPU on write. ([#53](https://github.com/polythings/timelake/issues/53))
 - [ ] Compaction converges: merge a group only if it lowers the file count. Check that our size tiers
-  (`maintain.rs`) guarantee the same, in a test.
+  (`maintain.rs`) guarantee the same, in a test. ([#61](https://github.com/polythings/timelake/issues/61))
 - [ ] Opt-in bloom filters for high-cardinality columns outside the sort key, written by compaction only. Our sort
   order already prunes series-key lookups by min/max ([#33](https://github.com/polythings/timelake/issues/33)).
 - [ ] Later: Prometheus- or Grafana-compatible read APIs for observability users.
 
-**From the code.** Ranked by value to Timelake. Issue numbers mark ideas already tracked.
+**From the code.** Ranked by value to Timelake. Every idea has an issue; [#63](https://github.com/polythings/timelake/issues/63) tracks them all.
 
 *Correctness*
 - [ ] Expiry must stop, not delete, when a manifest list of a snapshot it keeps is missing. IceGate's garbage
   collection deletes nothing if the set of files still in use can't be read in full. Our `reachable()`
-  (`maintain.rs`) skips a missing list for kept snapshots too, so with [#21](https://github.com/polythings/timelake/issues/21) expiry would delete live data files.
+  (`maintain.rs`) skips a missing list for kept snapshots too, so with [#21](https://github.com/polythings/timelake/issues/21) expiry would delete live data files. ([#46](https://github.com/polythings/timelake/issues/46))
 - [ ] Carry state that must survive onto every commit, compaction included. IceGate's compaction once dropped the
   WAL offset from its replace snapshots and the shifter restarted from zero; now every commit copies it forward and
   readers refuse to start without it. Our compaction commits with empty snapshot properties, so the SPEC §8.3 WAL
-  mark would be lost the same way.
+  mark would be lost the same way. ([#47](https://github.com/polythings/timelake/issues/47))
 - [ ] Batch-id idempotency ends when snapshots expire: `is_duplicate` only walks the snapshots still kept (1 h and at
   least 5 by default), so a late retry on a busy table writes twice. IceGate uses one increasing offset per writer
   ("committed ≥ mine" means done), which never expires. Keep a bounded list of recent ids, or a per-writer sequence,
-  independent of expiry, and say what the window is in the docs.
+  independent of expiry, and say what the window is in the docs. ([#48](https://github.com/polythings/timelake/issues/48))
 - [ ] Check a rewrite before committing it: rows out (plus duplicates removed) equal rows in, and the min and max of
-  the sort columns are unchanged, read from the new files' statistics at no extra cost.
+  the sort columns are unchanged, read from the new files' statistics at no extra cost. ([#49](https://github.com/polythings/timelake/issues/49))
 - [ ] Orphan cleanup (promised in SPEC §10): list the table prefix, delete only unreferenced files older than a grace
   period, keep anything with an unknown layout, offer a dry run. Normalise listed keys and referenced paths with the
-  same function: IceGate deleted a live file over percent-escaped partition values.
+  same function: IceGate deleted a live file over percent-escaped partition values. ([#50](https://github.com/polythings/timelake/issues/50))
 - [ ] A dropped and recreated table can receive a commit from a writer that still had the old one open. Give each
-  table creation its own location, or a table id the commit checks.
+  table creation its own location, or a table id the commit checks. ([#51](https://github.com/polythings/timelake/issues/51))
 
 *Write path and maintenance*
 - [ ] Compact with a streaming k-way merge of the already-sorted inputs, holding only overlapping groups in memory
   ([#14](https://github.com/polythings/timelake/issues/14)). Equal keys ordered by input position keep "latest write wins".
 - [ ] Commit each compaction group on its own, with a byte budget per group, so a Lambda timeout keeps the work
-  already done; a group whose inputs disappeared is skipped, not an error.
+  already done; a group whose inputs disappeared is skipped, not an error. ([#52](https://github.com/polythings/timelake/issues/52))
 - [ ] Plan compaction output so files have disjoint key ranges ([#12](https://github.com/polythings/timelake/issues/12)), and rewrite a closed partition whole once it's
   past its end plus a grace period.
 - [ ] Record each WAL segment's sort-key range in its footer metadata, so the flush and readers skip segments by
-  series without reading them. Take time ranges from column statistics, not from the composite key's ends.
-- [ ] Never advance the WAL offset for a flush that produced no rows or files.
+  series without reading them. Take time ranges from column statistics, not from the composite key's ends. ([#53](https://github.com/polythings/timelake/issues/53))
+- [ ] Never advance the WAL offset for a flush that produced no rows or files. ([#53](https://github.com/polythings/timelake/issues/53))
 - [ ] Ingest backpressure: refuse at once when the queue is full (nothing enqueued, a retry is safe); cap the wait for
   a durable write below the client's timeout and say the write may still land; check the tenant before decompressing;
-  limit the decompressed size.
-- [ ] Delta encoding for monotonic integer counters (meters), after a benchmark.
+  limit the decompressed size. ([#54](https://github.com/polythings/timelake/issues/54))
+- [ ] Delta encoding for monotonic integer counters (meters), after a benchmark. ([#55](https://github.com/polythings/timelake/issues/55))
 
 *Read path*
 - [ ] Load each table once when many queries arrive together: one task reloads, the others wait and reuse the
-  result. A dashboard opening sends 10–20 cold queries at once; `Lake::table_recent` doesn't merge concurrent loads.
+  result. A dashboard opening sends 10–20 cold queries at once; `Lake::table_recent` doesn't merge concurrent loads. ([#56](https://github.com/polythings/timelake/issues/56))
 - [ ] Answer "list the series" (`SELECT DISTINCT <series key>`) from the last-value index, like the latest-value
-  rewrite.
+  rewrite. ([#57](https://github.com/polythings/timelake/issues/57))
 - [ ] For the local cache (§19.1 P5): a sparse byte-range cache on disk that fetches only the missing gaps, plus
-  write-through for files this process wrote. Our files never change, so entries never need invalidating.
+  write-through for files this process wrote. Our files never change, so entries never need invalidating. ([#58](https://github.com/polythings/timelake/issues/58))
 - [ ] Report per query: files pruned, footers from the head versus fetched, GETs and bytes ([#17](https://github.com/polythings/timelake/issues/17)).
 - [ ] Count storage requests by kind inside the library (wrap the store once per process), so a maintenance run
-  reports what it cost.
-- [ ] Re-apply tenant filters to rows when permissions arrive (§14, F1): pushdown into our provider only prunes.
-- [ ] Cap the number of time buckets a query may produce.
+  reports what it cost. ([#17](https://github.com/polythings/timelake/issues/17))
+- [ ] Re-apply tenant filters to rows when permissions arrive (§14, F1): pushdown into our provider only prunes. ([#62](https://github.com/polythings/timelake/issues/62))
+- [ ] Cap the number of time buckets a query may produce. ([#59](https://github.com/polythings/timelake/issues/59))
 
 **What to avoid.** IceGate reloads every table every 15 s whether used or not, scans Iceberg as one partition and
 ignores `LIMIT`, lists every WAL segment per scan, drops casts when converting filters (wrong pruning), caches HEAD
