@@ -63,6 +63,7 @@ export default async function BenchmarkPage({ params }: Props) {
         </Link>
         <h1 className="text-3xl font-semibold tracking-tight">{b.name}</h1>
         <p className="text-muted-foreground">{b.summary}</p>
+        {b.provenance && <p className="text-sm text-muted-foreground">{b.provenance}</p>}
         <nav className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
           <Link href={`/benchmarks/${b.id}/methodology`} className="flex items-center gap-1 hover:underline">
             Methodology <ArrowRight className="size-3.5" />

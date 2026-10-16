@@ -72,6 +72,7 @@ function BenchmarkResults({ benchmark, latest }: { benchmark: Benchmark; latest:
           <div className="space-y-1">
             <CardTitle className="text-xl">{benchmark.name}</CardTitle>
             <CardDescription>{benchmark.summary}</CardDescription>
+            {benchmark.provenance && <p className="text-xs text-muted-foreground">{benchmark.provenance}</p>}
           </div>
           <nav className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
             <Link href={`/benchmarks/${benchmark.id}`} className="flex items-center gap-1 hover:underline">

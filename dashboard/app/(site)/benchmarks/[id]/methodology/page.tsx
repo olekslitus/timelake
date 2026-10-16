@@ -120,6 +120,9 @@ export default async function MethodologyPage({ params }: Props) {
           Not run yet. {b.why} This page is the plan.
         </p>
       )}
+      {b.provenance && (
+        <SectionBlock section={{ title: results ? "What we ran" : "What we'll run", text: [b.provenance] }} />
+      )}
       {b.methodology.map((section) => (
         <SectionBlock key={section.title} section={section} />
       ))}

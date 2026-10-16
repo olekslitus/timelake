@@ -24,6 +24,11 @@ export type Benchmark = {
   why: string
   /** The timebench workload that produces its results. */
   workload?: string
+  /**
+   * What comes from the original benchmark and what is ours, shown next to its results and first in its methodology,
+   * so no one assumes we ran the original's own tools when we didn't.
+   */
+  provenance?: string
   methodology?: Section[]
 }
 
@@ -38,6 +43,8 @@ export const BENCHMARKS: Benchmark[] = [
     summary: "A truck fleet's location and diagnostics, streamed in and queried like a fleet dashboard.",
     why: "Our base workload. TSBS is the benchmark time-series databases publish numbers for.",
     workload: "tsbs-iot",
+    provenance:
+      "We use TSBS's data generator, unchanged, and its 12 query types, ported to SQL every system runs. We don't use TSBS's loaders or query runners: timebench loads the data and times the queries, so the numbers don't compare with published TSBS results.",
     methodology: [
       {
         title: "The original",
@@ -125,6 +132,8 @@ export const BENCHMARKS: Benchmark[] = [
     summary: "Servers' CPU metrics every 10 seconds, queried like a monitoring dashboard.",
     why: "The TSBS use case most databases publish numbers for.",
     workload: "tsbs-devops",
+    provenance:
+      "We use TSBS's data generator, unchanged, and its 15 query types, ported to SQL every system runs. We don't use TSBS's loaders or query runners: timebench loads the data and times the queries, so the numbers don't compare with published TSBS results.",
     methodology: [
       {
         title: "The original",
@@ -178,6 +187,8 @@ export const BENCHMARKS: Benchmark[] = [
     status: "planned",
     summary: "One wide table of web analytics, 100M rows; 43 queries.",
     why: "We run a 10% subset during development. Comparable numbers need the full dataset on its reference machine.",
+    provenance:
+      "We'll use ClickBench's dataset, queries and scripts, by its rules, for an official entry. Until then, a 10% subset runs in development and isn't published.",
     methodology: [
       {
         title: "The original",
@@ -203,6 +214,8 @@ export const BENCHMARKS: Benchmark[] = [
     status: "planned",
     summary: "Orders and their events: selective lookups, joins and pre-aggregated queries.",
     why: "Close to fresh-data dashboards. Its pre-aggregated queries wait for rollups.",
+    provenance:
+      "We'll use its data and queries; timebench will load the data and time the queries, so the numbers won't compare with its leaderboard.",
     methodology: [
       {
         title: "The original",
@@ -226,6 +239,7 @@ export const BENCHMARKS: Benchmark[] = [
     status: "planned",
     summary: "Sensor data: 7 query types, queries while data streams in, compression.",
     why: "Its queries and online mode fit. Its code has no license yet; we're asking the authors.",
+    provenance: "We'll use its data and query templates once its license allows; timebench will run them.",
     methodology: [
       {
         title: "The original",
@@ -250,6 +264,7 @@ export const BENCHMARKS: Benchmark[] = [
     status: "planned",
     summary: "Batched writes with out-of-order data and many clients; 12 query types; read/write mixes.",
     why: "The best tool for mixed reads and writes. Its adapters talk to a server, so it waits for Timelake's server mode.",
+    provenance: "We'll run its own tool, unchanged, through a Timelake adapter for its Java interface.",
     methodology: [
       {
         title: "The original",
@@ -273,6 +288,7 @@ export const BENCHMARKS: Benchmark[] = [
     status: "planned",
     summary: "How queries slow down over weeks of commits, and what maintenance wins back.",
     why: "Borrows LST-Bench's method (Microsoft, SIGMOD 2024), applied to our own time-series data.",
+    provenance: "Only LST-Bench's method: our own data, queries and runs, not its code or workload.",
     methodology: [
       {
         title: "The idea",
@@ -297,6 +313,7 @@ export const BENCHMARKS: Benchmark[] = [
     summary: "Plant data as it really arrives, from a day to a month, against databases and lakes, with monthly cost.",
     why: "TSBS models trucks every 10 seconds. Plants look different, and that's where Timelake is used.",
     workload: "iiot",
+    provenance: "Our own benchmark: the data generator, the queries and the method are all timebench's.",
     methodology: [
       {
         title: "Data",
@@ -364,6 +381,7 @@ export const BENCHMARKS: Benchmark[] = [
     summary:
       "An AI agent answers questions about the data through tools. Is it right more often, and cheaper, from Timelake?",
     why: "People increasingly ask questions of their data through AI agents, and no public benchmark compares storage for that.",
+    provenance: "Our own benchmark. Later, OpenRCA's and AssetOpsBench's tasks, run with their own code.",
     methodology: [
       {
         title: "The question",
