@@ -6,16 +6,13 @@ const DOT = 3
 const CELL = 4
 /** Milliseconds to draw the series in, left to right. */
 const REVEAL_MS = 1600
-/** Columns the series drift per second while hovered. */
-const DRIFT = 6
-/** How far around the cursor the series bend, in columns, and how strongly (0..1 of the way to it). */
-const REACH = 14
-const PULL = 0.55
-/** How fast the bend follows hovering in and out (per frame, 0..1). */
-const EASE = 0.12
+/** Milliseconds per new column while hovered. */
+const TICK_MS = 55
+/** How far each new point of the cursor's series moves toward the cursor (0..1). */
+const FOLLOW = 0.45
 
 /** The series across the strip: height (0..1 of the strip) at column x of `cols`, a color and a strength. */
-const SERIES: { at: (x: number, cols: number) => number; color: string; alpha: number }[] = [
+const SERIES: { at: (x: number, cols: number) => number; color: string; alpha: number; cursor?: boolean }[] = [
   {
     at: (x, cols) => 0.28 + Math.sin((x / cols) * 9) * 0.08 + Math.sin((x / cols) * 31) * 0.025,
     color: "--muted-foreground",
@@ -25,6 +22,7 @@ const SERIES: { at: (x: number, cols: number) => number; color: string; alpha: n
     at: (x, cols) => 0.5 + Math.sin((x / cols) * 6 + 1) * 0.16 + Math.sin((x / cols) * 23) * 0.04,
     color: "--primary",
     alpha: 1,
+    cursor: true,
   },
   {
     at: (x, cols) => 0.74 + Math.sin((x / cols) * 11 + 2.5) * 0.07 + Math.sin((x / cols) * 37) * 0.02,
@@ -34,9 +32,9 @@ const SERIES: { at: (x: number, cols: number) => number; color: string; alpha: n
 ]
 
 /**
- * The hero's background: a field of dim squares with three time series in lit squares. The series draw in once, left
- * to right, when the page loads. While the hero is hovered they drift and bend toward the cursor; when the cursor
- * leaves, the drift stops and the bend eases out, and the field stays still again.
+ * The hero's background: a field of dim squares with three time series in lit squares, drawn in once when the page
+ * loads. While the hero is hovered it becomes a live feed: the chart scrolls left, and the blue series publishes each
+ * new point at the cursor's height. When the cursor leaves, the chart stops.
  */
 export function HeroDots() {
   const canvas = useRef<HTMLCanvasElement>(null)
@@ -50,10 +48,22 @@ export function HeroDots() {
     const color = (name: string) => css.getPropertyValue(name).trim()
     const paper = color("--border")
     let progress = 0
-    // Columns the series have drifted, the cursor (in columns and 0..1 of the height), and the bend's strength.
-    let phase = 0
-    let cursor: { x: number; y: number } | null = null
-    let bend = 0
+    // Each series' values, one per column, newest last; `next` is the column the generated series continue from.
+    let values: number[][] = []
+    let next = 0
+    let cursorY: number | null = null
+
+    /** Keeps one value per column, filling a new strip (or a wider one) from the series' own shapes. */
+    const fit = (cols: number) => {
+      if (values.length === SERIES.length && values[0]?.length === cols) return
+      const old = values
+      next = cols
+      values = SERIES.map((s, k) => {
+        const kept = (old[k] ?? []).slice(-cols)
+        const fresh = Array.from({ length: cols - kept.length }, (_, x) => s.at(x, cols))
+        return [...fresh, ...kept]
+      })
+    }
 
     const draw = () => {
       const dpr = window.devicePixelRatio || 1
@@ -66,59 +76,64 @@ export function HeroDots() {
       ctx.clearRect(0, 0, w, h)
       const cols = Math.floor(w / CELL)
       const rows = Math.floor(h / CELL)
+      fit(cols)
       ctx.globalAlpha = 0.55
       ctx.fillStyle = paper
       for (let x = 0; x < cols; x++) for (let y = 0; y < rows; y++) ctx.fillRect(x * CELL, y * CELL, DOT, DOT)
       const upTo = progress * cols
-      for (const s of SERIES) {
+      SERIES.forEach((s, k) => {
         ctx.globalAlpha = s.alpha
         ctx.fillStyle = color(s.color)
         let prev: number | null = null
         for (let x = 0; x < cols && x <= upTo; x++) {
-          let v = s.at(x + phase, cols)
-          if (cursor && bend > 0) v += (cursor.y - v) * PULL * bend * Math.exp(-(((x - cursor.x) / REACH) ** 2))
+          const v = values[k]?.[x] ?? 0.5
           const y = Math.max(0, Math.min(rows - 1, Math.round(v * (rows - 1))))
           // Join steep steps, so the line stays connected.
           const [top, bottom] = prev === null ? [y, y] : [Math.min(prev, y), Math.max(prev, y)]
           for (let r = top; r <= bottom; r++) ctx.fillRect(x * CELL, r * CELL, DOT, DOT)
           prev = y
         }
-      }
+      })
       ctx.globalAlpha = 1
     }
 
-    // One loop drives the reveal and the hover; it runs only while something is changing.
-    let frame = 0
-    let last = performance.now()
-    const start = last
-    let hovering = false
-    const tick = (now: number) => {
-      const dt = Math.min(0.1, (now - last) / 1000)
-      last = now
-      progress = Math.min(1, (now - start) / REVEAL_MS)
-      if (hovering) phase += DRIFT * dt
-      bend += ((hovering ? 1 : 0) - bend) * EASE
-      if (!hovering && bend < 0.01) bend = 0
+    /** One new column: everything moves left, the blue series follows the cursor, the others go on as before. */
+    const publish = () => {
+      const cols = values[0]?.length ?? 0
+      values = values.map((v, k) => {
+        const s = SERIES[k]
+        const last = v.at(-1) ?? 0.5
+        const value = s?.cursor && cursorY !== null ? last + (cursorY - last) * FOLLOW : (s?.at(next, cols) ?? last)
+        return [...v.slice(1), value]
+      })
+      next++
       draw()
-      frame = progress < 1 || hovering || bend > 0 ? requestAnimationFrame(tick) : 0
     }
-    const run = () => {
-      if (!frame) {
-        last = performance.now()
-        frame = requestAnimationFrame(tick)
-      }
-    }
-    frame = requestAnimationFrame(tick)
 
+    // Draw in once on load.
+    let frame = 0
+    const start = performance.now()
+    const reveal = (now: number) => {
+      progress = Math.min(1, (now - start) / REVEAL_MS)
+      draw()
+      if (progress < 1) frame = requestAnimationFrame(reveal)
+    }
+    frame = requestAnimationFrame(reveal)
+
+    // While hovered, publish a column every tick; stop when the cursor leaves.
+    let timer: ReturnType<typeof setInterval> | null = null
     const move = (e: PointerEvent) => {
       const r = c.getBoundingClientRect()
-      cursor = { x: (e.clientX - r.left) / CELL, y: (e.clientY - r.top) / r.height }
-      hovering = true
-      run()
+      cursorY = Math.max(0.04, Math.min(0.96, (e.clientY - r.top) / r.height))
+      if (!timer) {
+        progress = 1
+        timer = setInterval(publish, TICK_MS)
+      }
     }
     const leave = () => {
-      hovering = false
-      run()
+      cursorY = null
+      if (timer) clearInterval(timer)
+      timer = null
     }
     area.addEventListener("pointermove", move)
     area.addEventListener("pointerleave", leave)
@@ -126,6 +141,7 @@ export function HeroDots() {
     ro.observe(c)
     return () => {
       cancelAnimationFrame(frame)
+      if (timer) clearInterval(timer)
       area.removeEventListener("pointermove", move)
       area.removeEventListener("pointerleave", leave)
       ro.disconnect()
