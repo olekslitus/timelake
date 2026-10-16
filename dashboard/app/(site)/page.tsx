@@ -18,13 +18,6 @@ const BTN = "font-mono text-xs uppercase tracking-[0.06em]"
 /** The dim /\/\ field behind the hero lockup: larger than any viewport, centred on the lockup and clipped by its block. */
 const FIELD = Array.from({ length: 40 }, (_, r) => (r % 2 ? "\\/" : "/\\").repeat(120)).join("\n")
 
-/** What sets Timelake apart, in the hero. */
-const BENEFITS = [
-  { title: "Serverless.", body: "No database, no Spark jobs and no always-on compute to pay for." },
-  { title: "Built for time series,", body: "unlike general-purpose lakehouses." },
-  { title: "Open standards.", body: "Apache Iceberg tables that DuckDB, Spark and other tools read directly." },
-]
-
 const PARTS = [
   {
     title: "Writing",
@@ -134,13 +127,9 @@ export default function Home() {
             The open time&#8209;series lakehouse
           </h1>
           <div className="label-mono">Open source · Apache 2.0 · v0</div>
-          <ul className="flex flex-col gap-2 text-muted-foreground">
-            {BENEFITS.map((b) => (
-              <li key={b.title}>
-                <span className="text-foreground">{b.title}</span> {b.body}
-              </li>
-            ))}
-          </ul>
+          <p className="text-lg text-muted-foreground">
+            Fast time-series queries on object storage, with no servers to run.
+          </p>
           <div className="flex flex-wrap gap-2.5">
             <Button size="lg" className={BTN} nativeButton={false} render={<Link href="/docs/quick-start" />}>
               Quick start <ArrowRight />
