@@ -18,21 +18,6 @@ const BTN = "font-mono text-xs uppercase tracking-[0.06em]"
 /** The dim /\/\ field behind the hero lockup: larger than any viewport, centred on the lockup and clipped by its block. */
 const FIELD = Array.from({ length: 40 }, (_, r) => (r % 2 ? "\\/" : "/\\").repeat(120)).join("\n")
 
-const PARTS = [
-  {
-    title: "Writing",
-    body: "An append writes Arrow data as Parquet files, partitioned by time (hour, day or month) and sorted by series and time. Each commit is a new metadata file written with a conditional put, so concurrent writers can't overwrite each other and no catalog server is needed.",
-  },
-  {
-    title: "Maintenance",
-    body: "After an append, the writer merges small files of similar size within a partition and expires old snapshots. A full pass rewrites each partition into one sorted file and removes duplicate rows. Retention drops whole partitions.",
-  },
-  {
-    title: "Reading",
-    body: "SQL runs in DataFusion, embedded in the CLI and the Python and Rust libraries. Queries skip files and row groups by time and series, and latest-value queries read a small index updated on every append. A TypeScript client reads the same files in the browser, and DuckDB, Spark and other Iceberg readers can read them too.",
-  },
-]
-
 const USE_CASES = [
   {
     title: "Industrial sensor data",
@@ -95,7 +80,7 @@ function HeroLockup() {
 function SectionHead({ label, children }: { label: string; children?: React.ReactNode }) {
   return (
     <div className="flex max-w-3xl flex-col gap-3">
-      <h2 className="label-mono">{label}</h2>
+      <h2 className="text-3xl leading-tight font-light tracking-tight sm:text-4xl">{label}</h2>
       {children ? <p className="text-muted-foreground">{children}</p> : null}
     </div>
   )
@@ -149,23 +134,8 @@ export default function Home() {
       </section>
 
       <section className="flex flex-col gap-6">
-        <SectionHead label="How it works">
-          Timelake is a library, not a server. Writers, maintenance and readers run in your own processes; everything
-          they share is in the bucket.
-        </SectionHead>
+        <SectionHead label="How it works" />
         <StackDiagram />
-        <div className="cells md:grid-cols-3">
-          {PARTS.map((p) => (
-            <div key={p.title} className="flex flex-col gap-2 p-6">
-              <h3 className="text-lg font-normal">{p.title}</h3>
-              <p className="text-sm text-muted-foreground">{p.body}</p>
-            </div>
-          ))}
-        </div>
-        <nav className="flex flex-wrap gap-x-5 gap-y-1">
-          <MoreLink href="/docs/how-it-works">How it works</MoreLink>
-          <MoreLink href="/docs/architecture">Architecture</MoreLink>
-        </nav>
       </section>
 
       <section className="flex flex-col gap-6">
