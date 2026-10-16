@@ -5,6 +5,7 @@ import {
   Bot,
   BotMessageSquare,
   ChartCandlestick,
+  HardDrive,
   Lambda,
   LayoutDashboard,
   Radio,
@@ -15,7 +16,6 @@ import {
 import { useLayoutEffect, useRef, useState } from "react"
 
 import { TimelakeMark } from "@/components/brand/timelake-mark"
-import { dotPaper } from "@/components/dot-paper"
 import { DotGrid, type Segment } from "@/components/dots"
 import { cn } from "@/lib/utils"
 
@@ -36,24 +36,26 @@ const BACKFILL: Endpoint = { id: "files", icon: Archive, kind: "Files", name: "B
 // Alarms and detections from the ingest rules, published to the user's event stream.
 const EVENTS: Endpoint = { id: "events", icon: Siren, kind: "Events", name: "Kinesis", via: "Alarms", planned: true }
 
-const READERS: Endpoint[] = [
-  { id: "dashboard", icon: LayoutDashboard, kind: "App", name: "Dashboard", via: "HTTPS" },
-  { id: "lambda", icon: Lambda, kind: "Function", name: "AWS Lambda", via: "SQL" },
-  { id: "engines", icon: Server, kind: "Engines", name: "DuckDB · Spark\nPyIceberg", via: "Iceberg" },
-  { id: "agent", icon: BotMessageSquare, kind: "AI", name: "AI agent", via: "MCP", planned: true },
+// Readers that run the library talk to Timelake; the others read the bucket's files directly.
+const READERS: (Endpoint & { from: "timelake" | "bucket" })[] = [
+  { id: "lambda", icon: Lambda, kind: "Function", name: "AWS Lambda", via: "SQL", from: "timelake" },
+  { id: "agent", icon: BotMessageSquare, kind: "AI", name: "AI agent", via: "MCP", planned: true, from: "timelake" },
+  { id: "dashboard", icon: LayoutDashboard, kind: "App", name: "Dashboard", via: "HTTPS", from: "bucket" },
+  { id: "engines", icon: Server, kind: "Engines", name: "DuckDB · Spark\nPyIceberg", via: "Iceberg", from: "bucket" },
 ]
 
-const RUNTIME: [string, string][] = [
-  ["API", "Python · Rust · CLI · TS"],
-  ["SQL", "DataFusion"],
-  ["Memory", "Arrow"],
+/** The library, in the processes that use it. The last row is what Timelake adds. */
+const LIBRARY: [string, string][] = [
+  ["Use from", "Python · Rust · CLI · TS"],
+  ["Read", "SQL on DataFusion"],
 ]
-const CORE: [string, string] = ["Core", "Sort · compact · index"]
+const WRITE: [string, string] = ["Write", "Sort · compact · index"]
+/** What is in the bucket. */
 const BUCKET: [string, string][] = [
-  ["Catalog", "Files, no server"],
-  ["Table", "Iceberg"],
-  ["Files", "Parquet"],
   ["Storage", "S3 · GCS · Azure · R2"],
+  ["Tables", "Apache Iceberg"],
+  ["Files", "Parquet"],
+  ["Catalog", "Files, no server"],
 ]
 
 // The stream inside the ingest node, as squares: a lit square for each mark, a dim one for each gap.
@@ -70,7 +72,7 @@ type Edge = {
   from: string
   to: string
   label: string
-  kind: "in" | "bypass" | "arrow" | "event" | "out"
+  kind: "in" | "bypass" | "arrow" | "event" | "store" | "out"
   planned?: boolean
 }
 
@@ -79,8 +81,12 @@ const EDGES: Edge[] = [
   { from: BACKFILL.id, to: "timelake", label: BACKFILL.via, kind: "bypass" },
   { from: "ingest", to: "timelake", label: "Arrow", kind: "arrow", planned: true },
   { from: "ingest", to: EVENTS.id, label: EVENTS.via, kind: "event", planned: true },
-  ...READERS.map((r) => ({ from: "timelake", to: r.id, label: r.via, kind: "out" as const, planned: r.planned })),
+  { from: "timelake", to: "bucket", label: "PUT · GET", kind: "store" },
+  ...READERS.map((r) => ({ from: r.from, to: r.id, label: r.via, kind: "out" as const, planned: r.planned })),
 ]
+
+/** `v` kept at least `pad` inside `lo`..`hi`. */
+const clamp = (v: number, lo: number, hi: number, pad = 16) => Math.min(Math.max(v, lo + pad), hi - pad)
 
 type Drawn = { d: string; lx: number; ly: number; label: string; planned?: boolean }
 
@@ -97,16 +103,27 @@ function route(e: Edge, a: DOMRect, b: DOMRect, wide: boolean): Drawn {
     const [y1, y2] = wide ? [a.top, b.bottom] : [a.bottom, b.top]
     return { ...base, d: `M${x},${y1} V${y2}`, lx: x, ly: (y1 + y2) / 2 }
   }
+  if (e.kind === "store") {
+    // Timelake to the bucket below it.
+    const x = a.left + a.width / 2
+    return { ...base, d: `M${x},${a.bottom} V${b.top}`, lx: x, ly: (a.bottom + b.top) / 2 }
+  }
   if (wide) {
     if (e.kind === "in") {
       // Converge on a short bus just before the ingest node; the label sits on the first run.
       const mid = b.left - 14
       return { ...base, d: `M${a.right},${acy} H${mid} V${bcy} H${b.left}`, lx: (a.right + mid) / 2, ly: acy }
     }
-    // Everything else is a straight run at the height of the small node on either end.
-    const y = e.kind === "out" ? bcy : acy
-    const lx = a.right + Math.min((b.left - a.right) / 2, 48)
-    return { ...base, d: `M${a.right},${y} H${b.left}`, lx, ly: y }
+    // Everything else runs at the height of the small node, stepping just before the big one if it's out of reach.
+    const mid = b.left - 20
+    if (e.kind === "out") {
+      const y = clamp(bcy, a.top, a.bottom)
+      const lx = a.right + Math.min((mid - a.right) / 2, 48)
+      return { ...base, d: `M${a.right},${y} H${mid} V${bcy} H${b.left}`, lx, ly: y }
+    }
+    const y = clamp(acy, b.top, b.bottom)
+    const lx = a.right + Math.min((mid - a.right) / 2, 48)
+    return { ...base, d: `M${a.right},${acy} H${mid} V${y} H${b.left}`, lx, ly: acy }
   }
   // Narrow: a bus down the left edge; indented nodes hang off it on short stubs that carry the label.
   if (e.kind === "out") {
@@ -165,7 +182,8 @@ export function StackDiagram() {
       }
       const wide = window.matchMedia(WIDE).matches
       const drawn = EDGES.flatMap((e) => {
-        const [a, b] = [rel(e.from), rel(e.to)]
+        // Stacked, every reader hangs off the bus below the bucket.
+        const [a, b] = [rel(!wide && e.kind === "out" ? "bucket" : e.from), rel(e.to)]
         return a && b ? [route(e, a, b, wide)] : []
       })
       setLines({ w: o.width, h: o.height, drawn })
@@ -226,29 +244,32 @@ export function StackDiagram() {
         </div>
       </div>
 
-      {/* Timelake */}
-      <div
-        data-node="timelake"
-        className="relative mt-10 overflow-hidden rounded-lg border border-primary/50 bg-card xl:col-start-5 xl:mt-0"
-      >
-        <div className="flex items-center gap-2.5 border-b px-5 py-3.5">
-          <TimelakeMark className="size-5 text-foreground" />
-          <span className="text-lg font-normal">Timelake</span>
-          <span className="ml-auto text-xs text-muted-foreground">in your process</span>
+      {/* Timelake, the library, above the bucket it writes */}
+      <div className="mt-10 flex flex-col gap-14 xl:col-start-5 xl:mt-0">
+        <div data-node="timelake" className="overflow-hidden rounded-lg border border-primary/50 bg-card">
+          <div className="flex items-center gap-2.5 border-b px-5 py-3.5">
+            <TimelakeMark className="size-5 text-foreground" />
+            <span className="text-lg font-normal">Timelake</span>
+            <span className="ml-auto text-xs text-muted-foreground">in your process</span>
+          </div>
+          <div className="divide-y">
+            {LIBRARY.map(([k, v]) => (
+              <Row key={k} k={k} v={v} />
+            ))}
+            <Row k={WRITE[0]} v={WRITE[1]} own />
+          </div>
         </div>
-        <div className="divide-y">
-          {RUNTIME.map(([k, v]) => (
-            <Row key={k} k={k} v={v} />
-          ))}
-          <Row k={CORE[0]} v={CORE[1]} own />
-        </div>
-        <div className="flex items-center gap-3 border-y px-5 py-2" style={dotPaper()}>
-          <span className="rounded-sm bg-card px-1.5 py-0.5 text-xs text-foreground">Your bucket</span>
-        </div>
-        <div className="divide-y">
-          {BUCKET.map(([k, v]) => (
-            <Row key={k} k={k} v={v} />
-          ))}
+        <div data-node="bucket" className="overflow-hidden rounded-lg border bg-card">
+          <div className="flex items-center gap-2.5 border-b px-5 py-3.5">
+            <HardDrive className="size-5 text-muted-foreground" aria-hidden />
+            <span className="text-lg font-normal">Your bucket</span>
+            <span className="ml-auto text-xs text-muted-foreground">files only</span>
+          </div>
+          <div className="divide-y">
+            {BUCKET.map(([k, v]) => (
+              <Row key={k} k={k} v={v} />
+            ))}
+          </div>
         </div>
       </div>
 
