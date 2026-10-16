@@ -115,7 +115,7 @@ function UseCaseGrid({ cases, columns }: { cases: UseCase[]; columns: string }) 
 
 function SectionHead({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex flex-col gap-3">
       <h2 className="text-2xl leading-tight font-light tracking-tight">{label}</h2>
       <p className="text-sm text-muted-foreground">{children}</p>
     </div>
