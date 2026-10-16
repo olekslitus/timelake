@@ -3,6 +3,8 @@ import Link from "next/link"
 import { Suspense } from "react"
 
 import { BenchRanking } from "@/components/bench-ranking"
+import { WORDMARK } from "@/components/brand/mark-geometry"
+import { TimelakeMark } from "@/components/brand/timelake-mark"
 import { CodeBlock } from "@/components/code-block"
 import { GithubIcon } from "@/components/github-icon"
 import { StackDiagram } from "@/components/stack-diagram"
@@ -12,6 +14,9 @@ import { SYSTEMS, latestByTarget, loadRuns, rankings } from "@/lib/benchmarks"
 import { REPO_URL } from "@/lib/site"
 
 const BTN = "font-mono text-xs uppercase tracking-[0.06em]"
+
+/** The dim /\/\ field behind the hero lockup, larger than any viewport and clipped by its block. */
+const FIELD = Array.from({ length: 40 }, (_, r) => (r % 2 ? "\\/" : "/\\").repeat(120)).join("\n")
 
 const PARTS = [
   {
@@ -57,6 +62,36 @@ const LIMITATIONS = [
   "Google Cloud Storage, Azure Blob Storage and R2 use the same code as S3 but haven't been tested yet.",
 ]
 
+/** Mark + "timelake" across most of the hero's width, on a card-coloured pill that masks the field. */
+function HeroLockup() {
+  // The mark's height, from the container's width; the rest follows the brand proportions (brand/marks.mjs).
+  const m = "19.5cqw"
+  const of = (k: number) => `calc(${m} * ${k})`
+  return (
+    <div
+      role="img"
+      aria-label="Timelake"
+      className="relative flex items-center rounded-full bg-card"
+      style={{ gap: of(WORDMARK.gapOfMark), padding: `${of(0.12)} ${of(0.45)} ${of(0.12)} ${of(0.12)}` }}
+    >
+      <TimelakeMark
+        className="shrink-0"
+        style={{ width: m, height: m, transform: `translateY(${of(WORDMARK.markDropOfMark)})` }}
+      />
+      <span
+        className="font-sans leading-none"
+        style={{
+          fontSize: of(WORDMARK.sizeOfMark),
+          fontWeight: WORDMARK.weight,
+          letterSpacing: `${WORDMARK.letterSpacingEm}em`,
+        }}
+      >
+        {WORDMARK.text}
+      </span>
+    </div>
+  )
+}
+
 function SectionHead({ label, children }: { label: string; children?: React.ReactNode }) {
   return (
     <div className="flex max-w-3xl flex-col gap-3">
@@ -77,27 +112,37 @@ function MoreLink({ href, children }: { href: string; children: React.ReactNode 
 export default function Home() {
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-24 px-4 pt-10 pb-24 sm:pt-16">
-      <section className="flex max-w-3xl flex-col gap-6">
-        <div className="label-mono">Open source · Apache 2.0 · v0</div>
-        <h1 className="text-4xl leading-[1.05] font-light tracking-tight sm:text-6xl">Timelake</h1>
-        <p className="text-lg text-muted-foreground">
-          A table format and query engine for time-series data in object storage. Data is written as Parquet files with
-          Apache Iceberg metadata to an S3 bucket or a local disk, and queried with SQL from the command line, Python,
-          Rust or the browser.
-        </p>
-        <div className="flex flex-wrap gap-2.5">
-          <Button size="lg" className={BTN} nativeButton={false} render={<Link href="/docs/quick-start" />}>
-            Quick start <ArrowRight />
-          </Button>
-          <Button
-            size="lg"
-            variant="outline"
-            className={BTN}
-            nativeButton={false}
-            render={<a href={REPO_URL} target="_blank" rel="noreferrer" />}
-          >
-            <GithubIcon /> GitHub
-          </Button>
+      <section className="cells">
+        <div className="@container relative grid place-items-center overflow-hidden px-4 py-[8cqw]">
+          <pre aria-hidden className="ascii absolute inset-0 overflow-hidden p-3 text-xs leading-normal">
+            {FIELD}
+          </pre>
+          <HeroLockup />
+        </div>
+        <div className="flex flex-col gap-6 p-7 sm:p-12">
+          <h1 className="text-4xl leading-[1.05] font-light tracking-tight text-balance sm:text-6xl">
+            The open time&#8209;series lakehouse
+          </h1>
+          <div className="label-mono">Open source · Apache 2.0 · v0</div>
+          <p className="max-w-3xl text-lg text-muted-foreground">
+            A table format and query engine for time-series data in object storage. Data is written as Parquet files
+            with Apache Iceberg metadata to an S3 bucket or a local disk, and queried with SQL from the command line,
+            Python, Rust or the browser.
+          </p>
+          <div className="flex flex-wrap gap-2.5">
+            <Button size="lg" className={BTN} nativeButton={false} render={<Link href="/docs/quick-start" />}>
+              Quick start <ArrowRight />
+            </Button>
+            <Button
+              size="lg"
+              variant="outline"
+              className={BTN}
+              nativeButton={false}
+              render={<a href={REPO_URL} target="_blank" rel="noreferrer" />}
+            >
+              <GithubIcon /> GitHub
+            </Button>
+          </div>
         </div>
       </section>
 
