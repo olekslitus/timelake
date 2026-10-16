@@ -17,6 +17,7 @@ import { Suspense } from "react"
 import { BenchCards } from "@/components/bench-cards"
 import { BenefitCards } from "@/components/benefit-cards"
 import { GithubIcon } from "@/components/github-icon"
+import { HeroDots } from "@/components/hero-dots"
 import { StackDiagram } from "@/components/stack-diagram"
 import { Button } from "@/components/ui/button"
 import { type ArtKind, UseCaseArt } from "@/components/use-case-art"
@@ -24,9 +25,6 @@ import { latestByTarget, loadRuns } from "@/lib/benchmarks"
 import { REPO_URL } from "@/lib/site"
 
 const BTN = "font-mono text-xs uppercase tracking-[0.06em]"
-
-/** The dim /\/\ field behind the hero heading: larger than any viewport, centred on it and clipped by its block. */
-const FIELD = Array.from({ length: 40 }, (_, r) => (r % 2 ? "\\/" : "/\\").repeat(120)).join("\n")
 
 type UseCase = { icon: LucideIcon; art: ArtKind; title: string; body: string }
 
@@ -137,18 +135,16 @@ export default function Home() {
     <div className="mx-auto flex max-w-6xl flex-col gap-24 px-4 pt-8 pb-24">
       <div className="flex flex-col gap-8">
         <section className="cells">
-          {/* Whole rows (18px) and characters (ch) of the field around the band, so its edges fall between them. */}
-          <div className="relative overflow-hidden px-[2ch] py-[36px] font-mono text-xs sm:px-[4ch]">
-            <pre aria-hidden className="ascii absolute inset-0 overflow-hidden text-xs leading-[18px]">
-              {FIELD}
-            </pre>
-            <div className="relative flex h-[198px] flex-col justify-center gap-5 bg-card px-6 sm:h-[162px] sm:flex-row sm:items-center sm:justify-between sm:px-8">
-              <h1 className="font-sans text-4xl leading-[1.05] font-light tracking-tight sm:text-5xl">
+          <div className="relative overflow-hidden px-4 py-9 sm:px-8">
+            <HeroDots />
+            {/* The series run between the heading and the buttons; each sits on its own solid patch. */}
+            <div className="relative flex h-[200px] flex-col justify-center gap-5 sm:h-[164px] sm:flex-row sm:items-center sm:justify-between">
+              <h1 className="w-fit rounded-md bg-card/90 px-5 py-4 text-4xl leading-[1.05] font-light tracking-tight backdrop-blur-[2px] sm:text-5xl">
                 The open time&#8209;series
                 <br />
                 lakehouse
               </h1>
-              <div className="flex shrink-0 flex-wrap gap-2.5">
+              <div className="flex w-fit shrink-0 flex-wrap gap-2.5 rounded-md bg-card/90 p-3 backdrop-blur-[2px]">
                 <Button size="lg" className={BTN} nativeButton={false} render={<Link href="/docs/quick-start" />}>
                   Quick start <ArrowRight />
                 </Button>
