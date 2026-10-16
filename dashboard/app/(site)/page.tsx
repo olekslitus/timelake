@@ -114,7 +114,7 @@ async function Measurements() {
   if (!run) return null
   return (
     <section className="flex flex-col gap-6">
-      <SectionHead label="How fast is it?" />
+      <SectionHead label="Benchmarks" />
       <div className="grid gap-x-10 gap-y-6 lg:grid-cols-2">
         {rankings(run).map((r) => (
           <BenchRanking key={r.title} ranking={r} />
