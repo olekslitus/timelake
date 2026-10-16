@@ -28,7 +28,7 @@ type Reader = {
   name: string
   query: string
   pick: (days: File[][]) => File[]
-  chart: "line" | "band" | "bars" | "peak"
+  chart: "line" | "band" | "bars" | "candles" | "peak"
   /** Points per bucket: the reader downsamples the series to this. */
   per: number
 }
@@ -36,7 +36,8 @@ const READERS: Reader[] = [
   { name: "Dashboard", query: "avg per minute", pick: (d) => (d[0] ?? []).slice(-2), chart: "line", per: 3 },
   { name: "Grafana", query: "min–max per minute", pick: (d) => (d[0] ?? []).slice(-2), chart: "band", per: 4 },
   { name: "DuckDB", query: "avg per hour", pick: (d) => d[0] ?? [], chart: "bars", per: 10 },
-  { name: "AI agent", query: "when was the peak?", pick: (d) => d[0] ?? [], chart: "peak", per: 3 },
+  { name: "Trading app", query: "OHLC per minute", pick: (d) => d[0] ?? [], chart: "candles", per: 8 },
+  { name: "AI agent", query: "when was the peak?", pick: (d) => d[0] ?? [], chart: "peak", per: 4 },
 ]
 
 /** The series' shape when nobody is hovering: height (0..1, 0 at the top) at column x of `cols`. */
@@ -44,12 +45,21 @@ const shape = (x: number, cols: number) => 0.5 + Math.sin((x / cols) * 6 + 1) * 
 /** A reading for a height: 0 at the bottom, 100 at the top. */
 const reading = (v: number) => Math.round((1 - v) * 100)
 
-/** The series in buckets of `per` points: each bucket's average, lowest and highest value (heights, 0 at the top). */
-function downsample(values: number[], per: number): { avg: number; top: number; bottom: number }[] {
-  const out = []
+/** A bucket of points: average, highest and lowest (`top`/`bottom`, as heights with 0 at the top), first and last. */
+type Bucket = { avg: number; top: number; bottom: number; open: number; close: number }
+
+/** The series in buckets of `per` points. */
+function downsample(values: number[], per: number): Bucket[] {
+  const out: Bucket[] = []
   for (let i = 0; i < values.length; i += per) {
     const b = values.slice(i, i + per)
-    out.push({ avg: b.reduce((s, v) => s + v, 0) / b.length, top: Math.min(...b), bottom: Math.max(...b) })
+    out.push({
+      avg: b.reduce((s, v) => s + v, 0) / b.length,
+      top: Math.min(...b),
+      bottom: Math.max(...b),
+      open: b[0] ?? 0,
+      close: b.at(-1) ?? 0,
+    })
   }
   return out
 }
@@ -121,7 +131,7 @@ export function HeroFlow({ pick = false }: { pick?: boolean }) {
       return files.length > 0 ? files : (writer.days[1] ?? [])
     }
     /** The rows of the readers' list, one per reader. */
-    const listRow = (i: number) => 9 + i * 7
+    const listRow = (i: number) => 8 + i * 6
 
     /** A reader's chart in x..x+width, rows top..bottom, drawn `done` (0..1) of the way, in the reading color. */
     const chart = (r: Reader, x: number, width: number, top: number, bottom: number, done: number) => {
@@ -130,13 +140,56 @@ export function HeroFlow({ pick = false }: { pick?: boolean }) {
       const [lo, hi] = [Math.min(...buckets.map((b) => b.top)), Math.max(...buckets.map((b) => b.bottom))]
       const at = (v: number) => top + Math.round(((v - lo) / (hi - lo || 1)) * (bottom - top))
       const upTo = Math.ceil(width * done)
+      // Each bucket's columns, for the charts drawn a bucket at a time.
+      const step = width / buckets.length
+      const span = (i: number) => [x + Math.round(i * step), x + Math.round((i + 1) * step) - 1] as const
+      const shown = buckets.filter((_, i) => span(i)[0] - x <= upTo)
       if (r.chart === "bars") {
-        const step = width / buckets.length
-        buckets.forEach((b, i) => {
-          const [x0, x1] = [x + Math.round(i * step), x + Math.round((i + 1) * step) - 1]
-          if (x0 - x > upTo) return
+        shown.forEach((b, i) => {
+          const [x0, x1] = span(i)
           for (let cx = x0; cx < x1; cx++) for (let cy = at(b.avg); cy <= bottom; cy++) square(cx, cy, reads, 0.8)
         })
+        return
+      }
+      if (r.chart === "candles") {
+        // A wick from high to low, and a body from open to close: solid when it rose, hollow when it fell.
+        shown.forEach((b, i) => {
+          const [x0, x1] = span(i)
+          const mid = Math.floor((x0 + x1) / 2)
+          const [left, right] = step >= 6 ? [mid - 1, mid + 2] : [mid - 1, mid + 1]
+          for (let cy = at(b.top); cy <= at(b.bottom); cy++) square(mid, cy, reads, 0.7)
+          const [y0, y1] = [Math.min(at(b.open), at(b.close)), Math.max(at(b.open), at(b.close))]
+          const rose = b.close < b.open
+          for (let cx = left; cx <= right; cx++)
+            for (let cy = y0; cy <= y1; cy++) {
+              const edge = cx === left || cx === right || cy === y0 || cy === y1
+              if (rose || edge) square(cx, cy, reads, 1)
+            }
+        })
+        return
+      }
+      if (r.chart === "peak") {
+        // A step per bucket, joined to the one before; the peak's step full strength and marked.
+        const peak = buckets.reduce((best, b, i) => ((buckets[best]?.avg ?? 1) > b.avg ? i : best), 0)
+        let prev: number | null = null
+        shown.forEach((b, i) => {
+          const [x0, x1] = span(i)
+          const y = at(b.avg)
+          if (prev !== null) for (let cy = Math.min(prev, y); cy <= Math.max(prev, y); cy++) square(x0, cy, reads, 0.6)
+          for (let cx = x0; cx <= x1; cx++) square(cx, y, reads, i === peak ? 1 : 0.6)
+          prev = y
+        })
+        const b = buckets[peak]
+        if (b && done >= 1) {
+          const [x0, y] = [span(peak)[0], at(b.avg)]
+          for (const [dx, dy] of [
+            [-1, -2],
+            [0, -3],
+            [1, -2],
+          ] as const)
+            square(x0 + dx, y + dy, reads, 1)
+          label(`peak ${reading(b.avg)}`, Math.min(x0 + 6, x + width - 10), Math.max(top + 2, y - 2), reads)
+        }
         return
       }
       const line = stretch(
@@ -163,22 +216,6 @@ export function HeroFlow({ pick = false }: { pick?: boolean }) {
         const [a, b] = prev === null ? [y, y] : [Math.min(prev, y), Math.max(prev, y)]
         for (let cy = a; cy <= b; cy++) square(x + i, cy, reads, 1)
         prev = y
-      }
-      if (r.chart === "peak" && done >= 1) {
-        const peakAt = line.indexOf(Math.min(...line))
-        const y = at(line[peakAt] ?? 0)
-        for (const [dx, dy] of [
-          [-1, -2],
-          [0, -3],
-          [1, -2],
-        ] as const)
-          square(x + peakAt + dx, y + dy, reads, 1)
-        label(
-          `peak ${reading(line[peakAt] ?? 0)}`,
-          Math.min(x + peakAt + 4, x + width - 10),
-          Math.max(top + 2, y - 2),
-          reads,
-        )
       }
     }
 
