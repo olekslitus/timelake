@@ -37,16 +37,6 @@ const USE_CASES = [
   },
 ]
 
-/** The main limitations of v0 (docs/limitations). */
-const LIMITATIONS = [
-  "No row-level deletes: retention drops whole partitions only.",
-  "The schema is fixed when a table is created.",
-  "Rows sent twice stay visible until compaction removes them.",
-  "Data becomes visible when its append commits; there is no buffer for sub-second freshness.",
-  "Tables are found by path; engines that only speak the Iceberg REST catalog protocol can't attach yet.",
-  "Google Cloud Storage, Azure Blob Storage and R2 use the same code as S3 but haven't been tested yet.",
-]
-
 /** Mark + "timelake" in the middle of its cell, on a card-coloured rectangle that masks the field. */
 function HeroLockup() {
   // The mark's height, from the container's width; the rest follows the brand proportions (brand/marks.mjs).
@@ -153,19 +143,6 @@ export default function Home() {
       <Suspense fallback={null}>
         <Measurements />
       </Suspense>
-
-      <section className="flex flex-col gap-6">
-        <SectionHead label="What doesn't it do yet?">Timelake is at v0. The main gaps:</SectionHead>
-        <ul className="flex max-w-3xl list-disc flex-col gap-1.5 pl-5 text-sm text-muted-foreground">
-          {LIMITATIONS.map((l) => (
-            <li key={l}>{l}</li>
-          ))}
-        </ul>
-        <nav className="flex flex-wrap gap-x-5 gap-y-1">
-          <MoreLink href="/docs/limitations">All limitations</MoreLink>
-          <MoreLink href="/roadmap">Roadmap</MoreLink>
-        </nav>
-      </section>
 
       <section className="flex flex-col gap-6">
         <SectionHead label="How do I start?">Use a local folder, or an s3://, gs:// or az:// location.</SectionHead>
