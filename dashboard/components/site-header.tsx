@@ -55,6 +55,7 @@ export function SiteHeader() {
           <ActiveNavLinks />
         </Suspense>
         <div className="flex-1" />
+        <span className="hidden font-mono text-[13px] text-muted-foreground sm:inline">Apache 2.0 · v0</span>
         <Button
           variant="ghost"
           size="icon"

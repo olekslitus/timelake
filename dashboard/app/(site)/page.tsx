@@ -140,22 +140,19 @@ export default function Home() {
             <br />
             lakehouse
           </h1>
-          <div className="flex shrink-0 flex-col gap-2.5 sm:items-end">
-            <div className="flex flex-wrap gap-2.5">
-              <Button size="lg" className={BTN} nativeButton={false} render={<Link href="/docs/quick-start" />}>
-                Quick start <ArrowRight />
-              </Button>
-              <Button
-                size="lg"
-                variant="outline"
-                className={BTN}
-                nativeButton={false}
-                render={<a href={REPO_URL} target="_blank" rel="noreferrer" />}
-              >
-                <GithubIcon /> GitHub
-              </Button>
-            </div>
-            <p className="text-xs text-muted-foreground">Apache 2.0 · v0</p>
+          <div className="flex shrink-0 flex-wrap gap-2.5">
+            <Button size="lg" className={BTN} nativeButton={false} render={<Link href="/docs/quick-start" />}>
+              Quick start <ArrowRight />
+            </Button>
+            <Button
+              size="lg"
+              variant="outline"
+              className={BTN}
+              nativeButton={false}
+              render={<a href={REPO_URL} target="_blank" rel="noreferrer" />}
+            >
+              <GithubIcon /> GitHub
+            </Button>
           </div>
         </div>
         {/* Publish on the left by hovering the chart; the store in the middle; readers as tabs on the right. */}
