@@ -1,7 +1,8 @@
-import { Activity, ArrowRight, Gauge, Layers, ServerOff, type LucideIcon } from "lucide-react"
+import { Activity, ArrowRight, Cloud, Gauge, Layers, Scale, ServerOff, type LucideIcon } from "lucide-react"
 import Link from "next/link"
 
 import { latestByTarget, loadRuns, rankings } from "@/lib/benchmarks"
+import { REPO_URL } from "@/lib/site"
 import { cn } from "@/lib/utils"
 
 /** Writers and readers in your processes, files in your bucket, nothing in between. */
@@ -16,11 +17,11 @@ const PROCESSES = (
 /** The same files, written by Timelake and read by other tools. */
 const FORMATS = (
   <>
-    {"cli    ─┐           ┌─ timelake\npython ─┼─ "}
+    {"cli    ─┐           ┌─ duckdb\npython ─┼─ "}
     <span className="hi">iceberg</span>
-    {" ─┼─ duckdb\nrust   ─┘  "}
+    {" ─┼─ spark\nrust   ─┘  "}
     <span className="hi">parquet</span>
-    {"  └─ browser"}
+    {"  └─ pyiceberg"}
   </>
 )
 
@@ -50,7 +51,7 @@ async function speed(): Promise<string> {
 }
 
 export async function BenefitCards() {
-  // Two rows: a wide card first in the top row, last in the bottom one.
+  // Two rows of three: a wide card first in the top row, in the middle of the bottom one.
   const cards: Card[] = [
     {
       icon: ServerOff,
@@ -73,16 +74,28 @@ export async function BenefitCards() {
       link: { label: "Benchmarks", href: "/benchmarks" },
     },
     {
-      icon: Layers,
-      title: "Open source, open formats",
-      body: "Apache 2.0. Tables are Iceberg and Parquet files that DuckDB reads without Timelake.",
+      icon: Cloud,
+      title: "Any object store",
+      body: "AWS S3, R2, MinIO and other S3\u2011compatible stores, Google Cloud Storage, Azure, or a local disk.",
       link: { label: "Storage", href: "/docs/storage" },
+    },
+    {
+      icon: Layers,
+      title: "Open formats",
+      body: "Standard Iceberg tables of Parquet files. Query them with DuckDB, Spark or PyIceberg, without Timelake.",
+      link: { label: "Querying", href: "/docs/querying" },
       wide: true,
       art: FORMATS,
     },
+    {
+      icon: Scale,
+      title: "Open source",
+      body: "Apache 2.0, built on Apache Arrow and DataFusion.",
+      link: { label: "GitHub", href: REPO_URL },
+    },
   ]
   return (
-    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
       {cards.map((c) => {
         const Icon = c.icon
         return (
@@ -98,7 +111,11 @@ export async function BenefitCards() {
               {c.title}
             </h3>
             <p className={cn("text-sm leading-relaxed text-muted-foreground", c.art && "xl:max-w-[50%]")}>{c.body}</p>
-            <Link href={c.link.href} className="mt-auto flex w-fit items-center gap-1.5 pt-2 text-sm hover:underline">
+            <Link
+              href={c.link.href}
+              {...(c.link.href.startsWith("http") ? { target: "_blank", rel: "noreferrer" } : {})}
+              className="mt-auto flex w-fit items-center gap-1.5 pt-2 text-sm hover:underline"
+            >
               {c.link.label} <ArrowRight className="size-3.5" />
             </Link>
             {c.art ? (
