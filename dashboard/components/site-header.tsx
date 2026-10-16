@@ -63,7 +63,7 @@ export function SiteHeader() {
               v0
             </TooltipTrigger>
             <TooltipContent side="bottom">
-              Timelake is at v0 and not ready for production yet: formats and APIs may change between releases.
+              Timelake is at v0 and not ready for production yet. Formats and APIs may change between releases.
             </TooltipContent>
           </Tooltip>
         </span>
