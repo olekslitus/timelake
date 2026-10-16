@@ -80,7 +80,7 @@ function HeroLockup() {
 function SectionHead({ label, children }: { label: string; children?: React.ReactNode }) {
   return (
     <div className="flex max-w-3xl flex-col gap-3">
-      <h2 className="text-3xl leading-tight font-light tracking-tight sm:text-4xl">{label}</h2>
+      <h2 className="text-2xl leading-tight font-light tracking-tight">{label}</h2>
       {children ? <p className="text-muted-foreground">{children}</p> : null}
     </div>
   )
