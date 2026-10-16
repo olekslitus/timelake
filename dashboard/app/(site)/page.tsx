@@ -162,6 +162,17 @@ export default function Home() {
               <HeroDots />
             </div>
           </div>
+          {/* Two variants to compare; the one not chosen goes before merging. */}
+          {(["readers", "lake"] as const).map((variant) => (
+            <div key={variant} className="flex flex-col gap-2">
+              <span className="label-mono">Variant: {variant === "readers" ? "readers and bucket" : "lake"}</span>
+              <div className="cells">
+                <div className="relative h-[160px] overflow-hidden sm:h-[176px]">
+                  <HeroDots variant={variant} />
+                </div>
+              </div>
+            </div>
+          ))}
         </section>
         <BenefitCards />
       </div>
