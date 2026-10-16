@@ -3,6 +3,7 @@ import Link from "next/link"
 import { Suspense } from "react"
 
 import { BenchRanking } from "@/components/bench-ranking"
+import { BenefitCards } from "@/components/benefit-cards"
 import { WORDMARK } from "@/components/brand/mark-geometry"
 import { TimelakeMark } from "@/components/brand/timelake-mark"
 import { GithubIcon } from "@/components/github-icon"
@@ -114,6 +115,11 @@ export default function Home() {
             </Button>
           </div>
         </div>
+      </section>
+
+      <section className="flex flex-col gap-6">
+        <SectionHead label="Why Timelake?" />
+        <BenefitCards />
       </section>
 
       <section className="flex flex-col gap-6">
