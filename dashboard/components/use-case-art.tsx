@@ -2,9 +2,25 @@
 
 import { useEffect, useRef } from "react"
 
-/** The picture each use case draws, in squares. */
-export type ArtKind = "sensors" | "fleet" | "robot" | "market" | "metrics" | "dashboard" | "ml" | "functions" | "agents"
+/** The picture each card draws, in squares: the use cases, then the benefits. */
+export type ArtKind =
+  | "sensors"
+  | "fleet"
+  | "robot"
+  | "market"
+  | "metrics"
+  | "dashboard"
+  | "ml"
+  | "functions"
+  | "agents"
+  | "serverless"
+  | "layout"
+  | "fast"
+  | "stores"
+  | "formats"
+  | "opensource"
 
+/** Columns in a picture, unless a wider one is asked for. */
 const COLS = 64
 const ROWS = 14
 const DOT = 3
@@ -38,22 +54,22 @@ function line(values: number[], color: string, alpha = 1): Cell[] {
   return cells
 }
 
-const PICTURES: Record<ArtKind, () => Cell[]> = {
-  sensors: () => {
+const PICTURES: Record<ArtKind, (cols: number) => Cell[]> = {
+  sensors: (cols) => {
     const rnd = seeded(1)
     return [0, 1, 2].flatMap((k) =>
       line(
-        Array.from({ length: COLS }, (_, x) => 3 + k * 4 + Math.sin(x / 7 + k * 1.7) * 1.6 + (rnd() - 0.5)),
+        Array.from({ length: cols }, (_, x) => 3 + k * 4 + Math.sin(x / 7 + k * 1.7) * 1.6 + (rnd() - 0.5)),
         k === 1 ? "var(--primary)" : "var(--muted-foreground)",
         k === 1 ? 1 : 0.6,
       ),
     )
   },
-  fleet: () => {
+  fleet: (cols) => {
     const rnd = seeded(2)
     let y = 7
     const route = Array.from(
-      { length: COLS },
+      { length: cols },
       () => (y = Math.max(2, Math.min(11, y + (rnd() < 0.3 ? (rnd() < 0.5 ? -1 : 1) : 0)))),
     )
     const stops = route.flatMap((v, x) =>
@@ -65,22 +81,22 @@ const PICTURES: Record<ArtKind, () => Cell[]> = {
     )
     return [...line(route, "var(--muted-foreground)", 0.6), ...stops]
   },
-  robot: () => [
+  robot: (cols) => [
     ...line(
-      Array.from({ length: COLS }, (_, x) => 6.5 + Math.sin(x / 5) * 4.5),
+      Array.from({ length: cols }, (_, x) => 6.5 + Math.sin(x / 5) * 4.5),
       "var(--primary)",
     ),
     ...line(
-      Array.from({ length: COLS }, (_, x) => 6.5 + Math.sin(x / 5 + 2.2) * 3),
+      Array.from({ length: cols }, (_, x) => 6.5 + Math.sin(x / 5 + 2.2) * 3),
       "var(--chart-4)",
       0.8,
     ),
   ],
-  market: () => {
+  market: (cols) => {
     const rnd = seeded(4)
     let price = 7
     const cells: Cell[] = []
-    for (let x = 1; x < COLS - 2; x += 4) {
+    for (let x = 1; x < cols - 2; x += 4) {
       const open = price
       price = Math.max(2, Math.min(11, price + (rnd() - 0.48) * 4))
       const [top, bottom] = [Math.min(open, price), Math.max(open, price)]
@@ -92,12 +108,12 @@ const PICTURES: Record<ArtKind, () => Cell[]> = {
     }
     return cells
   },
-  metrics: () => {
+  metrics: (cols) => {
     const rnd = seeded(5)
     const cells: Cell[] = []
     for (let y = 1; y < ROWS - 1; y++) {
       let load = rnd()
-      for (let x = 0; x < COLS; x++) {
+      for (let x = 0; x < cols; x++) {
         load = Math.max(0, Math.min(1, load + (rnd() - 0.5) * 0.25))
         if (load > 0.35) cells.push({ x, y, color: "var(--primary)", alpha: (load - 0.35) * 1.5 })
       }
@@ -120,13 +136,13 @@ const PICTURES: Record<ArtKind, () => Cell[]> = {
       })),
     )
   },
-  functions: () => {
+  functions: (cols) => {
     const rnd = seeded(7)
     const cells: Cell[] = []
     for (let y = 1; y < ROWS - 1; y += 2) {
-      for (let x = Math.floor(rnd() * 6); x < COLS;) {
+      for (let x = Math.floor(rnd() * 6); x < cols;) {
         const length = 2 + Math.floor(rnd() * 7)
-        for (let dx = 0; dx < length && x + dx < COLS; dx++)
+        for (let dx = 0; dx < length && x + dx < cols; dx++)
           cells.push({ x: x + dx, y, color: "var(--primary)", alpha: 0.85 })
         x += length + 2 + Math.floor(rnd() * 10)
       }
@@ -147,12 +163,102 @@ const PICTURES: Record<ArtKind, () => Cell[]> = {
     trend.forEach((t, i) => cells.push({ x: 34 + i, y: row(t), color: "var(--chart-3)", alpha: 1 }))
     return cells
   },
-  agents: () => {
+  agents: (cols) => {
     const rnd = seeded(8)
     const cells: Cell[] = []
     for (let y = 0; y < ROWS; y++)
-      for (let x = 0; x < COLS; x++)
+      for (let x = 0; x < cols; x++)
         if (rnd() < 0.14) cells.push({ x, y, color: "var(--primary)", alpha: 0.4 + rnd() * 0.6 })
+    return cells
+  },
+  serverless: (cols) => {
+    // Processes on the left, each with a line straight to the bucket on the right; nothing in between.
+    const cells: Cell[] = []
+    const left = cols - 26
+    for (const y of [1, 4, 7, 10]) {
+      for (const [dx, dy] of [
+        [1, 0],
+        [2, 0],
+        [1, 1],
+        [2, 1],
+      ])
+        cells.push({ x: dx ?? 0, y: y + (dy ?? 0), color: "var(--muted-foreground)", alpha: 0.9 })
+      for (let x = 5; x < left - 1; x += 2) cells.push({ x, y, color: "var(--muted-foreground)", alpha: 0.45 })
+    }
+    for (let x = left; x < cols - 1; x++)
+      for (const y of [0, ROWS - 1]) cells.push({ x, y, color: "var(--primary)", alpha: 1 })
+    for (let y = 0; y < ROWS; y++)
+      for (const x of [left, cols - 2]) cells.push({ x, y, color: "var(--primary)", alpha: 1 })
+    for (let y = 2; y < ROWS - 2; y += 3)
+      for (let x = left + 3; x < cols - 4; x += 4)
+        for (const dx of [0, 1]) cells.push({ x: x + dx, y, color: "var(--primary)", alpha: 0.55 })
+    return cells
+  },
+  layout: (cols) => {
+    // Day partitions, each sorted by series (a band per series) and then time.
+    const colors = ["var(--primary)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)"]
+    const cells: Cell[] = []
+    for (let start = 0; start < cols; start += 16)
+      for (let x = start; x < Math.min(start + 14, cols); x++)
+        colors.forEach((color, k) => {
+          for (const dy of [0, 1]) cells.push({ x, y: 1 + k * 3 + dy, color, alpha: 0.85 })
+        })
+    return cells
+  },
+  fast: (cols) => {
+    // Bars as long as the query times: Timelake first, then the other lakes.
+    const bars: [number, string][] = [
+      [0.04, "var(--primary)"],
+      [0.5, "var(--chart-5)"],
+      [0.72, "var(--chart-4)"],
+      [0.95, "var(--chart-3)"],
+    ]
+    return bars.flatMap(([share, color], k) =>
+      Array.from({ length: Math.max(2, Math.round(share * cols)) }, (_, x) =>
+        [0, 1].map((dy) => ({ x, y: 1 + k * 3 + dy, color, alpha: 0.9 })),
+      ).flat(),
+    )
+  },
+  stores: (cols) => {
+    // Four buckets side by side, each with a few files.
+    const rnd = seeded(10)
+    const cells: Cell[] = []
+    const width = Math.floor((cols - 3) / 4)
+    for (let b = 0; b < 4; b++) {
+      const left = b * (width + 1)
+      const right = left + width - 2
+      for (let x = left; x <= right; x++)
+        for (const y of [1, ROWS - 2]) cells.push({ x, y, color: "var(--muted-foreground)", alpha: 0.7 })
+      for (let y = 1; y < ROWS - 1; y++)
+        for (const x of [left, right]) cells.push({ x, y, color: "var(--muted-foreground)", alpha: 0.7 })
+      for (let y = 3; y < ROWS - 3; y += 2)
+        for (let x = left + 2; x < right - 1; x += 2)
+          if (rnd() < 0.6) cells.push({ x, y, color: "var(--primary)", alpha: 0.85 })
+    }
+    return cells
+  },
+  formats: (cols) => {
+    // Iceberg metadata along the top, pointing down to rows of Parquet files.
+    const cells: Cell[] = []
+    for (let x = 1; x < cols - 4; x += 10) {
+      for (const dx of [0, 1, 2])
+        for (const y of [0, 1]) cells.push({ x: x + dx, y, color: "var(--primary)", alpha: 1 })
+      for (let y = 3; y < 5; y++) cells.push({ x: x + 1, y, color: "var(--primary)", alpha: 0.45 })
+    }
+    for (let top = 6; top < ROWS - 1; top += 4)
+      for (let x = 0; x < cols - 5; x += 7)
+        for (let dx = 0; dx < 6; dx++)
+          for (const dy of [0, 1, 2])
+            cells.push({ x: x + dx, y: top + dy, color: "var(--muted-foreground)", alpha: dy === 0 ? 0.8 : 0.45 })
+    return cells
+  },
+  opensource: (cols) => {
+    // A contribution graph: one square per day, brighter for busier days.
+    const rnd = seeded(11)
+    const cells: Cell[] = []
+    for (let x = 0; x < cols; x += 2)
+      for (let y = 0; y < ROWS; y += 2)
+        if (rnd() < 0.7) cells.push({ x, y, color: "var(--primary)", alpha: 0.2 + rnd() * 0.8 })
     return cells
   },
 }
@@ -167,7 +273,7 @@ function resolve(el: Element, color: string): string {
  * A use case's picture in squares on a dim grid. It draws itself in once, left to right, when it comes into view,
  * and again when the card is hovered; otherwise it stays still.
  */
-export function UseCaseArt({ kind }: { kind: ArtKind }) {
+export function UseCaseArt({ kind, cols = COLS }: { kind: ArtKind; cols?: number }) {
   const canvas = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => {
@@ -175,18 +281,18 @@ export function UseCaseArt({ kind }: { kind: ArtKind }) {
     const ctx = c?.getContext("2d")
     if (!c || !ctx) return
     const dpr = window.devicePixelRatio || 1
-    c.width = COLS * CELL * dpr
+    c.width = cols * CELL * dpr
     c.height = ROWS * CELL * dpr
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    const cells = PICTURES[kind]().filter((p) => p.x >= 0 && p.x < COLS && p.y >= 0 && p.y < ROWS)
+    const cells = PICTURES[kind](cols).filter((p) => p.x >= 0 && p.x < cols && p.y >= 0 && p.y < ROWS)
     const colors = new Map(cells.map((p) => [p.color, resolve(c, p.color)]))
     const paper = resolve(c, "var(--border)")
 
     const draw = (upTo: number) => {
-      ctx.clearRect(0, 0, COLS * CELL, ROWS * CELL)
+      ctx.clearRect(0, 0, cols * CELL, ROWS * CELL)
       ctx.globalAlpha = 0.6
       ctx.fillStyle = paper
-      for (let x = 0; x < COLS; x++) for (let y = 0; y < ROWS; y++) ctx.fillRect(x * CELL, y * CELL, DOT, DOT)
+      for (let x = 0; x < cols; x++) for (let y = 0; y < ROWS; y++) ctx.fillRect(x * CELL, y * CELL, DOT, DOT)
       for (const p of cells) {
         if (p.x > upTo) continue
         ctx.globalAlpha = p.alpha
@@ -202,7 +308,7 @@ export function UseCaseArt({ kind }: { kind: ArtKind }) {
       const start = performance.now()
       const tick = (now: number) => {
         const t = Math.min(1, (now - start) / REVEAL_MS)
-        draw(t * COLS)
+        draw(t * cols)
         if (t < 1) frame = requestAnimationFrame(tick)
       }
       frame = requestAnimationFrame(tick)
@@ -223,7 +329,7 @@ export function UseCaseArt({ kind }: { kind: ArtKind }) {
       seen.disconnect()
       card?.removeEventListener("pointerenter", play)
     }
-  }, [kind])
+  }, [kind, cols])
 
-  return <canvas ref={canvas} aria-hidden className="block h-auto w-full max-w-[256px]" />
+  return <canvas ref={canvas} aria-hidden className="block h-auto w-full" style={{ maxWidth: cols * CELL }} />
 }
