@@ -14,6 +14,9 @@ import {
 } from "lucide-react"
 import { useLayoutEffect, useRef, useState } from "react"
 
+import { TimelakeMark } from "@/components/brand/timelake-mark"
+import { dotPaper } from "@/components/dot-paper"
+import { DotGrid, type Segment } from "@/components/dots"
 import { cn } from "@/lib/utils"
 
 /**
@@ -36,7 +39,7 @@ const EVENTS: Endpoint = { id: "events", icon: Siren, kind: "Events", name: "Kin
 const READERS: Endpoint[] = [
   { id: "dashboard", icon: LayoutDashboard, kind: "App", name: "Dashboard", via: "HTTPS" },
   { id: "lambda", icon: Lambda, kind: "Function", name: "AWS Lambda", via: "SQL" },
-  { id: "engines", icon: Server, kind: "Engines", name: "DuckDB · Spark\nTrino · Flink", via: "Iceberg" },
+  { id: "engines", icon: Server, kind: "Engines", name: "DuckDB · Spark\nPyIceberg", via: "Iceberg" },
   { id: "agent", icon: BotMessageSquare, kind: "AI", name: "AI agent", via: "MCP", planned: true },
 ]
 
@@ -53,8 +56,15 @@ const BUCKET: [string, string][] = [
   ["Storage", "S3 · GCS · Azure · R2"],
 ]
 
-// Dim stream texture inside the ingest node.
+// The stream inside the ingest node, as squares: a lit square for each mark, a dim one for each gap.
 const STREAM = [".:~=  .,-:;= .~:", ":=.,~:  .-~:;=  ", " .-~:= .,~:;= .,", ".~;= ,-~:= .:~=."]
+const STREAM_SEGMENTS: Segment[] = STREAM.join("")
+  .split("")
+  .map((ch) =>
+    ch === " "
+      ? { count: 1, color: "var(--border)" }
+      : { count: 1, color: "var(--primary)", alpha: ".,".includes(ch) ? 0.35 : 0.7 },
+  )
 
 type Edge = {
   from: string
@@ -115,16 +125,17 @@ function NodeCard({ node }: { node: Endpoint }) {
     <div
       data-node={node.id}
       className={cn(
-        "relative flex min-h-14 items-stretch overflow-hidden rounded-md border bg-card",
+        "relative flex min-h-14 items-center gap-3 rounded-lg border bg-card px-4 py-3",
         node.planned && "border-dashed",
       )}
     >
-      <div className="grid w-12 shrink-0 place-items-center border-r bg-muted text-muted-foreground">
-        <Icon className="size-4" />
-      </div>
-      <div className="flex min-w-0 flex-col justify-center gap-0.5 px-3 py-2">
-        <div className="font-mono text-[10px] tracking-[0.1em] text-muted-foreground uppercase">{node.kind}</div>
+      <Icon className="size-4.5 shrink-0 text-muted-foreground" aria-hidden />
+      <div className="flex min-w-0 flex-col gap-0.5">
         <div className="text-sm leading-snug whitespace-pre-line text-foreground">{node.name}</div>
+        <div className="text-xs text-muted-foreground">
+          {node.kind}
+          {node.planned ? " · planned" : ""}
+        </div>
       </div>
     </div>
   )
@@ -132,17 +143,8 @@ function NodeCard({ node }: { node: Endpoint }) {
 
 function Row({ k, v, own }: { k: string; v: string; own?: boolean }) {
   return (
-    <div
-      className={cn("grid grid-cols-[5.25rem_minmax(0,1fr)] items-baseline gap-3 px-4 py-2.5", own && "bg-primary/10")}
-    >
-      <div
-        className={cn(
-          "font-mono text-[11px] tracking-[0.1em] uppercase",
-          own ? "text-primary" : "text-muted-foreground",
-        )}
-      >
-        {k}
-      </div>
+    <div className={cn("grid grid-cols-[5rem_minmax(0,1fr)] items-baseline gap-3 px-5 py-2.5", own && "bg-primary/10")}>
+      <div className={cn("text-xs", own ? "text-primary" : "text-muted-foreground")}>{k}</div>
       <div className={cn("text-sm", own ? "text-primary" : "text-foreground")}>{v}</div>
     </div>
   )
@@ -209,18 +211,14 @@ export function StackDiagram() {
 
       {/* Ingest, with its event stream (below it when stacked, above it on wide screens) */}
       <div className="relative mt-3 ml-24 flex flex-col gap-12 xl:col-start-3 xl:mt-0 xl:ml-0 xl:-translate-y-4">
-        <div data-node="ingest" className="relative overflow-hidden rounded-md border border-dashed bg-card">
-          <pre aria-hidden className="ascii overflow-hidden px-3 pt-3 text-[11px] leading-[1.5]">
-            {STREAM.map((s, i) => (
-              <span key={i}>
-                {i ? "\n" : ""}
-                <span className={i % 2 ? undefined : "hi opacity-60"}>{s}</span>
-              </span>
-            ))}
-          </pre>
-          <div className="flex items-baseline justify-between gap-2 px-3 pt-2 pb-3 font-mono text-[10.5px] tracking-[0.1em] uppercase">
-            <span className="text-foreground">Ingest</span>
-            <span className="text-muted-foreground">Planned</span>
+        <div
+          data-node="ingest"
+          className="relative flex flex-col gap-3 overflow-hidden rounded-lg border border-dashed bg-card px-4 py-3"
+        >
+          <DotGrid segments={STREAM_SEGMENTS} perRow={STREAM[0]?.length ?? 16} dot={4} />
+          <div className="flex flex-col gap-0.5">
+            <span className="text-sm text-foreground">Ingest</span>
+            <span className="text-xs text-muted-foreground">Rules · planned</span>
           </div>
         </div>
         <div className="xl:absolute xl:inset-x-0 xl:bottom-full xl:mb-12">
@@ -231,17 +229,21 @@ export function StackDiagram() {
       {/* Timelake */}
       <div
         data-node="timelake"
-        className="relative mt-10 overflow-hidden rounded-md border border-primary/50 bg-card xl:col-start-5 xl:mt-0"
+        className="relative mt-10 overflow-hidden rounded-lg border border-primary/50 bg-card xl:col-start-5 xl:mt-0"
       >
-        <div className="border-b px-4 py-3 font-mono text-xs tracking-[0.12em] text-primary uppercase">Timelake</div>
+        <div className="flex items-center gap-2.5 border-b px-5 py-3.5">
+          <TimelakeMark className="size-5 text-foreground" />
+          <span className="text-lg font-normal">Timelake</span>
+          <span className="ml-auto text-xs text-muted-foreground">in your process</span>
+        </div>
         <div className="divide-y">
           {RUNTIME.map(([k, v]) => (
             <Row key={k} k={k} v={v} />
           ))}
           <Row k={CORE[0]} v={CORE[1]} own />
         </div>
-        <div className="border-y border-dashed px-4 py-1.5 font-mono text-[10.5px] tracking-[0.12em] text-muted-foreground uppercase">
-          Your bucket
+        <div className="flex items-center gap-3 border-y px-5 py-2" style={dotPaper()}>
+          <span className="rounded-sm bg-card px-1.5 py-0.5 text-xs text-foreground">Your bucket</span>
         </div>
         <div className="divide-y">
           {BUCKET.map(([k, v]) => (

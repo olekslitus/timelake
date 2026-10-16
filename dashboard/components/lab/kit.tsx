@@ -1,5 +1,5 @@
+import { dotPaper } from "@/components/dot-paper"
 import { DotGrid, DotText } from "@/components/dots"
-import { dotPaper } from "@/components/lab/dot-paper"
 import { COMING_UP, EXPLORING, NOW, type RoadmapItem } from "@/lib/roadmap"
 import { cn } from "@/lib/utils"
 
