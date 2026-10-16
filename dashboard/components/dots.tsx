@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react"
 
+import { watchTheme } from "@/lib/theme"
 import { cn } from "@/lib/utils"
 
 /** A run of squares in one color; `alpha` dims it (e.g. metadata next to data). */
@@ -59,10 +60,14 @@ export function DotGrid({
       ctx.globalAlpha = 1
     }
     draw()
-    if (perRow) return
+    const unwatch = watchTheme(draw)
+    if (perRow) return unwatch
     const ro = new ResizeObserver(draw)
     ro.observe(c)
-    return () => ro.disconnect()
+    return () => {
+      unwatch()
+      ro.disconnect()
+    }
   }, [segments, dot, gap, perRow])
 
   return (

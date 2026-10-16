@@ -54,11 +54,12 @@ export function DotStripChart({
 
     const css = getComputedStyle(c)
     const color = (name: string) => css.getPropertyValue(name).trim()
-    const [paper, under, pen] = [color("--border"), color("--muted-foreground"), color("--primary")]
     // The row a value lands on: the top and bottom fifth of the strip stay clear.
     const row = (v: number) => Math.round((1 - (hi === lo ? 0.5 : (v - lo) / (hi - lo))) * rows * 0.6 + rows * 0.2)
 
     const draw = () => {
+      // The theme's colors, read each frame so a theme change shows.
+      const [paper, under, pen] = [color("--border"), color("--muted-foreground"), color("--primary")]
       ctx.clearRect(0, 0, c.clientWidth, c.clientHeight)
       const penCol = cols - MARGIN
       const first = penCol - trace.length

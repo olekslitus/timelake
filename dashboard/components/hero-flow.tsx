@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react"
 
 import { BATCH, type File, Writer, widthOf } from "@/components/hero-writer"
+import { watchTheme } from "@/lib/theme"
 
 const DOT = 3
 const CELL = 4
@@ -104,12 +105,8 @@ export function HeroFlow() {
     if (!c || !ctx || !area) return
     const css = getComputedStyle(c)
     const color = (name: string) => css.getPropertyValue(name).trim()
-    const [paper, pen, muted, reads] = [
-      color("--border"),
-      color("--primary"),
-      color("--muted-foreground"),
-      color("--chart-4"),
-    ]
+    // The theme's colors, read again on each draw so a theme change shows.
+    let [paper, pen, muted, reads] = ["", "", "", ""]
     const font = getComputedStyle(document.body).getPropertyValue("--font-mono") || "monospace"
 
     const writer = new Writer()
@@ -305,6 +302,12 @@ export function HeroFlow() {
     }
 
     const draw = () => {
+      ;[paper, pen, muted, reads] = [
+        color("--border"),
+        color("--primary"),
+        color("--muted-foreground"),
+        color("--chart-4"),
+      ]
       const dpr = window.devicePixelRatio || 1
       const [w, h] = [c.clientWidth, c.clientHeight]
       if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) {
@@ -521,8 +524,10 @@ export function HeroFlow() {
     area.addEventListener("pointerleave", leave)
     const ro = new ResizeObserver(draw)
     ro.observe(c)
+    const unwatch = watchTheme(draw)
     return () => {
       stop()
+      unwatch()
       area.removeEventListener("pointerenter", enter)
       area.removeEventListener("pointermove", move)
       area.removeEventListener("pointerleave", leave)

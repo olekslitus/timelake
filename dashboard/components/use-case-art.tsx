@@ -2,6 +2,8 @@
 
 import { useEffect, useRef } from "react"
 
+import { watchTheme } from "@/lib/theme"
+
 /** The picture each card draws, in squares: the use cases, then the benefits. */
 export type ArtKind =
   | "sensors"
@@ -285,10 +287,13 @@ export function UseCaseArt({ kind, cols = COLS }: { kind: ArtKind; cols?: number
     c.height = ROWS * CELL * dpr
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     const cells = PICTURES[kind](cols).filter((p) => p.x >= 0 && p.x < cols && p.y >= 0 && p.y < ROWS)
-    const colors = new Map(cells.map((p) => [p.color, resolve(c, p.color)]))
-    const paper = resolve(c, "var(--border)")
+    // How far the picture is drawn, so a theme change can redraw it as it was.
+    let drawn = -1
 
     const draw = (upTo: number) => {
+      drawn = upTo
+      const colors = new Map(cells.map((p) => [p.color, resolve(c, p.color)]))
+      const paper = resolve(c, "var(--border)")
       ctx.clearRect(0, 0, cols * CELL, ROWS * CELL)
       ctx.globalAlpha = 0.6
       ctx.fillStyle = paper
@@ -324,7 +329,9 @@ export function UseCaseArt({ kind, cols = COLS }: { kind: ArtKind; cols?: number
     seen.observe(c)
     const card = c.closest("[data-use-case]")
     card?.addEventListener("pointerenter", play)
+    const unwatch = watchTheme(() => draw(drawn))
     return () => {
+      unwatch()
       cancelAnimationFrame(frame)
       seen.disconnect()
       card?.removeEventListener("pointerenter", play)

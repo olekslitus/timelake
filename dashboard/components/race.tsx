@@ -3,6 +3,8 @@
 import { RotateCcw } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 
+import { watchTheme } from "@/lib/theme"
+
 /** One system in a race: how much it ends up with (`value`, drawn as `dots`), and how long that took. */
 export type Racer = {
   label: string
@@ -113,12 +115,16 @@ function Lane({
     if (!ctx) return
     ctx.scale(dpr, dpr)
     const css = getComputedStyle(c)
-    const on = css.getPropertyValue(/^var\((--[\w-]+)\)$/.exec(racer.color)?.[1] ?? "--muted-foreground").trim()
-    const off = css.getPropertyValue("--border").trim()
-    for (let i = 0; i < racer.dots; i++) {
-      ctx.fillStyle = i < shown ? on : off
-      ctx.fillRect((i % perRow) * (dot + GAP), Math.floor(i / perRow) * (dot + GAP), dot, dot)
+    const draw = () => {
+      const on = css.getPropertyValue(/^var\((--[\w-]+)\)$/.exec(racer.color)?.[1] ?? "--muted-foreground").trim()
+      const off = css.getPropertyValue("--border").trim()
+      for (let i = 0; i < racer.dots; i++) {
+        ctx.fillStyle = i < shown ? on : off
+        ctx.fillRect((i % perRow) * (dot + GAP), Math.floor(i / perRow) * (dot + GAP), dot, dot)
+      }
     }
+    draw()
+    return watchTheme(draw)
   }, [racer, shown, dot])
 
   return (

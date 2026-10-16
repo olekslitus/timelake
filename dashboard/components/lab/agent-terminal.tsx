@@ -126,11 +126,12 @@ function Agents() {
     c.style.height = `${rows * (size + gap)}px`
     ctx.scale(dpr, dpr)
     const css = getComputedStyle(c)
-    const on = css.getPropertyValue("--primary").trim()
-    const off = css.getPropertyValue("--border").trim()
     const glow = new Float32Array(AGENTS)
     let frame = 0
     const tick = () => {
+      // The theme's colors, read each frame so a theme change shows.
+      const on = css.getPropertyValue("--primary").trim()
+      const off = css.getPropertyValue("--border").trim()
       for (let n = 0; n < 40; n++) glow[Math.floor(Math.random() * AGENTS)] = 1
       for (let i = 0; i < AGENTS; i++) {
         const g = glow[i] ?? 0
