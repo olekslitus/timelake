@@ -1,4 +1,5 @@
 import { ArchitectureDiagram } from "@/components/architecture-diagram"
+import { WhereItRuns } from "@/components/where-it-runs"
 
 export const metadata = { title: "Architecture" }
 
@@ -7,6 +8,15 @@ export const metadata = { title: "Architecture" }
 The engine is one Rust crate (`timelake`) used by the CLI and the Python package. It builds on iceberg-rust’s spec types for metadata and manifests, the Rust `object_store` crate for I/O, Arrow and Parquet for data, and DataFusion for queries. A separate read-only WebAssembly reader (`timelake-wasm`, used by `@timelake/client`) shares the table rules in `timelake-format`. See the [Codebase tour](/docs/codebase) for where each part lives.
 
 <ArchitectureDiagram />
+
+## Where every part runs
+
+Four places code can run, one bucket underneath, and what crosses the wire. Writers, maintenance and readers are
+stateless: everything durable is in object storage.
+
+<div className="not-prose my-6">
+  <WhereItRuns />
+</div>
 
 ## On-disk layout
 

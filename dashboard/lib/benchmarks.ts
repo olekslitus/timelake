@@ -542,3 +542,54 @@ export function costRows(run: Run): CostRow[] {
   }
   return rows
 }
+
+/** One measure of Timelake against the other systems: its value, and the others' range (each on its best reader). */
+export type Versus = { timelake: number; others: [number, number] }
+
+/** The home page's numbers: TSBS IoT on AWS S3 in the latest weekly run, right after streaming ingest. */
+export type Headline = { run: Run; queries: Versus; requests: Versus | null; commit: Versus | null }
+
+/**
+ * Timelake's own reader against every other system's best reader, so the comparison flatters the others if anything:
+ * first-run query time (geometric mean over the queries all completed) and S3 requests per query, right after
+ * ingest; and the median commit time. Null until there is such a run.
+ */
+export function headline(runs: Run[]): Headline | null {
+  const run = latestByTarget(runs, "tsbs-iot").find((r) => r.header.target === "aws-s3" && !r.header.variant)
+  if (!run) return null
+  const ok = run.queries.filter((q) => q.checkpoint === "ingested" && q.status === "ok")
+  const engines = [...new Set(ok.map(engineOf))]
+  const by = new Map(ok.map((q) => [`${engineOf(q)}|${q.suite}|${q.query}`, q]))
+  const all = [...new Set(ok.map((q) => `${q.suite}|${q.query}`))]
+  const common = all.filter((q) => engines.every((e) => by.has(`${e}|${q}`)))
+  if (common.length === 0) return null
+  const records = (e: string) => common.flatMap((q) => by.get(`${e}|${q}`) ?? [])
+  const time = (e: string) => gm(records(e).map((r) => r.times[0]))
+  const requests = (e: string) => {
+    const n = records(e).map((r) => r.requests?.[0])
+    return n.every((x) => x != null) ? n.reduce((s, x) => s + (x ?? 0), 0) / n.length : null
+  }
+  const own = "timelake+timelake"
+  const others = [...new Set(engines.map((e) => e.split("+", 1)[0] ?? e))].filter((s) => s !== "timelake")
+  // Each other system on its best reader.
+  const bestOfOthers = (measure: (e: string) => number | null) =>
+    others.flatMap((s) => {
+      const values = engines.filter((e) => e.startsWith(`${s}+`)).flatMap((e) => measure(e) ?? [])
+      return values.length ? [Math.min(...values)] : []
+    })
+  const versus = (mine: number | null, values: number[]): Versus | null =>
+    mine == null || values.length === 0 ? null : { timelake: mine, others: [Math.min(...values), Math.max(...values)] }
+  const queries = versus(time(own), bestOfOthers(time))
+  if (!queries) return null
+  const ingest = run.phases.filter((p) => p.kind === "ingest" && p.status === "ok" && p.commit_ms_p50 != null)
+  const commitOf = (s: string) => ingest.find((p) => p.system === s)?.commit_ms_p50 ?? null
+  return {
+    run,
+    queries,
+    requests: versus(requests(own), bestOfOthers(requests)),
+    commit: versus(
+      commitOf("timelake"),
+      others.flatMap((s) => commitOf(s) ?? []),
+    ),
+  }
+}

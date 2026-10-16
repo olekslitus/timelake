@@ -1,181 +1,61 @@
-import {
-  ArrowRight,
-  Boxes,
-  Database,
-  FileStack,
-  GitCommitHorizontal,
-  Layers,
-  Rows3,
-  ScanSearch,
-  Timer,
-  Wrench,
-} from "lucide-react"
+import { ArrowRight } from "lucide-react"
 import Link from "next/link"
+import { Suspense } from "react"
 
-import { TimelakeMark } from "@/components/brand/timelake-mark"
+import { BenchRanking } from "@/components/bench-ranking"
 import { CodeBlock } from "@/components/code-block"
 import { GithubIcon } from "@/components/github-icon"
 import { StackDiagram } from "@/components/stack-diagram"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { WhereItRuns } from "@/components/where-it-runs"
+import { SYSTEMS, headline, loadRuns, rankings, type Versus } from "@/lib/benchmarks"
+import { formatNumber, formatTime, timeUnit } from "@/lib/format"
 import { REPO_URL } from "@/lib/site"
 
-// The three promises, in this order everywhere (brand/README.md). Numbers are from bench/results/S3.md (AWS S3) and V0.md.
+const BTN = "font-mono text-xs uppercase tracking-[0.06em]"
+
+const HERO_CODE = `import timelake
+
+lake = timelake.Lake("s3://my-bucket/lake")
+t = lake.create_table("plant.readings", schema,
+        time_column="time", series_key=["tag"])
+t.append(batch)   # every few seconds or minutes
+
+lake.sql("""SELECT tag, avg(value)
+            FROM plant.readings
+            WHERE time > now() - INTERVAL '1 hour'
+            GROUP BY tag""")`
+
+// The three promises, in this order everywhere (brand/README.md).
 const PROMISES = [
   {
     title: "Fast every day",
-    body: "Dashboards, trends and “what is the value now” read only the files and row groups they need. The latest value of every series comes from an index, not a scan.",
-    proof: [
-      ["18 requests vs 1,733", "for the latest position of every truck"],
-      ["2.1–13× faster", "TSBS IoT queries on S3 right after streaming ingest"],
-    ],
-    art: (
-      <>
-        {"+ + + + + + + + + + + + + +\n+ + [ ] [ ] [ ] [ ] [ ] + +\n+ + [ ] [ ] "}
-        <span className="hi">[#]</span>
-        {" [ ] [ ] + +\n+ + [ ] [ ] "}
-        <span className="hi">[#]</span>
-        {" [ ] [ ] + +\n+ + [ ] [ ] [ ] [ ] [ ] + +\n+ + + + + + + + + + + + + +\n"}
-        <span className="mu">{"  query reads 2 of 25 files"}</span>
-      </>
-    ),
+    body: "Data streamed into a lake in small batches usually leaves thousands of small files until a compaction job runs. Timelake keeps files few and sorted as it writes, so queries are fast from the first minute.",
   },
   {
     title: "Nothing to maintain",
-    body: "Compaction, deduplication, retention and snapshot cleanup run inside the writer. No Spark or Glue jobs to schedule, size, monitor or pay for.",
-    proof: [
-      ["1,728 commits, 0 jobs", "three days of five-minute batches, nothing scheduled"],
-      ["22 min vs 29–69 min", "to stream them to S3, compaction included"],
-    ],
-    art: (
-      <>
-        <span className="fg">{"[][][][][][][][][][][][][]"}</span>
-        {"\n \\/  \\/  \\/  \\/  \\/  \\/\n"}
-        <span className="fg">{"[==][==][==][==][==][==]"}</span>
-        {"\n   \\___\\___|___/___/\n"}
-        <span className="hi">{"[======================]"}</span>
-        {"\n"}
-        <span className="mu">{"  merged while you write"}</span>
-      </>
-    ),
+    body: "Small files, duplicates, retention and old versions are handled inside the writer. No Spark or Glue jobs to set up, size and pay for.",
   },
   {
     title: "Pay for storage, not a database",
-    body: "No instance running all month. The bill is object-storage bytes and requests, and Timelake keeps both low: compact sorted files and few requests per query.",
-    proof: [
-      ["228 MB vs 262–449 MB", "for the same data (Iceberg, Lance)"],
-      ["$ per month per workload", "measured next, in the IIoT benchmark"],
-    ],
-    art: (
-      <>
-        <span className="fg">STORAGE </span>
-        {"  GB-month x $0.023\n"}
-        <span className="fg">GET </span>
-        {"  per 1k   x $0.0004\n"}
-        <span className="fg">PUT </span>
-        {"  per 1k   x $0.005\n"}
-        <span className="fg">SERVERS </span>
-        {"  ............ "}
-        <span className="hi">$0</span>
-        {"\n"}
-        <span className="fg">JOBS </span>
-        {"  ............ "}
-        <span className="hi">$0</span>
-        {"\n"}
-        <span className="mu">{"  S3 standard, us-east-2"}</span>
-      </>
-    ),
-  },
-]
-
-const SUPPORT = [
-  { title: "Open format", body: "Parquet files and open table metadata. DuckDB, Spark and PyIceberg read them today." },
-  {
-    title: "Any object store",
-    body: "S3, R2, GCS, Azure, MinIO or a disk, and read-only from any HTTPS host. Tested so far on AWS S3, RustFS and local disk.",
-  },
-  { title: "Apache 2.0", body: "The engine, the CLI and the clients. No closed core." },
-]
-
-const PROBLEMS = [
-  {
-    icon: FileStack,
-    title: "Frequent appends make small files",
-    body: "Streaming 5-minute batches into an Iceberg table (the S3 Tables + Firehose pattern) leaves one file and one manifest per commit: 864 of each per table after three days in our test. Readers fetch all of them.",
-  },
-  {
-    icon: Wrench,
-    title: "Maintenance is a separate system",
-    body: "Compaction, re-sorting, retention and snapshot expiry run as Glue or Spark jobs that someone schedules, sizes, pays for and debugs. Until they run, queries pay for the raw layout.",
-  },
-  {
-    icon: Timer,
-    title: "Generic engines don't know it's time series",
-    body: "“Latest value per device” scans the whole table. A query for one device in the last hour still opens files for every device, because nothing sorted or indexed the data by series.",
+    body: "No server running all month. The bill is bytes and requests on object storage, and Timelake keeps the requests low.",
   },
 ]
 
 const HOW = [
   {
-    icon: GitCommitHorizontal,
-    title: "A catalog that is just files",
-    body: "Each commit writes vN.metadata.json with put-if-absent (S3 If-None-Match and equivalents). Exactly one concurrent writer wins; the others rebase and retry.",
+    title: "Files in your bucket",
+    body: "Parquet files and Apache Iceberg metadata, in your own bucket on S3, R2, Google Cloud, Azure or a disk. DuckDB, Spark and others read them too.",
   },
   {
-    icon: Rows3,
-    title: "A time-series contract",
-    body: "Declare a time column and a series key. Tables are partitioned by hour, day or month, and every file is sorted by (series key, time).",
+    title: "Built for time series",
+    body: "You name the time column and what identifies a series. Files are sorted by both, and the newest value of every series is kept in a small index.",
   },
   {
-    icon: Layers,
-    title: "Maintenance inside the writer",
-    body: "After an append, size-tiered compaction merges similar-sized small files and old snapshots expire in batches. timelake maintain rewrites each partition into one sorted, deduplicated file.",
-  },
-  {
-    icon: Database,
-    title: "A last-value index",
-    body: "Every append updates a small Parquet file with the newest row per series, referenced from the snapshot. “Latest per device” becomes one small read.",
-  },
-  {
-    icon: ScanSearch,
-    title: "A reader that knows the layout",
-    body: "A DataFusion table provider prunes files on column bounds, rewrites latest-row queries to the index, loads a query's tables concurrently and reads each Parquet footer once.",
-  },
-  {
-    icon: Boxes,
-    title: "Stored as Apache Iceberg + Parquet",
-    body: "Today tables are Iceberg v2 with Parquet data files in the Hadoop-catalog layout, so DuckDB's iceberg_scan reads them without Timelake installed.",
+    title: "Tidied as you write",
+    body: "Each write merges small files and drops old versions, so tables stay fast without anything else running.",
   },
 ]
-
-const HIGHLIGHTS = [
-  {
-    value: "2.1–13×",
-    label: "faster TSBS IoT queries on S3 right after streaming ingest",
-    detail: "1.46 s vs 3.1–18.5 s, first run",
-  },
-  {
-    value: "2.5 h",
-    label: "until S3 Tables compacted on its own; Timelake compacts as it writes",
-    detail: "then 1.25 s vs 1.5–2.4 s",
-  },
-  {
-    value: "18 vs 1,733",
-    label: "requests for the latest position of every truck",
-    detail: "S3 Tables 1,563, Lance 3,614",
-  },
-  {
-    value: "22 min",
-    label: "to stream 1,728 commits to S3, compaction included",
-    detail: "Lance 29, S3 Tables 42, PyIceberg 69",
-  },
-]
-
-const BTN = "font-mono text-xs uppercase tracking-[0.06em]"
-
-// Dim ASCII field behind the hero mark.
-const FIELD = Array.from({ length: 22 }, (_, r) => (r % 2 ? "\\/" : "/\\").repeat(30)).join("\n")
 
 function SectionHead({ label, title, children }: { label: string; title: string; children?: React.ReactNode }) {
   return (
@@ -190,16 +70,14 @@ function SectionHead({ label, title, children }: { label: string; title: string;
 export default function Home() {
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-24 px-4 pt-10 pb-24 sm:pt-16">
-      {/* Hero */}
-      <section className="cells md:grid-cols-[1.35fr_1fr]">
+      <section className="cells md:grid-cols-[1fr_1fr]">
         <div className="flex flex-col justify-center gap-6 p-7 sm:p-12">
           <div className="label-mono">Open source · Apache 2.0 · v0</div>
           <h1 className="text-4xl leading-[1.05] font-light tracking-tight text-balance sm:text-6xl">
             The open time&#8209;series lakehouse
           </h1>
           <p className="max-w-[46ch] text-lg text-muted-foreground">
-            Keep time series in your own bucket on S3, R2, GCS, Azure or a disk. Query them fast, run no database, and
-            schedule no maintenance.
+            Keep time series in your own bucket. Query them fast, run no database, and schedule no maintenance.
           </p>
           <div className="flex flex-wrap gap-2.5">
             <Button size="lg" className={BTN} nativeButton={false} render={<Link href="/docs/quick-start" />}>
@@ -210,119 +88,41 @@ export default function Home() {
               variant="outline"
               className={BTN}
               nativeButton={false}
-              render={<Link href="/benchmarks" />}
-            >
-              Benchmarks
-            </Button>
-            <Button size="lg" variant="outline" className={BTN} nativeButton={false} render={<Link href="/explore" />}>
-              Explorer
-            </Button>
-            <Button
-              size="lg"
-              variant="ghost"
-              className={BTN}
-              nativeButton={false}
               render={<a href={REPO_URL} target="_blank" rel="noreferrer" />}
             >
               <GithubIcon /> GitHub
             </Button>
           </div>
         </div>
-        <div className="relative hidden min-h-64 place-items-center overflow-hidden p-8 md:grid">
-          <pre aria-hidden className="ascii absolute inset-0 overflow-hidden p-3 text-xs leading-normal">
-            {FIELD}
-          </pre>
-          <div className="relative aspect-square w-[min(220px,60%)] rounded-full bg-card p-4">
-            <TimelakeMark className="size-full" />
-          </div>
+        <div className="flex min-w-0 flex-col justify-center p-5 sm:p-8">
+          <CodeBlock title="python">{HERO_CODE}</CodeBlock>
         </div>
       </section>
 
-      {/* Stack */}
       <section className="flex flex-col gap-6">
-        <SectionHead label="The stack" title="From the device to the dashboard, on one open stack" />
-        <StackDiagram />
+        <SectionHead label="What you get" title="Fast queries without a database or maintenance jobs" />
+        <Suspense fallback={<Promises />}>
+          <MeasuredPromises />
+        </Suspense>
       </section>
 
-      {/* Promises */}
-      <section className="flex flex-col gap-6">
-        <SectionHead label="What you get" title="Speed you feel every day, no maintenance work, a smaller bill" />
-        <div className="cells md:grid-cols-3">
-          {PROMISES.map((p) => (
-            <div key={p.title} className="flex flex-col gap-4 p-6">
-              <pre aria-hidden className="ascii min-h-[170px]">
-                {p.art}
-              </pre>
-              <h3 className="text-xl font-normal">{p.title}</h3>
-              <p className="text-sm text-muted-foreground">{p.body}</p>
-              <div className="mt-auto flex flex-col gap-1 border-t border-dashed pt-3 font-mono text-[13px] leading-snug">
-                {p.proof.map(([v, d]) => (
-                  <span key={v}>
-                    {v} <span className="text-muted-foreground">{d}</span>
-                  </span>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-        <div className="cells md:grid-cols-3">
-          {SUPPORT.map((s) => (
-            <div key={s.title} className="flex flex-col gap-1 p-5">
-              <span className="text-base">{s.title}</span>
-              <span className="text-sm text-muted-foreground">{s.body}</span>
-            </div>
-          ))}
-        </div>
-        <p className="max-w-3xl text-xs text-muted-foreground">
-          Measured on TSBS IoT data streamed as 1,728 five-minute batches, from a laptop to AWS S3 in us-east-2, so
-          times include that trip for every system. The IIoT benchmark is next.{" "}
-          <Link href="/benchmarks" className="underline decoration-primary underline-offset-4 hover:text-foreground">
-            All results
-          </Link>
-        </p>
-      </section>
-
-      {/* Why */}
-      <section className="flex flex-col gap-6">
-        <SectionHead label="Why" title="Time series on a lake today means small files and extra jobs">
-          Teams put telemetry in S3 Tables or self-managed Iceberg because it is cheap, durable and readable by every
-          engine. Then they write custom jobs to make it fast.
-        </SectionHead>
-        <div className="cells md:grid-cols-3">
-          {PROBLEMS.map((p) => (
-            <div key={p.title} className="flex flex-col gap-3 p-6">
-              <p.icon className="size-5 text-muted-foreground" aria-hidden />
-              <h3 className="text-lg font-normal">{p.title}</h3>
-              <p className="text-sm text-muted-foreground">{p.body}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* Where it runs */}
-      <section className="flex flex-col gap-6">
-        <SectionHead label="Architecture" title="Where every part of Timelake runs">
-          Four places code can run, one bucket underneath, and exactly what crosses the wire. Writers, maintenance and
-          readers are stateless: everything durable is in object storage.
-        </SectionHead>
-        <WhereItRuns />
-      </section>
-
-      {/* How */}
       <section className="flex flex-col gap-6">
         <SectionHead label="How it works" title="A table format that knows it holds time series" />
-        <div className="cells sm:grid-cols-2 lg:grid-cols-3">
+        <StackDiagram />
+        <div className="cells md:grid-cols-3">
           {HOW.map((h) => (
-            <div key={h.title} className="flex flex-col gap-3 p-6">
-              <h.icon className="size-5 text-primary" aria-hidden />
-              <h3 className="text-base font-normal">{h.title}</h3>
+            <div key={h.title} className="flex flex-col gap-2 p-6">
+              <h3 className="text-lg font-normal">{h.title}</h3>
               <p className="text-sm text-muted-foreground">{h.body}</p>
             </div>
           ))}
         </div>
+        <nav className="flex flex-wrap gap-x-5 gap-y-1 text-sm">
+          <MoreLink href="/docs/how-it-works">How it works</MoreLink>
+          <MoreLink href="/docs/architecture">Architecture</MoreLink>
+        </nav>
       </section>
 
-      {/* Quick start */}
       <section className="flex flex-col gap-6">
         <SectionHead label="Quick start" title="Point it at a bucket">
           A local directory or an s3://, gs:// or az:// location.
@@ -341,8 +141,7 @@ timelake import iot.readings readings.parquet --time-column time --series-key de
 
 timelake sql "SELECT device_id, time_bucket(INTERVAL '1 hour', time) AS h, avg(temp)
               FROM iot.readings WHERE time > now() - INTERVAL '1 day' GROUP BY 1, 2"
-timelake latest iot.readings     # newest row per device, from the index
-timelake maintain                # compact, retention, expire (also runs inline)`}</CodeBlock>
+timelake latest iot.readings     # newest row per device, from the index`}</CodeBlock>
           </TabsContent>
           <TabsContent value="python" className="pt-2">
             <CodeBlock title="python">{`import timelake
@@ -351,44 +150,123 @@ lake = timelake.Lake("s3://my-bucket/lake")
 t = lake.create_table("iot.readings", batch.schema,
                       time_column="time", series_key=["device_id"], retention="365d")
 t.append(batch)                                   # pyarrow, polars, any Arrow stream
-t.append(batch, batch_id="shard-7-seq-1234")      # idempotent retries
 
 lake.sql("SELECT * FROM iot.readings WHERE device_id = 'pump-7' ORDER BY time DESC LIMIT 1")
 lake.latest("iot.readings")                       # pyarrow.Table, one row per device`}</CodeBlock>
           </TabsContent>
           <TabsContent value="duckdb" className="pt-2">
             <CodeBlock title="duckdb">{`INSTALL iceberg; LOAD iceberg;
--- reads metadata/version-hint.text, no catalog or Timelake needed
+-- no catalog and no Timelake needed
 SELECT device_id, max(time) FROM iceberg_scan('s3://my-bucket/lake/iot/readings') GROUP BY 1;`}</CodeBlock>
           </TabsContent>
         </Tabs>
+        <MoreLink href="/docs/quick-start">Quick start</MoreLink>
       </section>
 
-      {/* Benchmarks */}
-      <section className="flex flex-col gap-6">
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <SectionHead label="Benchmarks" title="v0 against S3 Tables, Iceberg and Lance">
-            TSBS IoT data (23.3M rows) streamed as 1,728 five-minute batches into Timelake, Lance, naive Iceberg and AWS
-            S3 Tables, then queried with the 12 TSBS IoT queries.
-          </SectionHead>
-          <Button variant="outline" className={BTN} nativeButton={false} render={<Link href="/benchmarks" />}>
-            All results <ArrowRight />
-          </Button>
-        </div>
-        <div className="cells sm:grid-cols-2 lg:grid-cols-4">
-          {HIGHLIGHTS.map((h) => (
-            <div key={h.label} className="flex flex-col gap-2 p-5">
-              <span className="font-mono text-2xl text-primary tabular-nums">{h.value}</span>
-              <span className="text-sm">{h.label}</span>
-              <span className="mt-auto font-mono text-xs text-muted-foreground">{h.detail}</span>
-            </div>
-          ))}
-        </div>
-        <p className="max-w-3xl text-xs text-muted-foreground">
-          From a laptop to AWS S3 in us-east-2: every system takes the same internet path. One dataset; see the
-          methodology.
-        </p>
-      </section>
+      <Suspense fallback={null}>
+        <Benchmarks />
+      </Suspense>
     </div>
+  )
+}
+
+function MoreLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <Link href={href} className="flex w-fit items-center gap-1 text-sm hover:underline">
+      {children} <ArrowRight className="size-3.5" />
+    </Link>
+  )
+}
+
+/** The promises, each with its number from the latest weekly run when there is one. */
+function Promises({ proof }: { proof?: ([string, string] | null)[] }) {
+  return (
+    <div className="cells md:grid-cols-3">
+      {PROMISES.map((p, i) => {
+        const shown = proof?.[i]
+        return (
+          <div key={p.title} className="flex flex-col gap-3 p-6">
+            <h3 className="text-xl font-normal">{p.title}</h3>
+            <p className="text-sm text-muted-foreground">{p.body}</p>
+            {shown && (
+              <div className="mt-auto flex flex-col gap-0.5 border-t border-dashed pt-3 font-mono text-[13px] leading-snug">
+                <span>{shown[0]}</span>
+                <span className="text-muted-foreground">{shown[1]}</span>
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/** Timelake's time against the others' range, all in one unit. */
+const times = (v: Versus) => {
+  const unit = timeUnit([v.timelake, ...v.others])
+  const low = formatTime(v.others[0], unit).replace(/ m?s$/, "")
+  return `${formatTime(v.timelake, unit)} vs ${low}–${formatTime(v.others[1], unit)}`
+}
+const seconds = (v: Versus): Versus => ({
+  timelake: v.timelake / 1000,
+  others: [v.others[0] / 1000, v.others[1] / 1000],
+})
+const counts = (v: Versus) =>
+  `${formatNumber(Math.round(v.timelake))} vs ${formatNumber(Math.round(v.others[0]))}–${formatNumber(Math.round(v.others[1]))}`
+
+async function MeasuredPromises() {
+  const h = headline(await loadRuns())
+  if (!h) return <Promises />
+  const { run } = h
+  const others = Object.keys(run.header.readers)
+    .filter((s) => s !== "timelake")
+    .map((s) => SYSTEMS[s] ?? s)
+  const commits = run.phases.find((p) => p.kind === "ingest" && p.system === "timelake")?.commits
+  const proof: ([string, string] | null)[] = [
+    [times(h.queries), "per query on S3 right after streaming ingest, against other lakes"],
+    h.commit
+      ? [
+          `${times(seconds(h.commit))} per commit`,
+          `${commits ? formatNumber(commits) : "every"} commits, no maintenance jobs`,
+        ]
+      : null,
+    h.requests ? [`${counts(h.requests)} S3 requests`, "per query right after ingest; requests are billed"] : null,
+  ]
+  return (
+    <>
+      <Promises proof={proof} />
+      <p className="max-w-3xl text-xs text-muted-foreground">
+        TSBS IoT streamed into AWS S3 in five-minute batches, from the weekly run of {run.header.started.slice(0, 10)}{" "}
+        on {run.header.machine} in the same region. Compared with {others.join(", ")}, each with its fastest reader.{" "}
+        <Link
+          href="/benchmarks/tsbs-iot"
+          className="underline decoration-primary underline-offset-4 hover:text-foreground"
+        >
+          Results and method
+        </Link>
+      </p>
+    </>
+  )
+}
+
+async function Benchmarks() {
+  const h = headline(await loadRuns())
+  if (!h) return null
+  return (
+    <section className="flex flex-col gap-6">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <SectionHead label="Benchmarks" title="Measured every week">
+          TSBS IoT on AWS S3, from the latest weekly run. Timelake in blue.
+        </SectionHead>
+        <Button variant="outline" className={BTN} nativeButton={false} render={<Link href="/benchmarks" />}>
+          All benchmarks <ArrowRight />
+        </Button>
+      </div>
+      <div className="grid gap-x-10 gap-y-6 lg:grid-cols-2">
+        {rankings(h.run).map((r) => (
+          <BenchRanking key={r.title} ranking={r} />
+        ))}
+      </div>
+    </section>
   )
 }
