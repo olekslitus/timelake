@@ -11,6 +11,7 @@ import {
   Truck,
   Zap,
 } from "lucide-react"
+import type { Metadata } from "next"
 import Link from "next/link"
 import { Suspense } from "react"
 
@@ -22,7 +23,12 @@ import { StackDiagram } from "@/components/stack-diagram"
 import { Button } from "@/components/ui/button"
 import { type ArtKind, UseCaseArt } from "@/components/use-case-art"
 import { latestByTarget, loadRuns } from "@/lib/benchmarks"
-import { REPO_URL } from "@/lib/site"
+import { REPO_URL, SITE_NAME, SITE_URL } from "@/lib/site"
+
+export const metadata: Metadata = { alternates: { canonical: "/" } }
+
+// Names the site in search results (otherwise they show the domain).
+const WEBSITE = { "@context": "https://schema.org", "@type": "WebSite", name: SITE_NAME, url: `${SITE_URL}/` }
 
 const BTN = "font-mono text-xs uppercase tracking-[0.06em]"
 
@@ -133,6 +139,7 @@ function MoreLink({ href, children }: { href: string; children: React.ReactNode 
 export default function Home() {
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-16 px-4 pt-8 pb-24">
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(WEBSITE) }} />
       <section className="flex flex-col gap-8">
         <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
           <h1 className="text-4xl leading-[1.05] font-light tracking-tight sm:text-5xl">
