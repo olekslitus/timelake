@@ -202,6 +202,11 @@ export function HeroFlow({
       }))
     }
 
+    /** How far tile `i` of many readers has loaded, `ticks` into the load (0..1). */
+    const tileLoad = (i: number, ticks: number) => Math.min(1, (ticks / LOAD) * (paces[i % paces.length] ?? 1))
+    /** Whether tile `i` has finished loading: its bar was full a tick ago (so the full bar shows before the chart). */
+    const tileLoaded = (i: number) => loading > 0 && tileLoad(i, LOAD - loading) >= 1
+
     /** A reader's chart in x..x+width, rows top..bottom, drawn `done` (0..1) of the way, in the reading color. */
     const chart = (r: Reader, x: number, width: number, top: number, bottom: number, done: number) => {
       const buckets = downsample(snapshot, r.per)
@@ -303,14 +308,18 @@ export function HeroFlow({
         return
       }
       if (r.chart === "parallel") {
-        // As many readers as fit, each in its own color, each reading its own stretch of the series.
+        // As many readers as fit, each in its own color, each reading its own stretch of the series. While they load,
+        // each shows the new data once its own load finishes; until then, the old chart, or nothing for a new one.
         const all = tiles(x, width, top, bottom)
         const count = all.length
         label(`${count} readers`, x, top - 1)
-        all.slice(0, Math.ceil(count * done)).forEach(({ x0, y0 }, t) => {
+        all.forEach(({ x0, y0 }, t) => {
+          const loaded = tileLoaded(t)
+          if (loading > 0 && fresh && !loaded) return
+          const data = loaded ? committed : snapshot
           const [w, h] = [TILE[0] - 3, TILE[1] - 3]
-          const from = (t * 7) % Math.max(1, snapshot.length - w)
-          const slice = snapshot.slice(from, from + w)
+          const from = (t * 7) % Math.max(1, data.length - w)
+          const slice = data.slice(from, from + w)
           const [least, most] = [Math.min(...slice), Math.max(...slice)]
           slice.forEach((v, i) =>
             square(x0 + i, y0 + Math.round(((v - least) / (most - least || 1)) * h), hue(t, count), 1),
@@ -499,15 +508,16 @@ export function HeroFlow({
         /** The loading bar at row `barY` (many readers get one each, over their tiles), then the chart from `top`. */
         const body = (x0: number, width: number, barY: number, top: number) => {
           if (loading > 0 && turn.chart === "parallel") {
-            const progress = (LOAD - loading + 1) / LOAD
             const all = tiles(x0, width, top, rows - 7)
             all.forEach((t, i) => {
-              const filled = Math.round((TILE[0] - 3) * Math.min(1, progress * (paces[i % paces.length] ?? 1)))
+              if (tileLoaded(i)) return
+              const filled = Math.round((TILE[0] - 3) * tileLoad(i, LOAD - loading + 1))
               for (let dx = 0; dx < TILE[0] - 3; dx++)
                 square(t.x0 + dx, t.y0 - 1, hue(i, all.length), dx < filled ? 1 : 0.15)
             })
           } else bar(x0, width, barY)
-          if (show) chart(turn, x0, width, top, rows - 7, done)
+          // Many readers decide tile by tile what to show while loading.
+          if (show || turn.chart === "parallel") chart(turn, x0, width, top, rows - 7, done)
         }
         if (pick) {
           lineup.forEach((r, i) => {
@@ -548,7 +558,7 @@ export function HeroFlow({
     const load = (isFresh: boolean) => {
       loading = LOAD
       fresh = isFresh
-      paces = Array.from({ length: 64 }, () => 1 + Math.random() * 0.7)
+      paces = Array.from({ length: 64 }, () => 1 + Math.random())
     }
 
     /** One tick: publish a point (it is written), and move the readers' loads and charts along. */
