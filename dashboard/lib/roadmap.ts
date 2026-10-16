@@ -52,6 +52,17 @@ export const NOW: RoadmapItem[] = [
     description: "Answered from a small index in a few requests, not a scan.",
     status: "done",
   },
+  {
+    title: "Rows sent twice count once",
+    description:
+      "Timelake's reader keeps only the latest write of each reading, before compaction. Each row records when it arrived.",
+    status: "next",
+  },
+  {
+    title: "Settings for every feature",
+    description: "Turn each feature on or off, or tune it, per table, per session or per query.",
+    status: "next",
+  },
 ]
 
 export const COMING_UP: RoadmapItem[] = [
