@@ -8,33 +8,31 @@ const CELL = 4
 const REVEAL_MS = 1600
 /** Milliseconds per new column while hovered. */
 const TICK_MS = 55
-/** How far each new point of the cursor's series moves toward the cursor (0..1). */
+/** How far each new point moves toward the cursor (0..1). */
 const FOLLOW = 0.45
 
-/** The series across the strip: height (0..1 of the strip) at column x of `cols`, a color and a strength. */
-const SERIES: { at: (x: number, cols: number) => number; color: string; alpha: number; cursor?: boolean }[] = [
-  {
-    at: (x, cols) => 0.28 + Math.sin((x / cols) * 9) * 0.08 + Math.sin((x / cols) * 31) * 0.025,
-    color: "--muted-foreground",
-    alpha: 0.45,
-  },
-  {
-    at: (x, cols) => 0.5 + Math.sin((x / cols) * 6 + 1) * 0.16 + Math.sin((x / cols) * 23) * 0.04,
-    color: "--primary",
-    alpha: 1,
-    cursor: true,
-  },
-  {
-    at: (x, cols) => 0.74 + Math.sin((x / cols) * 11 + 2.5) * 0.07 + Math.sin((x / cols) * 37) * 0.02,
-    color: "--muted-foreground",
-    alpha: 0.45,
-  },
-]
+/** The files area on the left, in columns, and the chart's gap after it. */
+const FILES = 22
+const GAP = 3
+/** A small file holds SMALL×SMALL points; MERGE small files compact into one big file of BIG×BIG squares. */
+const SMALL = 4
+const MERGE = 4
+const BIG = 8
+/** Big files kept on screen. */
+const KEEP = 3
+
+/** The series' shape when nobody is hovering: height (0..1 of the strip, 0 at the top) at column x of `cols`. */
+const shape = (x: number, cols: number) => 0.5 + Math.sin((x / cols) * 6 + 1) * 0.2 + Math.sin((x / cols) * 23) * 0.05
+
+/** A reading for a height, for the bound labels: 0 at the bottom, 100 at the top. */
+const reading = (v: number) => Math.round((1 - v) * 100)
 
 /**
- * The hero's background: a field of dim squares with three time series in lit squares, drawn in once when the page
- * loads. While the hero is hovered it becomes a live feed: the chart scrolls left, and the blue series publishes each
- * new point at the cursor's height. When the cursor leaves, the chart stops.
+ * The hero's chart in squares: one series, with dashed lines at the highest and lowest values on screen, and on the
+ * left the files its points are written to. It draws in once when the page loads. While hovered it is a live feed:
+ * the chart scrolls left, each new point is published at the cursor's height, each point leaving the chart fills the
+ * current file, full files are committed, and every four small files are compacted into one big file. When the cursor
+ * leaves, everything stops.
  */
 export function HeroDots() {
   const canvas = useRef<HTMLCanvasElement>(null)
@@ -46,23 +44,36 @@ export function HeroDots() {
     if (!c || !ctx || !area) return
     const css = getComputedStyle(c)
     const color = (name: string) => css.getPropertyValue(name).trim()
-    const paper = color("--border")
+    const [paper, pen, muted] = [color("--border"), color("--primary"), color("--muted-foreground")]
+    const font = getComputedStyle(document.body).getPropertyValue("--font-mono") || "monospace"
+
     let progress = 0
-    // Each series' values, one per column, newest last; `next` is the column the generated series continue from.
-    let values: number[][] = []
+    // The series, one value per chart column, newest last; `next` is where its shape continues from.
+    let values: number[] = []
     let next = 0
     let cursorY: number | null = null
+    // The files: points in the one being written, small files committed, big files compacted so far.
+    let filling = Math.round(SMALL * SMALL * 0.45)
+    let small = 2
+    let big = 2
 
-    /** Keeps one value per column, filling a new strip (or a wider one) from the series' own shapes. */
     const fit = (cols: number) => {
-      if (values.length === SERIES.length && values[0]?.length === cols) return
-      const old = values
+      if (values.length === cols) return
+      const kept = values.slice(-cols)
       next = cols
-      values = SERIES.map((s, k) => {
-        const kept = (old[k] ?? []).slice(-cols)
-        const fresh = Array.from({ length: cols - kept.length }, (_, x) => s.at(x, cols))
-        return [...fresh, ...kept]
-      })
+      values = [...Array.from({ length: cols - kept.length }, (_, x) => shape(x, cols)), ...kept]
+    }
+
+    const square = (x: number, y: number, fill: string, alpha: number) => {
+      ctx.globalAlpha = alpha
+      ctx.fillStyle = fill
+      ctx.fillRect(x * CELL, y * CELL, DOT, DOT)
+    }
+    const label = (text: string, x: number, y: number) => {
+      ctx.globalAlpha = 0.9
+      ctx.fillStyle = muted
+      ctx.font = `10px ${font}`
+      ctx.fillText(text, x * CELL, y * CELL)
     }
 
     const draw = () => {
@@ -76,37 +87,70 @@ export function HeroDots() {
       ctx.clearRect(0, 0, w, h)
       const cols = Math.floor(w / CELL)
       const rows = Math.floor(h / CELL)
-      fit(cols)
-      ctx.globalAlpha = 0.55
-      ctx.fillStyle = paper
-      for (let x = 0; x < cols; x++) for (let y = 0; y < rows; y++) ctx.fillRect(x * CELL, y * CELL, DOT, DOT)
-      const upTo = progress * cols
-      SERIES.forEach((s, k) => {
-        ctx.globalAlpha = s.alpha
-        ctx.fillStyle = color(s.color)
-        let prev: number | null = null
-        for (let x = 0; x < cols && x <= upTo; x++) {
-          const v = values[k]?.[x] ?? 0.5
-          const y = Math.max(0, Math.min(rows - 1, Math.round(v * (rows - 1))))
-          // Join steep steps, so the line stays connected.
-          const [top, bottom] = prev === null ? [y, y] : [Math.min(prev, y), Math.max(prev, y)]
-          for (let r = top; r <= bottom; r++) ctx.fillRect(x * CELL, r * CELL, DOT, DOT)
-          prev = y
+      const left = FILES + GAP
+      const chartCols = Math.max(1, cols - left)
+      fit(chartCols)
+
+      // The paper.
+      for (let x = 0; x < cols; x++) for (let y = 0; y < rows; y++) square(x, y, paper, 0.55)
+      // The edge between the files and the chart.
+      for (let y = 0; y < rows; y += 2) square(FILES + 1, y, muted, 0.35)
+
+      // The files: big ones compacted at the top, then the small ones, the last of them being written.
+      const top = Math.max(3, Math.floor((rows - (BIG + 1) * 2 - SMALL - 8) / 2))
+      label("compacted", 1, top - 1)
+      for (let j = 0; j < Math.min(big, KEEP); j++)
+        for (let x = 0; x < BIG; x++)
+          for (let y = 0; y < BIG; y++)
+            square(1 + x + (j % 2) * (BIG + 2), top + y + Math.floor(j / 2) * (BIG + 1), pen, 0.4)
+      const smallTop = top + Math.ceil(Math.min(big, KEEP) / 2) * (BIG + 1) + 4
+      label("written", 1, smallTop - 1)
+      for (let i = 0; i < MERGE; i++) {
+        const [fx, fy] = [1 + i * (SMALL + 1), smallTop]
+        for (let n = 0; n < SMALL * SMALL; n++) {
+          const [x, y] = [fx + (n % SMALL), fy + Math.floor(n / SMALL)]
+          if (i < small) square(x, y, pen, 0.6)
+          else if (i === small && n < filling) square(x, y, pen, 1)
         }
-      })
+      }
+
+      // The series and its bounds.
+      const upTo = progress * chartCols
+      const shown = values.slice(0, Math.max(1, Math.ceil(upTo)))
+      const rowOf = (v: number) => Math.max(0, Math.min(rows - 1, Math.round(v * (rows - 1))))
+      const [hi, lo] = [Math.min(...shown), Math.max(...shown)]
+      for (const [v, name] of [
+        [hi, "max"],
+        [lo, "min"],
+      ] as const) {
+        const y = rowOf(v)
+        for (let x = left; x < cols; x += 2) square(x, y, muted, 0.6)
+        label(`${name} ${reading(v)}`, cols - 12, name === "max" ? y - 1 : y + 4)
+      }
+      let prev: number | null = null
+      for (let i = 0; i < chartCols && i <= upTo; i++) {
+        const y = rowOf(values[i] ?? 0.5)
+        // Join steep steps, so the line stays connected.
+        const [a, b] = prev === null ? [y, y] : [Math.min(prev, y), Math.max(prev, y)]
+        for (let r = a; r <= b; r++) square(left + i, r, pen, 1)
+        prev = y
+      }
       ctx.globalAlpha = 1
     }
 
-    /** One new column: everything moves left, the blue series follows the cursor, the others go on as before. */
+    /** One new column: the oldest point goes into the current file, and a new one arrives at the cursor's height. */
     const publish = () => {
-      const cols = values[0]?.length ?? 0
-      values = values.map((v, k) => {
-        const s = SERIES[k]
-        const last = v.at(-1) ?? 0.5
-        const value = s?.cursor && cursorY !== null ? last + (cursorY - last) * FOLLOW : (s?.at(next, cols) ?? last)
-        return [...v.slice(1), value]
-      })
+      const last = values.at(-1) ?? 0.5
+      const value = cursorY === null ? shape(next, values.length) : last + (cursorY - last) * FOLLOW
+      values = [...values.slice(1), value]
       next++
+      if (++filling === SMALL * SMALL) {
+        filling = 0
+        if (++small === MERGE) {
+          small = 0
+          big++
+        }
+      }
       draw()
     }
 

@@ -135,12 +135,6 @@ export default function Home() {
     <div className="mx-auto flex max-w-6xl flex-col gap-24 px-4 pt-8 pb-24">
       <div className="flex flex-col gap-8">
         <section className="flex flex-col gap-8">
-          {/* The chart on its own; hovering it publishes points at the cursor's height. */}
-          <div className="cells">
-            <div className="relative h-[180px] overflow-hidden sm:h-[220px]">
-              <HeroDots />
-            </div>
-          </div>
           <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
             <h1 className="text-4xl leading-[1.05] font-light tracking-tight sm:text-5xl">
               The open time&#8209;series
@@ -160,6 +154,12 @@ export default function Home() {
               >
                 <GithubIcon /> GitHub
               </Button>
+            </div>
+          </div>
+          {/* The chart on its own; hovering it publishes points at the cursor's height. */}
+          <div className="cells">
+            <div className="relative h-[180px] overflow-hidden sm:h-[220px]">
+              <HeroDots />
             </div>
           </div>
         </section>
