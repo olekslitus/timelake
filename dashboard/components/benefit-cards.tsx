@@ -50,18 +50,18 @@ export async function BenefitCards() {
       link: { label: "Cost", href: "/docs/storage#requests-and-cost" },
     },
     {
-      icon: Layers,
-      art: "formats",
-      title: "Open",
-      body: "Standard Iceberg and Parquet in your own bucket, so you’re not locked in.",
-      link: { label: "Querying", href: "/docs/querying" },
-    },
-    {
       icon: Activity,
       art: "layout",
       title: "Analytics",
       body: "Data is laid out by time and series, so queries read only what they need.",
       link: { label: "Performance", href: "/docs/performance" },
+    },
+    {
+      icon: Layers,
+      art: "formats",
+      title: "Open",
+      body: "Standard Iceberg and Parquet in your own bucket, so you’re not locked in.",
+      link: { label: "Querying", href: "/docs/querying" },
     },
     {
       icon: ServerOff,
