@@ -123,7 +123,7 @@ export default function Home() {
       </section>
 
       <section className="flex flex-col gap-6">
-        <SectionHead label="How does it work?">
+        <SectionHead label="Architecture">
           From the sources that send data to the tools that read it, with only your bucket in between.
         </SectionHead>
         <StackDiagram />
