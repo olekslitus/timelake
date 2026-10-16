@@ -47,7 +47,8 @@ async function speed(): Promise<string> {
   const others = ingested.filter((r) => r.system !== "timelake").map((r) => r.value)
   if (!maintained || !own || others.length === 0) return "Measured every week against other lakes on S3."
   const x = (v: number) => Math.round(v / own.value)
-  return `${Math.round(maintained.value * 1000)} ms per query on S3. Right after ingest, ${x(Math.min(...others))}⁠–⁠${x(Math.max(...others))}× faster than other lakes.`
+  const range = `${x(Math.min(...others))}⁠–⁠${x(Math.max(...others))}×`
+  return `Queries on S3 return in ${Math.round(maintained.value * 1000)} ms, and are ${range} faster than other lakes on fresh data.`
 }
 
 export async function BenefitCards() {
@@ -56,7 +57,7 @@ export async function BenefitCards() {
     {
       icon: ServerOff,
       title: "Serverless",
-      body: "No database, Spark jobs or maintenance jobs. Compaction runs inside the writer, and your data is files in your own bucket.",
+      body: "No database to run and no maintenance jobs. Your data lives as files in your own bucket.",
       link: { label: "How it works", href: "/docs/how-it-works" },
       wide: true,
       art: PROCESSES,
@@ -64,7 +65,7 @@ export async function BenefitCards() {
     {
       icon: Activity,
       title: "Built for time series",
-      body: "Partitioned by time, sorted by series, with an index of latest values.",
+      body: "Data is laid out by time and series, so queries read only what they need.",
       link: { label: "Performance", href: "/docs/performance" },
     },
     {
@@ -76,13 +77,13 @@ export async function BenefitCards() {
     {
       icon: Cloud,
       title: "Any object store",
-      body: "AWS S3, R2, MinIO and other S3\u2011compatible stores, Google Cloud Storage, Azure, or a local disk.",
+      body: "Runs on AWS S3, Google Cloud Storage, Azure, R2, MinIO or your local disk.",
       link: { label: "Storage", href: "/docs/storage" },
     },
     {
       icon: Layers,
       title: "Open formats",
-      body: "Standard Iceberg tables of Parquet files. Query them with DuckDB, Spark or PyIceberg, without Timelake.",
+      body: "Your tables are standard Iceberg and Parquet, so DuckDB and Spark can query them too.",
       link: { label: "Querying", href: "/docs/querying" },
       wide: true,
       art: FORMATS,
@@ -90,7 +91,7 @@ export async function BenefitCards() {
     {
       icon: Scale,
       title: "Open source",
-      body: "Apache 2.0, built on Apache Arrow and DataFusion.",
+      body: "Apache 2.0 licensed, and built on Apache Arrow and DataFusion.",
       link: { label: "GitHub", href: REPO_URL },
     },
   ]
