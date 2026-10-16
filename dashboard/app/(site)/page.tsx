@@ -5,6 +5,7 @@ import {
   BrainCircuit,
   ChartCandlestick,
   Factory,
+  LayoutDashboard,
   type LucideIcon,
   Server,
   Truck,
@@ -27,13 +28,15 @@ const BTN = "font-mono text-xs uppercase tracking-[0.06em]"
 /** The dim /\/\ field behind the hero heading: larger than any viewport, centred on it and clipped by its block. */
 const FIELD = Array.from({ length: 40 }, (_, r) => (r % 2 ? "\\/" : "/\\").repeat(120)).join("\n")
 
-/** What Timelake is for, each with a picture drawn in squares. */
-const USE_CASES: { icon: LucideIcon; art: ArtKind; title: string; body: string }[] = [
+type UseCase = { icon: LucideIcon; art: ArtKind; title: string; body: string }
+
+/** The data that comes in as time series, each with a picture drawn in squares. */
+const DATA: UseCase[] = [
   {
     icon: Factory,
     art: "sensors",
-    title: "Industrial sensors",
-    body: "Thousands of tags sampled every second to every minute, from gateways that send their backlog after going offline.",
+    title: "Industrial IoT",
+    body: "Thousands of sensor tags sampled every second to every minute, with backlogs sent after outages.",
   },
   {
     icon: Truck,
@@ -59,6 +62,16 @@ const USE_CASES: { icon: LucideIcon; art: ArtKind; title: string; body: string }
     title: "Server metrics",
     body: "CPU, memory and disk metrics from thousands of hosts.",
   },
+]
+
+/** The ways that data gets read. */
+const USES: UseCase[] = [
+  {
+    icon: LayoutDashboard,
+    art: "dashboard",
+    title: "Dashboards and apps",
+    body: "Charts and apps that read the bucket over HTTPS with the TypeScript client, in the browser or at the edge.",
+  },
   {
     icon: BrainCircuit,
     art: "ml",
@@ -78,6 +91,32 @@ const USE_CASES: { icon: LucideIcon; art: ArtKind; title: string; body: string }
     body: "Agents can query as often as they like: reads go to object storage, so there is no database for them to overload.",
   },
 ]
+
+/** A labelled row of use-case cards. */
+function UseCaseGroup({ label, cases, columns }: { label: string; cases: UseCase[]; columns: string }) {
+  return (
+    <div className="flex flex-col gap-3">
+      <h3 className="label-mono">{label}</h3>
+      <div className={`grid gap-4 sm:grid-cols-2 ${columns}`}>
+        {cases.map((u) => {
+          const Icon = u.icon
+          return (
+            <div key={u.title} data-use-case className="flex flex-col gap-2 rounded-lg border bg-card p-6">
+              <div className="mb-3">
+                <UseCaseArt kind={u.art} />
+              </div>
+              <h4 className="flex items-center gap-2.5 text-lg font-normal">
+                <Icon className="size-4.5 shrink-0 text-muted-foreground" aria-hidden />
+                {u.title}
+              </h4>
+              <p className="text-sm leading-relaxed text-muted-foreground">{u.body}</p>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
 
 function SectionHead({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -134,25 +173,10 @@ export default function Home() {
 
       <section className="flex flex-col gap-6">
         <SectionHead label="What is it for?">
-          Many series written all the time, and read by more than one tool.
+          The data that comes in as time series, and the ways it gets read.
         </SectionHead>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {USE_CASES.map((u) => {
-            const Icon = u.icon
-            return (
-              <div key={u.title} data-use-case className="flex flex-col gap-2 rounded-lg border bg-card p-6">
-                <div className="mb-3">
-                  <UseCaseArt kind={u.art} />
-                </div>
-                <h3 className="flex items-center gap-2.5 text-lg font-normal">
-                  <Icon className="size-4.5 shrink-0 text-muted-foreground" aria-hidden />
-                  {u.title}
-                </h3>
-                <p className="text-sm leading-relaxed text-muted-foreground">{u.body}</p>
-              </div>
-            )
-          })}
-        </div>
+        <UseCaseGroup label="Data" cases={DATA} columns="lg:grid-cols-5" />
+        <UseCaseGroup label="Uses" cases={USES} columns="lg:grid-cols-4" />
       </section>
 
       <section className="flex flex-col gap-6">

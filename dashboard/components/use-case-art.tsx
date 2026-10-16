@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react"
 
 /** The picture each use case draws, in squares. */
-export type ArtKind = "sensors" | "fleet" | "robot" | "market" | "metrics" | "ml" | "functions" | "agents"
+export type ArtKind = "sensors" | "fleet" | "robot" | "market" | "metrics" | "dashboard" | "ml" | "functions" | "agents"
 
 const COLS = 64
 const ROWS = 14
@@ -131,6 +131,20 @@ const PICTURES: Record<ArtKind, () => Cell[]> = {
         x += length + 2 + Math.floor(rnd() * 10)
       }
     }
+    return cells
+  },
+  dashboard: () => {
+    // Two panels: hourly bars, then a line.
+    const rnd = seeded(9)
+    const cells: Cell[] = []
+    let v = 6
+    for (let x = 1; x < 30; x += 2) {
+      v = Math.max(3, Math.min(11, v + (rnd() - 0.5) * 4))
+      for (let y = ROWS - 2; y >= ROWS - 1 - Math.round(v); y--)
+        cells.push({ x, y, color: "var(--primary)", alpha: 0.85 })
+    }
+    const trend = Array.from({ length: 30 }, (_, i) => 8 - Math.sin(i / 5) * 3 - i / 10 + (rnd() - 0.5))
+    trend.forEach((t, i) => cells.push({ x: 34 + i, y: row(t), color: "var(--chart-3)", alpha: 1 }))
     return cells
   },
   agents: () => {
