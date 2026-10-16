@@ -60,8 +60,9 @@ export const NOW: RoadmapItem[] = [
   },
   {
     title: "Settings for every feature",
-    description: "Turn each feature on or off, or tune it, per table, per session or per query.",
-    status: "next",
+    description:
+      "Turn each feature on or off, or tune it, per table, per session or per call, from one list of settings.",
+    status: "done",
   },
 ]
 

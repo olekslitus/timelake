@@ -25,15 +25,22 @@ class ConflictError(RuntimeError):
 class Lake:
     """A warehouse of Timelake tables on any object store or local disk."""
 
-    def __new__(cls, location: str, storage_options: Mapping[str, str] | None = None) -> Lake:
+    def __new__(
+        cls,
+        location: str,
+        storage_options: Mapping[str, str] | None = None,
+        settings: Mapping[str, str] | None = None,
+    ) -> Lake:
         """Opens a warehouse.
 
         Args:
             location: A local path, or an ``s3://``, ``gs://``, ``az://`` or ``file://`` URL.
             storage_options: Object store options, such as ``{"aws_region": "us-east-1"}``.
+            settings: Session settings for every query, such as ``{"read_dedup": "false"}``; they override the
+                tables' own. ``datafusion.*`` keys set DataFusion options.
 
         Raises:
-            ValueError: The location or an option is invalid.
+            ValueError: The location, an option or a setting is invalid.
         """
 
     @property
@@ -162,6 +169,17 @@ class Table:
             keep_snapshots: How long every snapshot is kept after the upgrade.
 
         Raises:
+            ConflictError: A concurrent commit could not be rebased.
+        """
+
+    def set_properties(self, properties: Mapping[str, str | None]) -> None:
+        """Changes table settings, such as ``{"read_dedup": "false"}``; ``None`` returns one to its default.
+
+        Settings are named with or without the ``timelake.`` prefix, with dashes or underscores. Keys outside it
+        are Iceberg properties. The change is one commit of new metadata, with no new snapshot.
+
+        Raises:
+            ValueError: An unknown setting, a bad value, or one that is fixed when the table is created.
             ConflictError: A concurrent commit could not be rebased.
         """
 

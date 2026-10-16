@@ -1,5 +1,7 @@
 """Engine errors surface as the closest built-in Python exception."""
 
+from pathlib import Path
+
 import pyarrow as pa
 import pytest
 from conftest import SCHEMA, readings
@@ -54,6 +56,16 @@ def test_bad_chunk_raises_value_error(lake: timelake.Lake) -> None:
 def test_bad_property_value_raises_value_error(lake: timelake.Lake) -> None:
     with pytest.raises(ValueError, match="row-group-rows"):
         lake.create_table("iot.r", SCHEMA, time_column="time", properties={"timelake.row-group-rows": "many"})
+
+
+def test_creation_only_setting_raises_value_error(table: timelake.Table) -> None:
+    with pytest.raises(ValueError, match="fixed when the table is created"):
+        table.set_properties({"chunk-interval": "hour"})
+
+
+def test_unknown_setting_raises_value_error(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="unknown setting"):
+        timelake.Lake(str(tmp_path), settings={"read_dedupe": "false"})
 
 
 def test_conflict_error_is_a_runtime_error() -> None:

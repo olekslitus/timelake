@@ -15,7 +15,7 @@ use pyo3::types::PyDict;
 use timelake::arrow::array::{RecordBatch, RecordBatchIterator, RecordBatchReader};
 use timelake::arrow::datatypes::Schema;
 use timelake::arrow::error::ArrowError;
-use timelake::datafusion::prelude::DataFrame;
+use timelake::datafusion::prelude::{DataFrame, SessionConfig};
 use timelake::{AppendOptions, Chunk, Error, MaintainOptions, Session, TableOptions, UpgradeOptions};
 
 create_exception!(
@@ -62,6 +62,12 @@ fn arrow_err(err: ArrowError) -> PyErr {
     }
 }
 
+/// A Timelake setting's session key: `read-dedup` and `read_dedup` become `timelake.read_dedup`.
+fn session_key(name: &str) -> String {
+    let name = name.strip_prefix("timelake.").unwrap_or(name);
+    format!("timelake.{}", name.replace('-', "_"))
+}
+
 /// Locks a handle's state. Poisoning is harmless here: the state is only ever replaced whole.
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
@@ -97,6 +103,8 @@ fn collect(py: Python<'_>, query: impl Future<Output = timelake::Result<DataFram
 #[pyclass(frozen, module = "timelake")]
 struct Lake {
     inner: timelake::Lake,
+    /// Session configuration with the lake's `settings`, for every namespace's session.
+    config: SessionConfig,
     /// One query session per namespace, so catalog caches survive between `sql` calls.
     sessions: Mutex<HashMap<String, Session>>,
 }
@@ -106,7 +114,7 @@ impl Lake {
         lock(&self.sessions)
             .entry(namespace.to_owned())
             .or_insert_with(|| {
-                let config = Session::config().with_default_catalog_and_schema("timelake", namespace);
+                let config = self.config.clone().with_default_catalog_and_schema("timelake", namespace);
                 Session::with_config(self.inner.clone(), config)
             })
             .clone()
@@ -116,12 +124,21 @@ impl Lake {
 #[pymethods]
 impl Lake {
     #[new]
-    #[pyo3(signature = (location, storage_options=None))]
-    fn new(location: &str, storage_options: Option<HashMap<String, String>>) -> PyResult<Self> {
+    #[pyo3(signature = (location, storage_options=None, settings=None))]
+    fn new(
+        location: &str,
+        storage_options: Option<HashMap<String, String>>,
+        settings: Option<HashMap<String, String>>,
+    ) -> PyResult<Self> {
+        let mut config = Session::config();
+        for (key, value) in settings.unwrap_or_default() {
+            let key = if key.starts_with("datafusion.") { key } else { session_key(&key) };
+            config.options_mut().set(&key, &value).map_err(|err| PyValueError::new_err(err.to_string()))?;
+        }
         // Opening an object store may spawn tasks, so it needs a runtime context.
         let _guard = runtime().enter();
         let inner = timelake::Lake::open(location, storage_options.unwrap_or_default()).map_err(to_py_err)?;
-        Ok(Self { inner, sessions: Mutex::default() })
+        Ok(Self { inner, config, sessions: Mutex::default() })
     }
 
     /// The warehouse URL.
@@ -308,6 +325,18 @@ impl Table {
             snapshot_before: report.snapshot_before,
             keep_snapshots_until_ms: report.keep_snapshots_until_ms,
         })
+    }
+
+    /// Sets table settings and properties; `None` removes one (back to its default).
+    fn set_properties(&self, py: Python<'_>, properties: HashMap<String, Option<String>>) -> PyResult<()> {
+        let table = self.get();
+        let table = run(py, async move {
+            let changes: Vec<(&str, Option<&str>)> =
+                properties.iter().map(|(k, v)| (k.as_str(), v.as_deref())).collect();
+            table.set_properties(&changes).await
+        })?;
+        self.set(table);
+        Ok(())
     }
 
     /// Makes an earlier snapshot current again.

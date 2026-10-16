@@ -1,0 +1,60 @@
+import { SettingsTable } from "@/components/docs/settings-table"
+
+export const metadata = { title: "Settings" }
+
+# Settings
+
+Every Timelake feature has a setting that turns it on or off or chooses how it behaves. Settings are declared once,
+in the engine, and can be set at up to four levels. When a setting is set at more than one level, the most specific
+one wins:
+
+- **Create:** fixed when the table is created, by its options (`--time-column`, `--series-key`, `--chunk`,
+  `--no-dedup`, `--no-ingest-time` on the CLI; `time_column=`, `series_key=`, `chunk=`, `dedup=`, `ingest_time=` in
+  Python).
+- **Table:** a table property under the `timelake.` prefix, stored with the table and used by every reader and writer.
+  Set it at creation (`--prop`, `properties=`) or later (`timelake alter`, `Table.set_properties`). Other engines
+  ignore these properties.
+- **Session:** for one SQL session, overriding the table's value: `SET timelake.read_dedup = false` in SQL,
+  `--set timelake.read_dedup=false` on the CLI, `Lake(..., settings={...})` in Python. `SHOW timelake.read_dedup`
+  shows the session's value.
+- **Call:** for one append or maintenance run, through its options (`AppendOptions`, `MaintainOptions`, or the
+  method's keyword arguments in Python).
+
+A setting has one name. Table properties spell it with dashes (`timelake.read-dedup`); SQL needs identifiers, so it
+uses underscores (`timelake.read_dedup`). Both spellings, and the bare name, name the same setting. An unknown name, a
+bad value, or a setting set at a level it doesn't allow is an error. The table below gives the bare names;
+`format-version` is set by Timelake itself (at creation and by `timelake upgrade`). Tables written by a newer Timelake may carry
+settings this one doesn't know; reading ignores them. Storage options, which say how to reach the bucket and which
+requests to use, are given when a lake is opened; they are on the [Storage](/docs/storage) page.
+
+```shell
+timelake settings                    # every setting: default, levels, description
+timelake settings iot.readings       # the table's values; defaults in parentheses
+timelake alter iot.readings --set read-dedup=false --set retention=90d
+timelake alter iot.readings --unset retention    # back to the default
+```
+
+```python
+table.set_properties({"read_dedup": "false", "retention": None})
+lake = timelake.Lake("s3://bucket/lake", settings={"read_dedup": "false"})
+```
+
+<SettingsTable />
+
+Durations are a number and a unit: `s`, `m` (minutes), `h`, `d`, `w` or `y`, or the long forms (`90 days`, `2 weeks`). Examples: `30m`, `36h`, `90d`, `1y`.
+
+## Iceberg properties set at creation
+
+- `write.format.default = parquet` and `write.parquet.compression-codec = zstd`
+- `write.metadata.previous-versions-max = 20`: keeps `metadata.json`, which every query reads, small. Older metadata files are deleted by snapshot expiry.
+
+## Schema
+
+Arrow types are mapped to the closest lossless Iceberg type when a table is created:
+
+- 8- and 16-bit integers become `int`; `UInt32` becomes `long`; `UInt64` is rejected.
+- Timestamps of any unit are stored in microseconds; time-zone-aware timestamps become `timestamptz` (UTC).
+- Dictionary-encoded columns use their value type; large and view string and binary types become string and binary.
+- The time column is NOT NULL, and a text time column is stored as a UTC timestamp.
+
+Schema evolution isn’t supported yet: the schema is fixed when the table is created.

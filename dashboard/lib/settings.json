@@ -1,0 +1,242 @@
+[
+  {
+    "default": {
+      "unset": "none"
+    },
+    "description": "The time column. Its presence makes the table a time-series table.",
+    "kind": "column",
+    "levels": ["create"],
+    "name": "time-column",
+    "property": "timelake.time-column",
+    "since": "0.1.0",
+    "sql": "timelake.time_column"
+  },
+  {
+    "default": {
+      "unset": "none"
+    },
+    "description": "Comma-separated columns that identify a series.",
+    "kind": "columns",
+    "levels": ["create"],
+    "name": "series-key",
+    "property": "timelake.series-key",
+    "since": "0.1.0",
+    "sql": "timelake.series_key"
+  },
+  {
+    "default": {
+      "derived": "day for time-series tables"
+    },
+    "description": "Partition size: how much time one partition covers.",
+    "kind": "hour, day, or month",
+    "levels": ["create"],
+    "name": "chunk-interval",
+    "property": "timelake.chunk-interval",
+    "since": "0.1.0",
+    "sql": "timelake.chunk_interval"
+  },
+  {
+    "default": {
+      "derived": "true with a series key, else false"
+    },
+    "description": "Rows with the same (series, time) count once; the latest write wins. Applied within an append, by the Timelake reader, and by compaction. Fixed at creation: files written with it off may hold copies, which the reader would then miss.",
+    "kind": "boolean",
+    "levels": ["create"],
+    "name": "dedup",
+    "property": "timelake.dedup",
+    "since": "0.1.0",
+    "sql": "timelake.dedup"
+  },
+  {
+    "default": {
+      "derived": "_ingest_ts for time-series tables"
+    },
+    "description": "The column holding each row's insertion time (`ingest_time=False` or `--no-ingest-time` leaves it out). Each append fills it with the time the append started, unless the input brings its own values. Among rows with the same (series, time), the latest insertion wins, then the later commit.",
+    "kind": "column",
+    "levels": ["create"],
+    "name": "ingest-time-column",
+    "property": "timelake.ingest-time-column",
+    "since": "0.5.0",
+    "sql": "timelake.ingest_time_column"
+  },
+  {
+    "default": {
+      "unset": "forever"
+    },
+    "description": "Maintenance drops partitions that end before now minus this duration, e.g. 90d.",
+    "kind": "duration",
+    "levels": ["create", "table"],
+    "name": "retention",
+    "property": "timelake.retention",
+    "since": "0.1.0",
+    "sql": "timelake.retention"
+  },
+  {
+    "default": {
+      "value": "true"
+    },
+    "description": "Run size-tiered compaction, retention, and snapshot expiry inline after appends. One append can override it (`maintain=` in Python, `--no-maintain` on the CLI).",
+    "kind": "boolean",
+    "levels": ["table", "call"],
+    "name": "auto-maintain",
+    "property": "timelake.auto-maintain",
+    "since": "0.1.0",
+    "sql": "timelake.auto_maintain"
+  },
+  {
+    "default": {
+      "value": "8"
+    },
+    "description": "Inline compaction merges a size tier of a partition once it has this many files.",
+    "kind": "count",
+    "levels": ["table"],
+    "name": "compact-min-files",
+    "property": "timelake.compact-min-files",
+    "since": "0.1.0",
+    "sql": "timelake.compact_min_files"
+  },
+  {
+    "default": {
+      "value": "1h"
+    },
+    "description": "Inline maintenance rewrites a partition whole (sorted, duplicates removed) once the table holds data newer than the partition's end by this much and the partition has two small files, whether the append touched it or not. `off` leaves it to the size tiers.",
+    "kind": "duration or off",
+    "levels": ["table", "call"],
+    "name": "compact-cold-after",
+    "property": "timelake.compact-cold-after",
+    "since": "0.5.0",
+    "sql": "timelake.compact_cold_after"
+  },
+  {
+    "default": {
+      "derived": "as dedup"
+    },
+    "description": "The Timelake reader returns only the latest write of each (series, time), before compaction has removed the older copies. Has no effect on tables with dedup off.",
+    "kind": "boolean",
+    "levels": ["table", "session"],
+    "name": "read-dedup",
+    "property": "timelake.read-dedup",
+    "since": "0.5.0",
+    "sql": "timelake.read_dedup"
+  },
+  {
+    "default": {
+      "value": "merge"
+    },
+    "description": "How the reader removes copies: `merge` merges the files that may share keys in key order; `keys-first` lists the older copies from the key columns, then reads the files like any scan and leaves them out (slower on the industrial IoT benchmark).",
+    "kind": "merge or keys-first",
+    "levels": ["table", "session"],
+    "name": "read-dedup-strategy",
+    "property": "timelake.read-dedup-strategy",
+    "since": "0.5.0",
+    "sql": "timelake.read_dedup_strategy"
+  },
+  {
+    "default": {
+      "value": "268435456"
+    },
+    "description": "Size at which compaction output and writes roll to a new file (256 MiB).",
+    "kind": "bytes",
+    "levels": ["table"],
+    "name": "target-file-size-bytes",
+    "property": "timelake.target-file-size-bytes",
+    "since": "0.1.0",
+    "sql": "timelake.target_file_size_bytes"
+  },
+  {
+    "default": {
+      "value": "1048576"
+    },
+    "description": "Parquet row group size. Page indexes keep single-series reads selective inside large row groups.",
+    "kind": "count",
+    "levels": ["table"],
+    "name": "row-group-rows",
+    "property": "timelake.row-group-rows",
+    "since": "0.1.0",
+    "sql": "timelake.row_group_rows"
+  },
+  {
+    "default": {
+      "value": "1h"
+    },
+    "description": "Expire snapshots older than this, keeping at least `min-snapshots` and at most `max-snapshots`.",
+    "kind": "duration",
+    "levels": ["table"],
+    "name": "snapshot-retention",
+    "property": "timelake.snapshot-retention",
+    "since": "0.1.0",
+    "sql": "timelake.snapshot_retention"
+  },
+  {
+    "default": {
+      "value": "5"
+    },
+    "description": "Snapshots always kept, whatever their age.",
+    "kind": "count",
+    "levels": ["table"],
+    "name": "min-snapshots",
+    "property": "timelake.min-snapshots",
+    "since": "0.1.0",
+    "sql": "timelake.min_snapshots"
+  },
+  {
+    "default": {
+      "value": "100"
+    },
+    "description": "Snapshots kept at most: older ones expire even if younger than `snapshot-retention`.",
+    "kind": "count",
+    "levels": ["table"],
+    "name": "max-snapshots",
+    "property": "timelake.max-snapshots",
+    "since": "0.1.0",
+    "sql": "timelake.max_snapshots"
+  },
+  {
+    "default": {
+      "value": "arrow"
+    },
+    "description": "Format of the head object (`metadata/timelake-head`): `arrow`, `json`, a registered codec, or `none` for no head.",
+    "kind": "codec name or none",
+    "levels": ["table"],
+    "name": "head-format",
+    "property": "timelake.head-format",
+    "since": "0.3.0",
+    "sql": "timelake.head_format"
+  },
+  {
+    "default": {
+      "value": "1048576"
+    },
+    "description": "Room in the head for the last-value index, then the Parquet footers of the newest files (1 MiB). What doesn't fit is read separately.",
+    "kind": "bytes",
+    "levels": ["table"],
+    "name": "head-inline-bytes",
+    "property": "timelake.head-inline-bytes",
+    "since": "0.3.0",
+    "sql": "timelake.head_inline_bytes"
+  },
+  {
+    "default": {
+      "unset": "none"
+    },
+    "description": "No snapshot expires before this time. `timelake upgrade` sets it so the upgrade can be rolled back.",
+    "kind": "milliseconds since the epoch",
+    "levels": ["table"],
+    "name": "keep-snapshots-until",
+    "property": "timelake.keep-snapshots-until",
+    "since": "0.3.0",
+    "sql": "timelake.keep_snapshots_until"
+  },
+  {
+    "default": {
+      "derived": "the current format for new tables; 0.1.0 if absent"
+    },
+    "description": "The table format. Timelake refuses tables of a newer format it can't handle; `timelake upgrade` brings a table to the current format.",
+    "kind": "semantic version",
+    "levels": [],
+    "name": "format-version",
+    "property": "timelake.format-version",
+    "since": "0.3.0",
+    "sql": "timelake.format_version"
+  }
+]

@@ -26,8 +26,21 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
   compaction and in the last-value index. DuckDB can pick the same rows with
   `QUALIFY row_number() OVER (PARTITION BY <series>, <time> ORDER BY _ingest_ts DESC) = 1`. Leave it out with
   `ingest_time=False` (Python) or `--no-ingest-time` (CLI); `timelake info` shows it.
+- **Settings.** Every switch is declared in one registry, with its default, the levels it can be set at (creation,
+  table, session, call) and the version that added it. `timelake settings` lists them, and with a table name shows
+  the table's values; `timelake alter <table> --set read-dedup=false --unset retention` changes a table's settings
+  (`Table.set_properties` in Python and Rust). `Lake(..., settings={...})` in Python sets session settings for every
+  query, and `SHOW timelake.read_dedup` shows a session's value. Names work with dashes or underscores, with or
+  without `timelake.`. The docs page "Table properties" is now "Settings".
 
 ### Changed
+
+- **Settings are checked.** Creating or altering a table with an unknown `timelake.*` property, a bad value, or a
+  setting fixed at creation (`time-column`, `series-key`, `chunk-interval`, `dedup`, `ingest-time-column`) as a
+  property is an error; use the table options for those. `timelake.format-version` can no longer be set by hand.
+  `SET` of a table-only setting in SQL is an error. `timelake sql --set` with a bad key reports an error instead of
+  crashing.
+- Rust: `SessionSettings` has `get` and `flag` instead of public fields.
 
 - **Table format 0.3.0** for new tables (the insertion-time column). Timelake 0.4 and older can't open them: upgrade
   every reader and writer first. `timelake upgrade` raises older tables to 0.3.0 but doesn't add `_ingest_ts` (a

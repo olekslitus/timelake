@@ -1295,7 +1295,7 @@ A single binary on site (factory, vessel, rig, substation) that devices send dat
   - Postgres compatibility limited to the SQL that DataFusion supports;
   - one server holds one site's working set.
 
-### 21.9 F9: Settings (proposed 2026-10-16, for review)
+### 21.9 F9: Settings (built 2026-10-16)
 
 **Principle.** Every engine feature has a setting that turns it on or off or picks its behaviour, a bit like Postgres's configuration variables. During fast development this keeps trade-offs explicit, lets benchmarks measure each feature on and off, and records how behaviour changed.
 
@@ -1318,7 +1318,7 @@ A setting declares which levels it allows: the time column and series key only a
 |---|---|---|---|
 | `read-dedup` | on, off (on when `dedup` is on) | table, session | Remove copies when the Timelake reader reads (§9.1) |
 | `read-dedup-strategy` | merge, keys-first (decided by benchmark) | table, session | How copies are removed on read (§9.1) |
-| `append-dedup` | on, off (on when `dedup` is on) | table, call | Keep only the last of equal keys within one append |
+| `append-dedup` | on, off (on when `dedup` is on) | table, call | Keep only the last of equal keys within one append (not built, see below) |
 | `ingest-time-column` | a column name, or none (`_ingest_ts`) | creation | Insertion time per row (§9.1), built |
 | `latest-by` | a column (`_ingest_ts`) | table | Which copy of a row is the latest write (§7.4, proposed) |
 | `as_of_inserted` | a timestamp, or none | session | Leave out rows inserted after it, before dedup (§7.4, proposed) |
@@ -1326,7 +1326,14 @@ A setting declares which levels it allows: the time column and series key only a
 
 The existing `timelake.*` properties become registry entries unchanged. Hard-coded behaviour moves into settings as it's touched: compaction tiers, the small-file ratio, scan parallelism, the planning cache's lifetime.
 
-**Questions for review:**
-- **Names in SQL.** Table properties use kebab-case (`timelake.target-file-size-bytes`), but `SET` needs identifiers. Proposal: SQL uses underscores (`SET timelake.read_dedup = off`) and both spellings name the same setting.
-- **Locked settings.** Should a table be able to forbid a session from overriding a setting (for example turning dedup off and seeing copies)? Proposal: no locking for now; a session override is the reader's choice.
-- **Environment variables.** `TIMELAKE_SET_<NAME>` for process-wide defaults, or only explicit options? Proposal: not until needed.
+**Decided 2026-10-16:**
+- **Names in SQL** use underscores (`SET timelake.read_dedup = off`); every spelling (dashes, underscores, with or without `timelake.`) names the same setting.
+- **No locked settings:** a session override is the reader's choice.
+- **No environment variables** until something needs them.
+
+**Built 2026-10-16:**
+- The registry is `timelake_format::settings`: name, kind, default, levels, the version that added it, description, and a value check. A test keeps it in step with the contract's properties and defaults.
+- Table level: properties are checked at creation and by `Table::set_properties` (CLI `timelake alter --set/--unset`, Python `Table.set_properties`). Unknown `timelake.*` names, bad values and settings not allowed at the table level are errors; properties a newer Timelake wrote are ignored when reading.
+- Session level: every setting the registry allows there can be `SET`, shown with `SHOW`, passed with `--set`, or given to Python's `Lake(settings=…)`. The CLI's `--set` no longer panics on a bad key.
+- `timelake settings [table] [--json]` lists them; the docs page "Settings" renders the same list (`dashboard/lib/settings.json`, checked by a test).
+- Changes from the proposal: `dedup` is fixed at creation (files written with it off may hold copies, which dedup on read assumes they don't). `append-dedup` isn't built for the same reason: an append that keeps copies would need its files marked for the reader. `format-version` is managed by Timelake (create, upgrade) and can't be set by hand. `latest-by` and `as_of_inserted` wait for §7.4. Storage options (`timelake_freshness_check`, …) stay lake options, documented on the Storage page.

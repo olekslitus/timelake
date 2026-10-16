@@ -34,7 +34,7 @@ timelake create iot.devices --schema "device_id:string,site:string,installed:dat
 | `--retention <dur>` | Drop data older than this, e.g. 90d (units s, m, h, d, w, y). |
 | `--no-dedup` | Keep every row with the same (series, time): when appending, reading, and compacting. |
 | `--no-ingest-time` | Leave out the `_ingest_ts` column, which records when each row was inserted. |
-| `--prop <k=v>` | Extra table property; repeatable. |
+| `--prop <k=v>` | A table [setting](/docs/settings) or Iceberg property, e.g. `--prop retention=90d`; repeatable. |
 
 ## append
 
@@ -114,6 +114,31 @@ timelake upgrade iot.readings
 | `--dry-run` | Only print what would change. |
 | `--no-compact` | Don't rewrite files. |
 | `--keep-snapshots` | How long every snapshot is kept so the upgrade can be undone (default `7d`). |
+
+## alter
+
+Change a table's settings. Each change is checked against the [settings](/docs/settings) registry, and all of them
+are committed together as new table metadata (no new snapshot).
+
+```bash
+timelake alter iot.readings --set read-dedup=false --set retention=90d
+timelake alter iot.readings --unset retention
+```
+
+| Flag | Meaning |
+| --- | --- |
+| `--set <name=value>` | Set a setting (`read-dedup`, `timelake.read_dedup`, …) or an Iceberg property; repeatable. |
+| `--unset <name>` | Remove one, so its default applies again; repeatable. |
+
+## settings
+
+List every setting with its default, the levels it can be set at, and the first sentence of its description. With a
+table, show the table's values, with defaults in parentheses. `--json` prints everything, descriptions included.
+
+```bash
+timelake settings
+timelake settings iot.readings --json
+```
 
 ## rollback
 

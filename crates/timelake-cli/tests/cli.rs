@@ -76,6 +76,42 @@ fn create_import_query_maintain() {
     assert_eq!(out.trim(), "dropped iot.readings");
 }
 
+/// Commits the table's metadata again without `timelake.format-version`, as Timelake 0.2 wrote it.
+/// Timelake never removes the property itself, so the test edits the metadata files directly.
+fn as_written_by_timelake_0_2(metadata: &Path) {
+    let version: u64 = std::fs::read_to_string(metadata.join("version-hint.text")).unwrap().trim().parse().unwrap();
+    let current = metadata.join(format!("v{version}.metadata.json"));
+    let mut doc: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&current).unwrap()).unwrap();
+    doc["properties"].as_object_mut().unwrap().remove("timelake.format-version");
+    let next = metadata.join(format!("v{}.metadata.json", version + 1));
+    std::fs::write(next, doc.to_string()).unwrap();
+    std::fs::write(metadata.join("version-hint.text"), (version + 1).to_string()).unwrap();
+}
+
+#[test]
+fn settings_and_alter() {
+    let dir = tempfile::tempdir().unwrap();
+    let warehouse = dir.path().join("warehouse");
+    let create = ["create", "iot.r", "--schema", "time:timestamp,device:int", "--time-column", "time"];
+    timelake(&warehouse, &[&create[..], &["--series-key", "device", "--prop", "retention=90d"]].concat());
+
+    let (out, _) = timelake(&warehouse, &["settings"]);
+    assert!(out.lines().any(|l| l.starts_with("read-dedup ") && l.contains("table,session")), "{out}");
+    timelake(&warehouse, &["alter", "iot.r", "--set", "timelake.read_dedup=false", "--unset", "retention"]);
+    let (out, _) = timelake(&warehouse, &["settings", "iot.r", "--json"]);
+    let settings: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let value = |name: &str| settings.as_array().unwrap().iter().find(|s| s["name"] == name).unwrap()["value"].clone();
+    assert_eq!((value("read-dedup"), value("retention")), (serde_json::json!("false"), serde_json::Value::Null));
+
+    let fails = |args: &[&str]| {
+        let out = Command::new(env!("CARGO_BIN_EXE_timelake")).arg("-w").arg(&warehouse).args(args).output().unwrap();
+        assert!(!out.status.success(), "{args:?} succeeded");
+        String::from_utf8(out.stderr).unwrap()
+    };
+    assert!(fails(&["alter", "iot.r", "--set", "chunk-interval=hour"]).contains("fixed when the table is created"));
+    assert!(fails(&["sql", "--set", "timelake.nope=1", "SELECT 1"]).contains("unknown setting"));
+}
+
 #[test]
 fn upgrade_and_rollback() {
     let dir = tempfile::tempdir().unwrap();
@@ -85,7 +121,8 @@ fn upgrade_and_rollback() {
     let csv = csv.to_str().unwrap();
     let import = ["import", "iot.r", csv, "--time-column", "time", "--series-key", "device"];
     // A format 0.1.0 table, as Timelake 0.2 wrote them.
-    timelake(&warehouse, &[&import[..], &["--prop", "timelake.format-version=0.1.0"]].concat());
+    timelake(&warehouse, &import);
+    as_written_by_timelake_0_2(&warehouse.join("iot/r/metadata"));
     timelake(&warehouse, &["append", "iot.r", csv]);
 
     let (out, _) = timelake(&warehouse, &["upgrade", "--dry-run"]);

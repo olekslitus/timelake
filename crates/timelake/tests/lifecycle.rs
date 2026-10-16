@@ -104,6 +104,9 @@ async fn append_query_latest_compact_expire() {
     // Strategy keys-first gives the same answers: older copies listed from the keys, then left out
     // of a scan that every filter may prune.
     rows(&raw, "SET timelake.read_dedup_strategy = 'keys-first'").await;
+    let shown = rows(&raw, "SHOW timelake.read_dedup_strategy").await;
+    assert_eq!(strings(&shown, "value"), ["keys-first"]);
+    assert!(raw.sql("SET timelake.min_snapshots = 1").await.is_err(), "a table setting, not a session one");
     for (sql, n) in [
         ("SELECT count(*) FROM iot.readings", 43_200),
         ("SELECT count(*) FROM iot.readings WHERE value = -1", 100),

@@ -15,7 +15,10 @@ const nextConfig: NextConfig = {
     "/opengraph-image": ["./assets/fonts/**"],
   },
   partialPrefetching: true,
-  redirects: async () => [{ source: "/docs/roadmap", destination: "/roadmap", permanent: true }],
+  redirects: async () => [
+    { source: "/docs/roadmap", destination: "/roadmap", permanent: true },
+    { source: "/docs/table-properties", destination: "/docs/settings", permanent: true },
+  ],
   turbopack: {
     rules: {
       "*.css": {

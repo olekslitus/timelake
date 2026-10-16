@@ -1,6 +1,9 @@
 """The Python API end to end on a local warehouse."""
 
 import datetime as dt
+import json
+from pathlib import Path
+from urllib.parse import urlparse
 
 import duckdb
 import polars as pl
@@ -183,11 +186,27 @@ def test_maintain_report_has_documented_keys(table: timelake.Table) -> None:
     }
 
 
+def as_written_by_timelake_0_2(lake: timelake.Lake, table: timelake.Table) -> timelake.Table:
+    """Commits the table's metadata again without ``timelake.format-version``, as Timelake 0.2 wrote it.
+
+    Timelake never removes the property itself, so the test edits the metadata files directly.
+    """
+    metadata = Path(urlparse(table.location).path) / "metadata"
+    current = metadata / f"v{table.version}.metadata.json"
+    doc = json.loads(current.read_text())
+    del doc["properties"]["timelake.format-version"]
+    doc.setdefault("metadata-log", []).append(
+        {"metadata-file": current.as_uri(), "timestamp-ms": doc["last-updated-ms"]}
+    )
+    (metadata / f"v{table.version + 1}.metadata.json").write_text(json.dumps(doc))
+    (metadata / "version-hint.text").write_text(str(table.version + 1))
+    return lake.table(table.name)
+
+
 def test_upgrade_and_rollback(lake: timelake.Lake) -> None:
     # A table in the format Timelake 0.2 wrote, with two small files.
-    table = lake.create_table(
-        "iot.old", SCHEMA, time_column="time", series_key=["device"], properties={"timelake.format-version": "0.1.0"}
-    )
+    table = lake.create_table("iot.old", SCHEMA, time_column="time", series_key=["device"])
+    table = as_written_by_timelake_0_2(lake, table)
     table.append(readings(), maintain=False)
     table.append(readings(START + dt.timedelta(hours=1)), maintain=False)
     version = table.info()["version"]
@@ -206,6 +225,25 @@ def test_upgrade_and_rollback(lake: timelake.Lake) -> None:
     assert table.info()["files"] == 2
     with pytest.raises(KeyError):
         table.rollback(12345)
+
+
+def test_set_properties_changes_settings(lake: timelake.Lake, table: timelake.Table) -> None:
+    table.set_properties({"read_dedup": "false", "timelake.retention": "30d"})
+    assert table.version == 2
+    table.append(readings(), maintain=False)
+    table.append(readings(), maintain=False)
+    assert lake.sql("SELECT count(*) AS n FROM iot.readings").to_pylist() == [{"n": 600}]
+    table.set_properties({"read-dedup": None})
+    assert lake.sql("SELECT count(*) AS n FROM iot.readings").to_pylist() == [{"n": 300}]
+
+
+def test_lake_settings_apply_to_every_session(tmp_path: Path) -> None:
+    lake = timelake.Lake(str(tmp_path / "warehouse"), settings={"read-dedup": "false"})
+    table = lake.create_table("iot.readings", SCHEMA, time_column="time", series_key=["device"])
+    table.append(readings(), maintain=False)
+    table.append(readings(), maintain=False)
+    assert lake.sql("SELECT count(*) AS n FROM iot.readings").to_pylist() == [{"n": 600}]
+    assert lake.sql("SHOW timelake.read_dedup").to_pylist() == [{"name": "timelake.read_dedup", "value": "false"}]
 
 
 def test_inline_maintenance_is_reported(lake: timelake.Lake) -> None:

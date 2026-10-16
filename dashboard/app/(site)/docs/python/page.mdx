@@ -15,14 +15,14 @@ import timelake
 ## Lake
 
 ```python
-lake = timelake.Lake(location, storage_options=None)
+lake = timelake.Lake(location, storage_options=None, settings=None)
 ```
 
-Opens a warehouse. `location` is a local path or an `s3://`, `gs://`, `az://`, or `file://` URL; `storage_options` is a dict of object store options (see Storage & configuration). `lake.location` returns the normalized URL.
+Opens a warehouse. `location` is a local path or an `s3://`, `gs://`, `az://`, or `file://` URL; `storage_options` is a dict of object store options (see Storage & configuration); `settings` is a dict of session [settings](/docs/settings) for every query, such as `{"read_dedup": "false"}`, which override the tables' own (`datafusion.*` keys set DataFusion options). `lake.location` returns the normalized URL.
 
 | Method | Returns |
 | --- | --- |
-| `create_table(name, schema, time_column=None, series_key=None, chunk=None, retention=None, dedup=None, ingest_time=None, properties=None)` | `Table`. `schema` is a pyarrow schema or anything with a `.schema`. `chunk` is "hour", "day", or "month"; `retention` a duration such as "90d"; `ingest_time=False` leaves out the `_ingest_ts` column; `properties` extra table properties. |
+| `create_table(name, schema, time_column=None, series_key=None, chunk=None, retention=None, dedup=None, ingest_time=None, properties=None)` | `Table`. `schema` is a pyarrow schema or anything with a `.schema`. `chunk` is "hour", "day", or "month"; `retention` a duration such as "90d"; `ingest_time=False` leaves out the `_ingest_ts` column; `properties` table [settings](/docs/settings) and Iceberg properties. |
 | `table(name)` | `Table` at its latest version. |
 | `tables()` | `list[str]` of `namespace.table`. |
 | `sql(query, namespace="default")` | `pyarrow.Table`. Unqualified names resolve in `namespace`. |
@@ -37,6 +37,7 @@ Properties: `name`, `location`, `version`, `schema` (pyarrow). Methods that comm
 | --- | --- |
 | `append(data, batch_id=None, maintain=None)` | dict: `rows`, `files`, `bytes`, `version`, `commit_ms`, `attempts`, `duplicate`; `maintenance` when inline maintenance did work, or `maintenance_error` if it failed after the append committed (the data is in the table: run `maintain()` later rather than retrying the append). A skipped duplicate batch reports 0 rows, files, and bytes. `maintain` overrides the table’s auto-maintain setting. |
 | `upgrade(dry_run=False, compact=True, keep_snapshots="7d")` | dict: `steps` (empty if the table was current), `version_before`, `snapshot_before`, `keep_snapshots_until_ms`. Brings the table to the current format; see [Upgrading](/docs/upgrading). |
+| `set_properties(properties)` | Changes table [settings](/docs/settings), such as `{"read_dedup": "false"}`; a value of `None` returns one to its default. One commit of new metadata, no new snapshot. `ValueError` for an unknown setting, a bad value, or one fixed at creation. |
 | `rollback(snapshot_id)` | Makes an earlier snapshot current again (`KeyError` if the table has none with that id). |
 | `maintain(compact=True, retention=True, expire=True)` | dict: `partitions_compacted`, `files_rewritten`, `files_written`, `rows_rewritten`, `duplicates_removed`, `partitions_dropped`, `snapshots_expired`, `objects_deleted`, `seconds`. |
 | `info()` | dict: `name`, `version`, `location`, contract (`time_column`, `series_key`, `chunk`, `dedup`), size (`rows`, `files`, `bytes`), `snapshots`, `manifests`, `last_value_index`. |

@@ -593,12 +593,14 @@ mod tests {
             let v = timelake_format::FORMAT_VERSION;
             timelake_format::FormatVersion::new(v.major, v.minor + minor, v.patch + patch).to_string()
         };
-        let mut o = opts();
-        o.properties.insert(crate::property::FORMAT_VERSION.into(), newer(1, 0));
-        let t = lake.create_table("iot.patch", &schema(), o).await.unwrap();
+        let set_format = |t, v| async move {
+            crate::alter::write_properties(&t, &[(crate::property::FORMAT_VERSION.into(), v)], &[]).await
+        };
+        let t = lake.create_table("iot.patch", &schema(), opts()).await.unwrap();
+        let t = set_format(t, newer(1, 0)).await.unwrap();
         t.append(&[batch(&[(T0, 1, 1.0)])], no_maintenance()).await.unwrap();
 
-        let t = crate::upgrade::set_properties(&t, &[(crate::property::FORMAT_VERSION, newer(0, 1))]).await;
+        let t = set_format(t, newer(0, 1)).await;
         let err = t.map(|_| ()).unwrap_err();
         assert!(matches!(err, Error::Invalid(ref m) if m.contains("upgrade Timelake")), "{err}");
         let err = lake.table("iot.patch").await.map(|_| ()).unwrap_err();

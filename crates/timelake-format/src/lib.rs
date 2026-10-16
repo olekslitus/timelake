@@ -26,6 +26,7 @@ pub mod bounds;
 pub mod contract;
 #[cfg(feature = "head")]
 pub mod head;
+pub mod settings;
 pub mod version;
 
 pub use contract::{Chunk, Contract, TableOptions, format_duration, parse_duration};

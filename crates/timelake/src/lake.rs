@@ -36,6 +36,7 @@ use crate::head::{self, Codecs, HeadCodec};
 use crate::name::TableName;
 use crate::property;
 use crate::schema::{UTC, normalize_schema};
+use crate::settings::{self, Level};
 use crate::storage::{Storage, warehouse_url};
 use crate::table::{FreshnessCheck, LiveEntry, Table};
 use timelake_format::INGEST_TIME_COLUMN;
@@ -199,10 +200,7 @@ impl Lake {
             return Err(Error::AlreadyExists(name.to_string()));
         }
         let metadata = new_table_metadata(&name, &location, schema, &opts)?;
-        let head_format = Contract::from_properties(metadata.properties())?.head_format;
-        if head_format != timelake_format::head::NO_HEAD && self.head_codecs().get(&head_format).is_none() {
-            return Err(Error::invalid(format!("unknown head format {head_format:?} (built in: arrow, json, none)")));
-        }
+        self.check_head_format(&Contract::from_properties(metadata.properties())?.head_format)?;
         if !storage.write_if_absent(&metadata_uri(&location, 1), Bytes::from(serde_json::to_vec(&metadata)?)).await? {
             return Err(Error::AlreadyExists(name.to_string()));
         }
@@ -215,6 +213,14 @@ impl Lake {
             let _ = self.write_tables_index().await;
         }
         Ok(table)
+    }
+
+    /// Errors unless `format` is `none` or a head codec this lake has.
+    pub(crate) fn check_head_format(&self, format: &str) -> Result<()> {
+        if format == timelake_format::head::NO_HEAD || self.head_codecs().get(format).is_some() {
+            return Ok(());
+        }
+        Err(Error::invalid(format!("unknown head format {format:?} (built in: arrow, json, none)")))
     }
 
     /// Loads the current version of a table.
@@ -475,7 +481,7 @@ fn new_table_metadata(
     if let Some(retention) = opts.retention {
         props.insert(property::RETENTION.into(), format_duration(retention));
     }
-    props.extend(opts.properties.clone());
+    props.extend(settings::check_properties(&opts.properties, Level::Table)?);
     Contract::from_properties(&props)?; // validate
     creation.properties = props;
     Ok(TableMetadataBuilder::from_table_creation(creation)?.build()?.metadata)

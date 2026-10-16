@@ -3,6 +3,7 @@
 mod bench;
 mod info;
 mod load;
+mod settings;
 
 use std::io::{Read, Write};
 use std::time::Instant;
@@ -86,6 +87,23 @@ enum Cmd {
         #[arg(long, default_value = "7d", value_parser = parse_keep)]
         keep_snapshots: std::time::Duration,
     },
+    /// Change a table's settings: --set read-dedup=false, --unset retention (back to the default).
+    Alter {
+        table: String,
+        /// Setting or Iceberg property to set, name=value.
+        #[arg(long = "set", value_parser = parse_kv)]
+        set: Vec<(String, String)>,
+        /// Setting or Iceberg property to remove.
+        #[arg(long)]
+        unset: Vec<String>,
+    },
+    /// List the settings with their defaults and where they can be set, or a table's values.
+    Settings {
+        table: Option<String>,
+        /// Machine-readable output.
+        #[arg(long)]
+        json: bool,
+    },
     /// Make an earlier snapshot current again (snapshot ids are in `info`).
     Rollback { table: String, snapshot: i64 },
     /// Table details: contract, snapshots, files, partitions.
@@ -118,7 +136,8 @@ struct SqlArgs {
     /// Default namespace for unqualified table names.
     #[arg(long, default_value = "default")]
     namespace: String,
-    /// DataFusion setting, e.g. --set datafusion.execution.target_partitions=32.
+    /// Session setting, e.g. --set timelake.read_dedup=false or
+    /// --set datafusion.execution.target_partitions=32.
     #[arg(long = "set", value_parser = parse_kv)]
     settings: Vec<(String, String)>,
     /// Benchmark mode: run 1 + N times, print {"times": [...], "rows": n} as JSON.
@@ -175,6 +194,25 @@ async fn run(cli: Cli) -> Result<()> {
         Cmd::Upgrade { tables, dry_run, no_compact, keep_snapshots } => {
             let opts = UpgradeOptions { dry_run, compact: !no_compact, keep_snapshots };
             upgrade(&lake, tables, &opts).await
+        }
+        Cmd::Alter { table, set, unset } => {
+            let changes: Vec<(&str, Option<&str>)> = set
+                .iter()
+                .map(|(k, v)| (k.as_str(), Some(v.as_str())))
+                .chain(unset.iter().map(|k| (k.as_str(), None)))
+                .collect();
+            anyhow::ensure!(!changes.is_empty(), "nothing to change: pass --set name=value or --unset name");
+            let t = lake.table(&table).await?.set_properties(&changes).await?;
+            println!("{table}: settings changed → v{}", t.version());
+            Ok(())
+        }
+        Cmd::Settings { table, json } => {
+            let table = match table {
+                Some(name) => Some(lake.table(&name).await?),
+                None => None,
+            };
+            settings::print(table.as_ref(), json);
+            Ok(())
         }
         Cmd::Rollback { table, snapshot } => {
             let t = lake.table(&table).await?.rollback(snapshot).await?;
@@ -236,7 +274,7 @@ async fn sql(lake: Lake, args: SqlArgs, started: Instant) -> Result<()> {
     };
     let mut config = Session::config().with_default_catalog_and_schema("timelake", &args.namespace);
     for (k, v) in &args.settings {
-        config = config.set_str(k, v);
+        config.options_mut().set(k, v)?;
     }
     let session = Session::with_config(lake, config);
     if let Some(runs) = args.bench_runs {

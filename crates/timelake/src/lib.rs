@@ -23,6 +23,7 @@
 
 #![warn(missing_docs)]
 
+mod alter;
 mod append;
 mod background;
 mod cache;
@@ -56,7 +57,7 @@ pub use query::{Session, SessionSettings};
 pub use schema::align_batch;
 pub use table::{LiveEntry, Table};
 pub use timelake_format::contract::{Chunk, Contract, TableOptions};
-pub use timelake_format::{bounds, contract, format_duration, parse_duration, property, summary};
+pub use timelake_format::{bounds, contract, format_duration, parse_duration, property, settings, summary};
 pub use upgrade::{UpgradeOptions, UpgradeReport, UpgradeStep};
 pub use write::file_partition;
 pub use {arrow, datafusion};

@@ -14,6 +14,7 @@ use iceberg::spec::{MAIN_BRANCH, SnapshotReference, SnapshotRetention, TableMeta
 use timelake_format::head::NO_HEAD;
 use timelake_format::{FORMAT_VERSION, FormatVersion};
 
+use crate::alter::write_properties;
 use crate::commit::{Change, commit, publish};
 use crate::error::{Error, Result};
 use crate::lake::metadata_uri;
@@ -116,12 +117,13 @@ impl Table {
         report.keep_snapshots_until_ms = Some(until);
 
         // Protect the snapshots before anything else commits, and record the format.
-        let mut table = set_properties(
+        let mut table = write_properties(
             &table,
             &[
-                (property::FORMAT_VERSION, FORMAT_VERSION.to_string()),
-                (property::KEEP_SNAPSHOTS_UNTIL, until.to_string()),
+                (property::FORMAT_VERSION.into(), FORMAT_VERSION.to_string()),
+                (property::KEEP_SNAPSHOTS_UNTIL.into(), until.to_string()),
             ],
+            &[],
         )
         .await?;
         for step in &report.steps {
@@ -189,23 +191,6 @@ async fn plan(table: &Table, opts: &UpgradeOptions) -> Result<Vec<UpgradeStep>> 
     Ok(steps)
 }
 
-/// Commits new table properties (no new snapshot).
-pub(crate) async fn set_properties(table: &Table, properties: &[(&str, String)]) -> Result<Table> {
-    let mut base = table.clone();
-    loop {
-        let previous = Some(metadata_uri(base.location(), base.version()));
-        let props = properties.iter().map(|(k, v)| ((*k).to_string(), v.clone())).collect();
-        let metadata = TableMetadataBuilder::new_from_metadata(base.metadata().clone(), previous)
-            .set_properties(props)?
-            .build()?
-            .metadata;
-        match publish(&base, metadata, base.known_files().cloned()).await? {
-            Some(table) => return Ok(table),
-            None => base = base.refresh().await?,
-        }
-    }
-}
-
 /// Builds the newest row per series from the data and commits it as the last-value index.
 async fn build_index(table: &Table) -> Result<Table> {
     let session = Session::new(table.lake().clone());
@@ -233,16 +218,15 @@ mod tests {
     async fn old_table() -> (crate::Lake, Table) {
         let (lake, _store) = faulty_lake();
         let mut o = opts();
-        o.properties = HashMap::from([
-            (property::FORMAT_VERSION.into(), FormatVersion::UNVERSIONED.to_string()),
-            (property::HEAD_FORMAT.into(), NO_HEAD.into()),
-        ]);
+        o.properties = HashMap::from([(property::HEAD_FORMAT.into(), NO_HEAD.into())]);
         let t = lake.create_table("iot.r", &crate::testing::schema(), o).await.unwrap();
+        let unversioned = [(property::FORMAT_VERSION.into(), FormatVersion::UNVERSIONED.to_string())];
+        let t = write_properties(&t, &unversioned, &[]).await.unwrap();
         let t = append_without_index(&t, &[batch(&[(T0, 1, 1.0), (T0 + 1, 2, 2.0)])]).await;
         let t = append_without_index(&t, &[batch(&[(T0 + 2, 1, 3.0)])]).await;
         // Writers from now on write heads, as a current Timelake does by default.
-        let props = [(property::HEAD_FORMAT, "arrow".to_string())];
-        let t = set_properties(&t, &props).await.unwrap();
+        let props = [(property::HEAD_FORMAT.into(), "arrow".to_string())];
+        let t = write_properties(&t, &props, &[]).await.unwrap();
         crate::flush().await;
         lake.storage().delete(&head::uri(t.location())).await.unwrap();
         (lake, t)

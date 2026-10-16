@@ -34,6 +34,7 @@ use datafusion::physical_plan::union::UnionExec;
 use super::dedup::{DedupExec, Keep, RANK, overlapping_groups, series_values};
 use super::settings::SessionSettings;
 use super::stats::{FileStats, file_statistics};
+use crate::property;
 use crate::sort::ASCENDING;
 use crate::summary;
 use crate::table::{LiveEntry, Table};
@@ -156,7 +157,8 @@ async fn select_files(
     let files = table.files().await?;
     let contract = table.contract();
     let keys = contract.sort_columns();
-    let session = state.config().options().extensions.get::<SessionSettings>().and_then(|s| s.read_dedup);
+    let session =
+        state.config().options().extensions.get::<SessionSettings>().and_then(|s| s.flag(property::READ_DEDUP));
     let read_dedup = contract.dedup && session.unwrap_or(contract.read_dedup);
     if !read_dedup || keys.is_empty() {
         let keep = prune(table, state, &files, filters)?;
@@ -440,9 +442,9 @@ enum Strategy {
 
 /// The session's `timelake.read_dedup_strategy`, else the table's `timelake.read-dedup-strategy`.
 fn strategy(table: &Table, state: &dyn DfSession) -> DfResult<Strategy> {
-    let session =
-        state.config().options().extensions.get::<SessionSettings>().and_then(|s| s.read_dedup_strategy.clone());
-    match session.as_deref().unwrap_or(&table.contract().read_dedup_strategy).to_ascii_lowercase().as_str() {
+    let settings = state.config().options().extensions.get::<SessionSettings>();
+    let session = settings.and_then(|s| s.get(property::READ_DEDUP_STRATEGY));
+    match session.unwrap_or(&table.contract().read_dedup_strategy).to_ascii_lowercase().as_str() {
         "merge" => Ok(Strategy::Merge),
         "keys-first" | "keys_first" => Ok(Strategy::KeysFirst),
         other => Err(DataFusionError::Plan(format!("unknown read dedup strategy {other:?}: merge or keys-first"))),

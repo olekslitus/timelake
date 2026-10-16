@@ -64,7 +64,7 @@ To read the copies as they are (faster on tables that compaction hasn't caught u
 SET timelake.read_dedup = false;
 ```
 
-On the command line: `timelake sql --set timelake.read_dedup=false "…"`.
+On the command line: `timelake sql --set timelake.read_dedup=false "…"`; in Python: `Lake(..., settings={"read_dedup": "false"})`. All settings are on the [Settings](/docs/settings) page.
 
 ### Object storage
 
