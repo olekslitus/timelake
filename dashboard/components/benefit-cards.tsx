@@ -38,26 +38,12 @@ export async function BenefitCards() {
   // Two rows of three: a wide card first in the top row, in the middle of the bottom one.
   const cards: Card[] = [
     {
-      icon: ServerOff,
-      art: "serverless",
-      title: "Serverless",
-      body: "No database or maintenance jobs to run. Timelake is a library that runs in your process.",
-      link: { label: "How it works", href: "/docs/how-it-works" },
-      wide: true,
-    },
-    {
-      icon: Activity,
-      art: "layout",
-      title: "Time-series analytics",
-      body: "Data is laid out by time and series, so queries read only what they need.",
-      link: { label: "Performance", href: "/docs/performance" },
-    },
-    {
       icon: Gauge,
       art: "fast",
       title: "Fast",
       body: await speed(),
       link: { label: "Benchmarks", href: "/benchmarks" },
+      wide: true,
     },
     {
       icon: PiggyBank,
@@ -69,9 +55,23 @@ export async function BenefitCards() {
     {
       icon: Layers,
       art: "formats",
-      title: "Open formats",
-      body: "Your tables are standard Iceberg and Parquet, so DuckDB and Spark can query them too.",
+      title: "Open",
+      body: "Tables are standard Iceberg and Parquet in your own bucket, so you’re not locked in: DuckDB and Spark read them too.",
       link: { label: "Querying", href: "/docs/querying" },
+    },
+    {
+      icon: Activity,
+      art: "layout",
+      title: "Analytics",
+      body: "Data is laid out by time and series, so queries read only what they need.",
+      link: { label: "Performance", href: "/docs/performance" },
+    },
+    {
+      icon: ServerOff,
+      art: "serverless",
+      title: "Serverless",
+      body: "No database or maintenance jobs to run. Timelake is a library that runs in your process.",
+      link: { label: "How it works", href: "/docs/how-it-works" },
       wide: true,
     },
     {
