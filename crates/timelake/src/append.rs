@@ -12,6 +12,7 @@ use crate::commit::{Change, CommitInfo, commit};
 use crate::error::Result;
 use crate::lvi::latest_per_series;
 use crate::maintain::{MaintainOptions, MaintainReport};
+use crate::rollup::RollupRefresh;
 use crate::storage::Uploads;
 use crate::summary;
 use crate::table::Table;
@@ -154,6 +155,7 @@ impl Table {
             partitions: Some(touched),
             tiered: true,
             cold_after: c.compact_cold_after,
+            rollups: RollupRefresh::Due,
         }
     }
 }

@@ -25,7 +25,7 @@ Opens a warehouse. `location` is a local path or an `s3://`, `gs://`, `az://`, o
 | `create_table(name, schema, time_column=None, series_key=None, chunk=None, retention=None, dedup=None, ingest_time=None, properties=None)` | `Table`. `schema` is a pyarrow schema or anything with a `.schema`. `chunk` is "hour", "day", or "month"; `retention` a duration such as "90d"; `ingest_time=False` leaves out the `_ingest_ts` column; `properties` table [settings](/docs/settings) and Iceberg properties. |
 | `table(name)` | `Table` at its latest version. |
 | `tables()` | `list[str]` of `namespace.table`. |
-| `sql(query, namespace="default")` | `pyarrow.Table`. Unqualified names resolve in `namespace`. |
+| `sql(query, namespace="default")` | `pyarrow.Table`. Unqualified names resolve in `namespace`. Also runs `CREATE`, `DROP`, and `REFRESH MATERIALIZED ROLLUP` ([Rollups](/docs/rollups)), which return one row with the rollup and the rows it took. |
 | `latest(table)` | `pyarrow.Table` with the newest row per series, from the last-value index (or a scan when the table has none). `table` is a full name such as `"iot.readings"`. |
 | `drop_table(name)` | Deletes the table and its files. Does nothing if the table doesn't exist. |
 
@@ -39,7 +39,7 @@ Properties: `name`, `location`, `version`, `schema` (pyarrow). Methods that comm
 | `upgrade(dry_run=False, compact=True, keep_snapshots="7d")` | dict: `steps` (empty if the table was current), `version_before`, `snapshot_before`, `keep_snapshots_until_ms`. Brings the table to the current format; see [Upgrading](/docs/upgrading). |
 | `set_properties(properties)` | Changes table [settings](/docs/settings), such as `{"read_dedup": "false"}`; a value of `None` returns one to its default. One commit of new metadata, no new snapshot. `ValueError` for an unknown setting, a bad value, or one fixed at creation. |
 | `rollback(snapshot_id)` | Makes an earlier snapshot current again (`KeyError` if the table has none with that id). |
-| `maintain(compact=True, retention=True, expire=True)` | dict: `partitions_compacted`, `files_rewritten`, `files_written`, `rows_rewritten`, `duplicates_removed`, `partitions_dropped`, `snapshots_expired`, `objects_deleted`, `seconds`. |
+| `maintain(compact=True, retention=True, expire=True, rollups=True)` | dict: `partitions_compacted`, `files_rewritten`, `files_written`, `rows_rewritten`, `duplicates_removed`, `partitions_dropped`, `snapshots_expired`, `objects_deleted`, `rollups_refreshed`, `rollup_rows`, `seconds`. `rollups=False` skips refreshing the table's [rollups](/docs/rollups). |
 | `info()` | dict: `name`, `version`, `location`, contract (`time_column`, `series_key`, `chunk`, `dedup`), size (`rows`, `files`, `bytes`), `snapshots`, `manifests`, `last_value_index`. |
 | `refresh()` | Reloads the latest committed version. |
 
@@ -130,7 +130,7 @@ r["duplicate"]                                 # True: nothing was written the s
 ### Maintenance
 
 ```python
-report = t.maintain()                          # compact, apply retention, expire snapshots
+report = t.maintain()                          # compact, apply retention, refresh rollups, expire snapshots
 print(report["duplicates_removed"], report["files_rewritten"])
 t.maintain(expire=False)                       # keep old snapshots this time
 ```

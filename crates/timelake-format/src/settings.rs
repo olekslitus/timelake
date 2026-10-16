@@ -353,6 +353,63 @@ pub static SETTINGS: &[Setting] = &[
         check: count,
     },
     Setting {
+        name: "rollup-routing",
+        kind: "boolean",
+        default: DefaultValue::Value("true"),
+        levels: &[Level::Table, Level::Session],
+        since: "0.5.0",
+        description: "The Timelake reader answers a `GROUP BY time_bucket(…)` query on this table from a rollup \
+                      that matches it. Buckets changed since the rollup's last refresh, and partial buckets at the \
+                      edges of the time range, still come from this table, so the answer is the same either way.",
+        check: boolean,
+    },
+    Setting {
+        name: "rollup-refresh-interval",
+        kind: "duration or off",
+        default: DefaultValue::Value("1m"),
+        levels: &[Level::Table],
+        since: "0.5.0",
+        description: "On a rollup: inline maintenance after an append to its raw table refreshes it once its last \
+                      refresh is this old. `off` leaves it to `timelake maintain` and `REFRESH MATERIALIZED ROLLUP`.",
+        check: duration_or_off,
+    },
+    Setting {
+        name: "rollups",
+        kind: "table names",
+        default: DefaultValue::Unset("none"),
+        levels: &[],
+        since: "0.5.0",
+        description: "On a raw table: its rollups, comma-separated. `CREATE` and `DROP MATERIALIZED ROLLUP` keep it.",
+        check: columns,
+    },
+    Setting {
+        name: "rollup-source",
+        kind: "table name",
+        default: DefaultValue::Unset("none"),
+        levels: &[],
+        since: "0.5.0",
+        description: "On a rollup: the raw table it summarises.",
+        check: name,
+    },
+    Setting {
+        name: "rollup-bucket",
+        kind: "duration",
+        default: DefaultValue::Unset("none"),
+        levels: &[],
+        since: "0.5.0",
+        description: "On a rollup: the width of its time buckets.",
+        check: duration,
+    },
+    Setting {
+        name: "rollup-aggregates",
+        kind: "JSON",
+        default: DefaultValue::Unset("none"),
+        levels: &[],
+        since: "0.5.0",
+        description: "On a rollup: its aggregates, each an output column, a function, and the column it reads.",
+        check: name,
+    },
+    Setting {
         name: "format-version",
         kind: "semantic version",
         default: DefaultValue::Derived("the current format for new tables; 0.1.0 if absent"),
@@ -453,10 +510,16 @@ mod tests {
             property::HEAD_INLINE_BYTES,
             property::KEEP_SNAPSHOTS_UNTIL,
             property::FORMAT_VERSION,
+            property::ROLLUPS,
+            property::ROLLUP_ROUTING,
+            property::ROLLUP_SOURCE,
+            property::ROLLUP_BUCKET,
+            property::ROLLUP_AGGREGATES,
+            property::ROLLUP_REFRESH_INTERVAL,
         ] {
             assert_eq!(find(key).map(Setting::property).as_deref(), Some(key));
         }
-        assert_eq!(SETTINGS.len(), 20, "a new setting needs a property constant and an entry above");
+        assert_eq!(SETTINGS.len(), 26, "a new setting needs a property constant and an entry above");
     }
 
     /// A stated default is what the contract uses when the property is unset.

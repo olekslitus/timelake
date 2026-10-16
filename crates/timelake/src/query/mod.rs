@@ -8,6 +8,8 @@
 //!   LIMIT 1` filtered on the series key) are answered from the last-value index instead of a scan.
 //! - **Dedup on read:** in tables with dedup on, files that may share a `(series…, time)` are
 //!   merged and only the newest write of each key is returned, before compaction removes the rest.
+//! - **Rollup routing:** `GROUP BY time_bucket(…)` queries read the buckets a rollup has right from
+//!   the rollup, and the rest from the raw table (SPEC §11.1).
 //! - `time_bucket(interval, ts [, origin])`, an alias of `date_bin`.
 //! - Namespaces as SQL schemas: `SELECT … FROM iot.readings`.
 
@@ -15,12 +17,17 @@ mod catalog;
 mod dedup;
 mod provider;
 mod rewrite;
+mod rollup;
+mod route;
 mod session;
 mod settings;
+mod statement;
 mod stats;
 
+pub(crate) use rollup::{refresh_session, rollup_frame};
 pub use session::Session;
 pub use settings::SessionSettings;
+pub use statement::{RollupStatement, Statement};
 
 /// Name of the lake's catalog in SQL.
 const CATALOG: &str = "timelake";

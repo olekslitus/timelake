@@ -229,6 +229,78 @@
   },
   {
     "default": {
+      "value": "true"
+    },
+    "description": "The Timelake reader answers a `GROUP BY time_bucket(…)` query on this table from a rollup that matches it. Buckets changed since the rollup's last refresh, and partial buckets at the edges of the time range, still come from this table, so the answer is the same either way.",
+    "kind": "boolean",
+    "levels": ["table", "session"],
+    "name": "rollup-routing",
+    "property": "timelake.rollup-routing",
+    "since": "0.5.0",
+    "sql": "timelake.rollup_routing"
+  },
+  {
+    "default": {
+      "value": "1m"
+    },
+    "description": "On a rollup: inline maintenance after an append to its raw table refreshes it once its last refresh is this old. `off` leaves it to `timelake maintain` and `REFRESH MATERIALIZED ROLLUP`.",
+    "kind": "duration or off",
+    "levels": ["table"],
+    "name": "rollup-refresh-interval",
+    "property": "timelake.rollup-refresh-interval",
+    "since": "0.5.0",
+    "sql": "timelake.rollup_refresh_interval"
+  },
+  {
+    "default": {
+      "unset": "none"
+    },
+    "description": "On a raw table: its rollups, comma-separated. `CREATE` and `DROP MATERIALIZED ROLLUP` keep it.",
+    "kind": "table names",
+    "levels": [],
+    "name": "rollups",
+    "property": "timelake.rollups",
+    "since": "0.5.0",
+    "sql": "timelake.rollups"
+  },
+  {
+    "default": {
+      "unset": "none"
+    },
+    "description": "On a rollup: the raw table it summarises.",
+    "kind": "table name",
+    "levels": [],
+    "name": "rollup-source",
+    "property": "timelake.rollup-source",
+    "since": "0.5.0",
+    "sql": "timelake.rollup_source"
+  },
+  {
+    "default": {
+      "unset": "none"
+    },
+    "description": "On a rollup: the width of its time buckets.",
+    "kind": "duration",
+    "levels": [],
+    "name": "rollup-bucket",
+    "property": "timelake.rollup-bucket",
+    "since": "0.5.0",
+    "sql": "timelake.rollup_bucket"
+  },
+  {
+    "default": {
+      "unset": "none"
+    },
+    "description": "On a rollup: its aggregates, each an output column, a function, and the column it reads.",
+    "kind": "JSON",
+    "levels": [],
+    "name": "rollup-aggregates",
+    "property": "timelake.rollup-aggregates",
+    "since": "0.5.0",
+    "sql": "timelake.rollup_aggregates"
+  },
+  {
+    "default": {
       "derived": "the current format for new tables; 0.1.0 if absent"
     },
     "description": "The table format. Timelake refuses tables of a newer format it can't handle; `timelake upgrade` brings a table to the current format.",

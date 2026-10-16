@@ -16,7 +16,7 @@ use timelake::arrow::array::{RecordBatch, RecordBatchIterator, RecordBatchReader
 use timelake::arrow::datatypes::Schema;
 use timelake::arrow::error::ArrowError;
 use timelake::datafusion::prelude::{DataFrame, SessionConfig};
-use timelake::{AppendOptions, Chunk, Error, MaintainOptions, Session, TableOptions, UpgradeOptions};
+use timelake::{AppendOptions, Chunk, Error, MaintainOptions, RollupRefresh, Session, TableOptions, UpgradeOptions};
 
 create_exception!(
     timelake,
@@ -301,11 +301,21 @@ impl Table {
         Ok(dict)
     }
 
-    /// Compaction (sort + dedup), retention and snapshot expiry. Returns what was done.
-    #[pyo3(signature = (compact=true, retention=true, expire=true))]
-    fn maintain(&self, py: Python<'_>, compact: bool, retention: bool, expire: bool) -> PyResult<MaintainSummary> {
+    /// Compaction (sort + dedup), retention, rollup refresh and snapshot expiry. Returns what was
+    /// done.
+    #[pyo3(signature = (compact=true, retention=true, expire=true, rollups=true))]
+    #[expect(clippy::fn_params_excessive_bools, reason = "Python keyword arguments, each a step to skip")]
+    fn maintain(
+        &self,
+        py: Python<'_>,
+        compact: bool,
+        retention: bool,
+        expire: bool,
+        rollups: bool,
+    ) -> PyResult<MaintainSummary> {
         let table = self.get();
-        let options = MaintainOptions { compact, retention, expire, ..MaintainOptions::default() };
+        let rollups = if rollups { RollupRefresh::Always } else { RollupRefresh::Never };
+        let options = MaintainOptions { compact, retention, expire, rollups, ..MaintainOptions::default() };
         let (table, report) = run(py, async move { table.maintain(options).await })?;
         self.set(table);
         Ok(MaintainSummary::from(&report))
@@ -410,6 +420,8 @@ struct MaintainSummary {
     partitions_dropped: usize,
     snapshots_expired: usize,
     objects_deleted: usize,
+    rollups_refreshed: usize,
+    rollup_rows: u64,
     seconds: f64,
 }
 
@@ -424,6 +436,8 @@ impl From<&timelake::MaintainReport> for MaintainSummary {
             partitions_dropped: report.partitions_dropped,
             snapshots_expired: report.snapshots_expired,
             objects_deleted: report.objects_deleted,
+            rollups_refreshed: report.rollups_refreshed,
+            rollup_rows: report.rollup_rows,
             seconds: report.duration.as_secs_f64(),
         }
     }

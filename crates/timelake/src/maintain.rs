@@ -16,6 +16,7 @@ use parquet::file::properties::WriterProperties;
 use crate::commit::{Change, commit, publish};
 use crate::error::{Error, Result};
 use crate::lake::metadata_uri;
+use crate::rollup::{RollupRefresh, refresh_all};
 use crate::schema::align_batch;
 use crate::sort::{last_per_group, stable_sort};
 use crate::storage::Uploads;
@@ -62,6 +63,8 @@ pub struct MaintainOptions {
     /// are rewritten whole once they have two small files, touched by the append or not: data
     /// stops arriving there, and one sorted, duplicate-free file reads fastest.
     pub cold_after: Option<Duration>,
+    /// Which of the table's rollups to bring up to date, after compaction (SPEC §11.1).
+    pub rollups: RollupRefresh,
 }
 
 impl Default for MaintainOptions {
@@ -74,6 +77,7 @@ impl Default for MaintainOptions {
             partitions: None,
             tiered: false,
             cold_after: None,
+            rollups: RollupRefresh::Always,
         }
     }
 }
@@ -99,6 +103,10 @@ pub struct MaintainReport {
     pub snapshots_expired: usize,
     /// Objects deleted after expiry (data files, manifests, metadata files).
     pub objects_deleted: usize,
+    /// Rollups that took new rows.
+    pub rollups_refreshed: usize,
+    /// Rows appended to them.
+    pub rollup_rows: u64,
     /// Time taken.
     pub duration: Duration,
 }
@@ -106,13 +114,17 @@ pub struct MaintainReport {
 impl MaintainReport {
     /// Whether nothing changed.
     pub fn is_noop(&self) -> bool {
-        self.files_rewritten == 0 && self.files_dropped == 0 && self.snapshots_expired == 0 && self.objects_deleted == 0
+        self.files_rewritten == 0
+            && self.files_dropped == 0
+            && self.snapshots_expired == 0
+            && self.objects_deleted == 0
+            && self.rollups_refreshed == 0
     }
 }
 
 impl Table {
-    /// Runs maintenance: retention, then compaction, then snapshot expiry and file cleanup.
-    /// Returns the new table version.
+    /// Runs maintenance: retention, then compaction, then refreshing rollups, then snapshot expiry
+    /// and file cleanup. Returns the new table version.
     pub async fn maintain(&self, opts: MaintainOptions) -> Result<(Table, MaintainReport)> {
         let started = Instant::now();
         let mut report = MaintainReport::default();
@@ -123,6 +135,8 @@ impl Table {
         if opts.compact {
             table = compact(&table, &opts, &mut report).await?;
         }
+        let refreshed = refresh_all(&table, opts.rollups).await?;
+        (report.rollups_refreshed, report.rollup_rows) = (refreshed.rollups, refreshed.rows);
         if opts.expire {
             table = expire(&table, &mut report).await?;
         }

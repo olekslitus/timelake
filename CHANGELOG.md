@@ -32,6 +32,17 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
   (`Table.set_properties` in Python and Rust). `Lake(..., settings={...})` in Python sets session settings for every
   query, and `SHOW timelake.read_dedup` shows a session's value. Names work with dashes or underscores, with or
   without `timelake.`. The docs page "Table properties" is now "Settings".
+- **Rollups.** `CREATE MATERIALIZED ROLLUP iot.readings_1h AS SELECT device, time_bucket(INTERVAL '1 hour', time) AS
+  bucket, avg(value), max(value), count(*) FROM iot.readings GROUP BY device, bucket` creates a table of aggregates
+  per time bucket and computes it. Maintenance keeps it up to date: inline after appends once its last refresh is
+  older than `timelake.rollup-refresh-interval` (default 1 minute), and on every `timelake maintain`;
+  `REFRESH MATERIALIZED ROLLUP` refreshes it now and `DROP MATERIALIZED ROLLUP` removes it. A `GROUP BY time_bucket(…)`
+  query on the raw table with the same width and grouping reads the buckets the rollup has right from it, and the rest
+  (buckets changed since the refresh, partial buckets at the edges of the time range) from the raw table, so the
+  answer is the same as without it; `SET timelake.rollup_routing = false` turns that off. First version: one level from
+  the raw table, grouped by series-key columns, with `count`, `sum`, `min`, `max`, `avg`, `first_value` and
+  `last_value`. `timelake maintain` and `Table.maintain()` report `rollups_refreshed` and `rollup_rows`
+  (`--no-rollups`, `rollups=False` to skip). The docs have a new page, "Rollups".
 
 ### Changed
 
@@ -40,7 +51,9 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
   property is an error; use the table options for those. `timelake.format-version` can no longer be set by hand.
   `SET` of a table-only setting in SQL is an error. `timelake sql --set` with a bad key reports an error instead of
   crashing.
-- Rust: `SessionSettings` has `get` and `flag` instead of public fields.
+- Rust: `SessionSettings` has `get` and `flag` instead of public fields. `Session::parse` returns
+  `timelake::Statement` (DataFusion's statement, or a rollup statement) for `Session::execute`.
+  `MaintainOptions` has a `rollups` field and `MaintainReport` has `rollups_refreshed` and `rollup_rows`.
 
 - **Table format 0.3.0** for new tables (the insertion-time column). Timelake 0.4 and older can't open them: upgrade
   every reader and writer first. `timelake upgrade` raises older tables to 0.3.0 but doesn't add `_ingest_ts` (a

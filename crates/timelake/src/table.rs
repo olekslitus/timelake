@@ -89,6 +89,12 @@ impl Table {
         self
     }
 
+    /// This version without its pending check for a newer one, so a scan reads exactly it.
+    pub(crate) fn without_check(mut self) -> Self {
+        self.check = None;
+        self
+    }
+
     /// Whether a newer version existed when this one was loaded from the head without checking.
     pub(crate) async fn is_stale(&self) -> Result<bool, Arc<Error>> {
         match &self.check {

@@ -607,6 +607,72 @@ keeps up to date as data lands, so dashboards read a small table instead of the 
 - **Automatic query routing:** The Timelake reader rewrites `GROUP BY time_bucket(...)` queries to use the best matching rollup.
 - **Mergeable state:** Aggregates that can't be re-merged from final values (percentiles, time-weighted averages) store intermediate **state** (sketches, partial sums).
 
+#### 11.1.1 First version (built 2026-10-16)
+The first version builds one level, from the raw table, with aggregates that a bucket's rows give exactly. What it
+leaves out is listed at the end.
+
+**Definition.**
+```sql
+CREATE MATERIALIZED ROLLUP [IF NOT EXISTS] iot.readings_1m AS
+SELECT device, time_bucket(INTERVAL '1 minute', time) AS bucket,
+       avg(value) AS avg_value, min(value) AS min_value, max(value) AS max_value, count(*) AS n
+FROM iot.readings
+GROUP BY device, bucket
+[WITH (retention = '2y', chunk_interval = 'month', refresh_interval = '5m')];
+
+REFRESH MATERIALIZED ROLLUP iot.readings_1m;   -- bring it up to date now
+DROP MATERIALIZED ROLLUP [IF EXISTS] iot.readings_1m;
+```
+- The query reads one Timelake time-series table, with no `WHERE`, join, or subquery. It groups by one
+  `time_bucket` (or `date_bin`) of the table's time column, with a fixed width (no months) and the default origin, and
+  by any of the table's series-key columns, each of which must be selected.
+- Aggregates: `count(*)`, `count(x)`, `sum`, `min`, `max`, `avg`, and `first_value` / `last_value` ordered by the
+  time column. Unaliased outputs get names like `avg_value` and `bucket`.
+- Grouping only by series-key columns keeps a row in the same group when a newer write of it replaces it (§9.1), so
+  appending recomputed buckets is enough: nothing ever has to be taken out of a rollup.
+- `WITH` takes the rollup table's `retention`, `chunk_interval` (default: day for buckets under an hour, else month)
+  and `refresh_interval`, and any other table setting.
+
+**Storage.** A rollup is an ordinary Timelake table: time column `bucket`, series key the grouping columns, dedup on,
+no insertion-time column. Its properties hold the definition, which Timelake manages:
+`timelake.rollup-source` (the raw table), `timelake.rollup-bucket` (the width) and `timelake.rollup-aggregates`
+(JSON: output name, function, column). The raw table lists its rollups in `timelake.rollups`. Every snapshot of the
+rollup records in its summary the raw table snapshot it reflects: `timelake.rollup-source-snapshot` and
+`timelake.rollup-source-sequence` (that snapshot's sequence number), carried forward by the rollup's own compaction.
+No format change: older Timelake versions read a rollup as a plain table and don't refresh it.
+
+**Refresh.** The changed buckets are those covered by the time bounds of the raw table's live data files with a data
+sequence number above the recorded one. Compaction keeps the newest data sequence number of the files it merges
+(§10), so rewritten files whose rows the rollup already reflects don't count as changed; retention's deletes don't
+either, so a rollup keeps history the raw table has dropped. The changed buckets are recomputed from the raw table
+(read with dedup on), a window of at least a day at a time, and appended to the rollup, about a million rows per
+commit, the last commit recording the new raw snapshot. Dedup on read keeps the newest copy of each bucket, and the
+rollup's own compaction removes the rest. A refresh that fails halfway leaves the old record in place, so the next
+one recomputes the same buckets.
+- `timelake maintain` and `REFRESH MATERIALIZED ROLLUP` refresh every time. Inline maintenance after an append
+  refreshes a rollup once its last refresh is older than `timelake.rollup-refresh-interval` (default 1 minute, `off`
+  for never), so a busy table doesn't commit to its rollups on every append.
+- Two refreshes at once are safe: the later commit wins each bucket, and its record names the raw snapshot those rows
+  reflect, so any bucket changed after that snapshot counts as changed again.
+- If the recorded raw snapshot is no longer in the history of the raw table's current snapshot (a rollback past it),
+  the rollup may hold rows the raw table no longer has. Routing skips it, and the next refresh removes its files,
+  records that it reflects nothing, and computes it again.
+
+**Routing.** The Timelake reader answers `SELECT … GROUP BY time_bucket(w, time), keys…` on a raw table from a
+rollup when the grouping is the rollup's (same width, same key columns), every aggregate is one the rollup stores,
+and the filters are on the time column (comparisons with constants, `now()` included) or on the grouping columns.
+The answer is exact, not a stale rollup:
+- Buckets that are inside the query's time range, unchanged since the refresh, and within both tables' retention come
+  from the rollup.
+- Every other row (the changed buckets, the partial buckets at the edges of the time range) is aggregated from the raw
+  table as usual. The two parts share no bucket, so they are combined with `UNION ALL`.
+- `timelake.rollup-routing` (table and session; default on) turns it off. A session that reads without dedup
+  (`timelake.read_dedup = false`) is not routed, since rollups count each reading once.
+
+**Not in the first version:** rollups of rollups, aggregates that need stored state (percentiles, time-weighted
+averages), answering a coarser query (hourly from minutes) or fewer keys from a rollup, calendar buckets (months),
+filters in the definition, routing in plain DuckDB, and recomputing buckets after a delete (§9.2).
+
 ### 11.2 Function library
 Every function has a plain, descriptive name. Where pandas uses a different name, that name works too, as an alias:
 `forward_fill` and `ffill` are the same function (D22). Polars mostly uses the descriptive names, so they match it.
@@ -1051,7 +1117,7 @@ Open from v0:
 | Later | Computed metrics from user-defined Python functions (F4, §21.4) |
 
 ### 19.1 Performance plan (in progress)
-**Status:** P4 done (2026-10-13); P1–P3 done (2026-10-14, §19.2). P3 measured no clear gain and is off by default. Next: P5–P8. The history of each step and its effect is on the docs page "Performance history". The codebase and CI/CD cleanup it waited for is done (2026-10-13; the audit and plan are in git history at `2d66939`). Gains below are estimates until measured; measurements are in [`bench/results/PERFORMANCE.md`](bench/results/PERFORMANCE.md).
+**Status:** P4 done (2026-10-13); P1–P3 done (2026-10-14, §19.2). P3 measured no clear gain and is off by default. P7's first version done (2026-10-16, §11.1.1). Next: P5, P6, P8, and the rest of P7. The history of each step and its effect is on the docs page "Performance history". The codebase and CI/CD cleanup it waited for is done (2026-10-13; the audit and plan are in git history at `2d66939`). Gains below are estimates until measured; measurements are in [`bench/results/PERFORMANCE.md`](bench/results/PERFORMANCE.md).
 
 **Where time goes today** (Timelake reader, laptop → AWS S3 us-east-2, after maintenance, [`bench/results/S3.md`](bench/results/S3.md)):
 
@@ -1077,7 +1143,7 @@ Open from v0:
 | P4 | **Done.** **Two-step commit.** Upload data, manifest, index and manifest list in parallel (all are known locally), then make the one conditional write. Update the hint asynchronously. | Commit p50 483 ms → 243 ms measured (whole v0 ingest 1,307 s → 795 s) |
 | P5 | **Local disk cache across processes** for metadata, footers and recent data (§12.2 item 6). | Repeat queries at best-run speed |
 | P6 | **Optional staleness bound** (e.g. "at most 1 s old") to skip the per-query version check, and the head pointer on S3 Express where available. | Warm `last-loc` 68 ms → a few ms |
-| P7 | **Rollups (§11.1).** TSBS daily queries read hourly or daily rollups instead of raw data. | Likely 10–100× on bandwidth-bound dashboard queries |
+| P7 | **First version done (§11.1.1).** **Rollups (§11.1).** TSBS daily queries read hourly or daily rollups instead of raw data. | Likely 10–100× on bandwidth-bound dashboard queries; an hourly query over a week of 200 devices went 113 → 21 ms on a laptop (debug build) |
 | P8 | **Scan tuning:** late materialization (`pushdown_filters`, now off), Q4's hidden `_series_id`, fewer and larger parallel range reads. | Less data decoded and fetched on selective scans |
 
 **How we measure:** the same v0 suites through `tools/s3proxy` (request counts by kind) on local disk, S3 from a laptop, and S3 in-region. Each step lands only if it improves first-run latency or requests without slowing other queries, and plain DuckDB still reads every table.

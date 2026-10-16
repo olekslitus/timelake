@@ -78,6 +78,19 @@ pub mod property {
     pub const KEEP_SNAPSHOTS_UNTIL: &str = "timelake.keep-snapshots-until";
     /// The table format version (see [`crate::FORMAT_VERSION`]); absent means 0.1.0.
     pub const FORMAT_VERSION: &str = "timelake.format-version";
+    /// On a raw table: its rollups, comma-separated table names (SPEC §11.1).
+    pub const ROLLUPS: &str = "timelake.rollups";
+    /// `false` to stop the Timelake reader answering queries on this table from its rollups.
+    pub const ROLLUP_ROUTING: &str = "timelake.rollup-routing";
+    /// On a rollup: the raw table it summarises.
+    pub const ROLLUP_SOURCE: &str = "timelake.rollup-source";
+    /// On a rollup: the bucket width, e.g. `1m`.
+    pub const ROLLUP_BUCKET: &str = "timelake.rollup-bucket";
+    /// On a rollup: its aggregates, as JSON (`[{"name": "avg_value", "function": "avg", "column": "value"}]`).
+    pub const ROLLUP_AGGREGATES: &str = "timelake.rollup-aggregates";
+    /// On a rollup: inline maintenance of the raw table refreshes the rollup once its last refresh
+    /// is this old, or `off`.
+    pub const ROLLUP_REFRESH_INTERVAL: &str = "timelake.rollup-refresh-interval";
 }
 
 /// Snapshot summary keys: Timelake's own, and the standard Iceberg counters Timelake maintains.
@@ -86,6 +99,11 @@ pub mod summary {
     pub const LAST_VALUE_INDEX: &str = "timelake.last-value-index";
     /// The writer-supplied idempotency key of an append.
     pub const BATCH_ID: &str = "timelake.batch-id";
+    /// On a rollup: the id of the raw table snapshot the rollup reflects.
+    pub const ROLLUP_SOURCE_SNAPSHOT: &str = "timelake.rollup-source-snapshot";
+    /// On a rollup: the sequence number of that snapshot. Data files of the raw table with a higher
+    /// data sequence number hold rows the rollup doesn't reflect yet.
+    pub const ROLLUP_SOURCE_SEQUENCE: &str = "timelake.rollup-source-sequence";
 
     /// Data files added by the snapshot.
     pub const ADDED_DATA_FILES: &str = "added-data-files";

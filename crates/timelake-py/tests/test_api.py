@@ -182,6 +182,8 @@ def test_maintain_report_has_documented_keys(table: timelake.Table) -> None:
         "partitions_dropped",
         "snapshots_expired",
         "objects_deleted",
+        "rollups_refreshed",
+        "rollup_rows",
         "seconds",
     }
 
@@ -306,3 +308,31 @@ def test_rows_sent_twice_count_once_unless_a_session_turns_dedup_off(
     assert lake.sql("SELECT count(*) AS n, sum(value) AS s FROM iot.readings").to_pylist() == [{"n": 300, "s": latest}]
     lake.sql("SET timelake.read_dedup = false")
     assert lake.sql("SELECT count(*) AS n FROM iot.readings").to_pylist() == [{"n": 600}]
+
+
+def test_rollups_from_sql(lake: timelake.Lake, table: timelake.Table) -> None:
+    table.append(readings(minutes=120, devices=2))
+    created = lake.sql(
+        "CREATE MATERIALIZED ROLLUP iot.hourly AS "
+        "SELECT device, time_bucket(INTERVAL '1 hour', time) AS hour, avg(value) AS mean, count(*) AS n "
+        "FROM iot.readings GROUP BY device, hour"
+    )
+    assert created.to_pylist() == [{"rollup": "iot.hourly", "rows": 4}], "2 devices × 2 hours"
+    hourly = lake.sql("SELECT device, hour, mean, n FROM iot.hourly ORDER BY device, hour").to_pylist()
+    expected = [(0, 30.5, 60), (0, 90.5, 60), (1, 30.5, 60), (1, 90.5, 60)]
+    assert [(r["device"], r["mean"], r["n"]) for r in hourly] == expected
+
+    # The same query on the raw table is answered from the rollup, with the same rows.
+    query = (
+        "SELECT device, time_bucket(INTERVAL '1 hour', time) AS hour, avg(value) AS mean, count(*) AS n "
+        "FROM iot.readings GROUP BY device, hour ORDER BY device, hour"
+    )
+    plan = lake.sql(f"EXPLAIN {query}").column("plan").to_pylist()
+    assert any("hourly" in step for step in plan)
+    assert lake.sql(query).to_pylist() == hourly
+
+    table.append(readings(minutes=1, devices=1, value=100.0), maintain=False)
+    report = table.maintain(compact=False, expire=False)
+    assert (report["rollups_refreshed"], report["rollup_rows"]) == (1, 2)
+    assert lake.sql("DROP MATERIALIZED ROLLUP iot.hourly").num_rows == 1
+    assert lake.tables() == ["iot.readings"]

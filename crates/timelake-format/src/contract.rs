@@ -173,6 +173,13 @@ pub struct Contract {
     pub format_version: FormatVersion,
     /// No snapshot expires before this time (milliseconds since the epoch).
     pub keep_snapshots_until: Option<i64>,
+    /// The table's rollups (table names).
+    pub rollups: Vec<String>,
+    /// The Timelake reader may answer queries on this table from its rollups.
+    pub rollup_routing: bool,
+    /// For a rollup: inline maintenance of its raw table refreshes it once its last refresh is this
+    /// old (`None`: never).
+    pub rollup_refresh_interval: Option<Duration>,
 }
 
 impl Contract {
@@ -186,16 +193,14 @@ impl Contract {
     const DEFAULT_COMPACT_COLD_AFTER: Duration = Duration::from_secs(3600);
     const DEFAULT_HEAD_FORMAT: &str = "arrow";
     const DEFAULT_HEAD_INLINE_BYTES: u64 = 1 << 20;
+    const DEFAULT_ROLLUP_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 
     /// Reads the contract from Iceberg table properties, with defaults for what isn't set.
     pub fn from_properties(properties: &HashMap<String, String>) -> Result<Self> {
         let p = Properties(properties);
         Ok(Self {
             time_column: p.get(property::TIME_COLUMN).map(str::to_string),
-            series_key: p
-                .get(property::SERIES_KEY)
-                .map(|s| s.split(',').map(str::trim).filter(|c| !c.is_empty()).map(str::to_string).collect())
-                .unwrap_or_default(),
+            series_key: p.list(property::SERIES_KEY),
             chunk: p.get(property::CHUNK).map(str::parse).transpose()?,
             dedup: p.flag(property::DEDUP, false)?,
             ingest_time_column: p.get(property::INGEST_TIME_COLUMN).map(str::to_string),
@@ -221,6 +226,13 @@ impl Contract {
                 .get(property::KEEP_SNAPSHOTS_UNTIL)
                 .map(|_| p.number(property::KEEP_SNAPSHOTS_UNTIL, 0))
                 .transpose()?,
+            rollups: p.list(property::ROLLUPS),
+            rollup_routing: p.flag(property::ROLLUP_ROUTING, true)?,
+            rollup_refresh_interval: match p.get(property::ROLLUP_REFRESH_INTERVAL) {
+                Some(s) if s.eq_ignore_ascii_case("off") => None,
+                Some(s) => Some(parse_duration(s)?),
+                None => Some(Self::DEFAULT_ROLLUP_REFRESH_INTERVAL),
+            },
         })
     }
 
@@ -293,6 +305,13 @@ impl Properties<'_> {
 
     fn duration(&self, key: &str) -> Result<Option<Duration>> {
         self.get(key).map(parse_duration).transpose()
+    }
+
+    /// A comma-separated list (empty items dropped).
+    fn list(&self, key: &str) -> Vec<String> {
+        self.get(key)
+            .map(|s| s.split(',').map(str::trim).filter(|c| !c.is_empty()).map(str::to_string).collect())
+            .unwrap_or_default()
     }
 }
 

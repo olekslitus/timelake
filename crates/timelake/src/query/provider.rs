@@ -53,15 +53,26 @@ pub(super) enum Kind {
 pub(crate) struct TimelakeProvider {
     table: Table,
     kind: Kind,
+    /// Rollup routing has dealt with this scan (SPEC §11.1).
+    routed: bool,
 }
 
 impl TimelakeProvider {
     pub(super) fn data(table: Table) -> Self {
-        Self { table, kind: Kind::Data }
+        Self { table, kind: Kind::Data, routed: false }
     }
 
     pub(super) fn latest(table: Table) -> Self {
-        Self { table, kind: Kind::Latest }
+        Self { table, kind: Kind::Latest, routed: false }
+    }
+
+    /// This scan, marked as dealt with by rollup routing.
+    pub(super) fn routed(&self) -> Self {
+        Self { routed: true, ..self.clone() }
+    }
+
+    pub(super) fn is_routed(&self) -> bool {
+        self.routed
     }
 
     pub(super) fn table(&self) -> &Table {

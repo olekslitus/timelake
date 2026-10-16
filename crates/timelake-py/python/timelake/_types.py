@@ -49,6 +49,8 @@ class MaintainReport(TypedDict):
     partitions_dropped: int
     snapshots_expired: int
     objects_deleted: int
+    rollups_refreshed: int
+    rollup_rows: int
     seconds: float
 
 

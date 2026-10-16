@@ -59,6 +59,12 @@ export const NOW: RoadmapItem[] = [
     status: "next",
   },
   {
+    title: "Rollups",
+    description:
+      "Hourly and daily summaries that stay up to date as data lands. Matching queries read them, with the same answer as the raw data.",
+    status: "done",
+  },
+  {
     title: "Settings for every feature",
     description:
       "Turn each feature on or off, or tune it, per table, per session or per call, from one list of settings.",
@@ -71,7 +77,11 @@ export const COMING_UP: RoadmapItem[] = [
     title: "Side-by-side demos",
     description: "The same queries on Timelake and other engines, with time and a running cost counter.",
   },
-  { title: "Rollups", description: "Hourly and daily summaries that stay up to date as data lands." },
+  {
+    title: "More rollups",
+    description:
+      "Rollups built from rollups, percentiles and time-weighted averages in rollups, and daily queries answered from hourly rollups.",
+  },
   {
     title: "Time-series functions",
     description: "Gap filling, time-weighted averages, counters, and percentiles.",

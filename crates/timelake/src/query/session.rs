@@ -1,22 +1,28 @@
 use std::fmt;
 use std::sync::Arc;
 
+use arrow::array::{RecordBatch, StringArray, UInt64Array};
+use arrow::datatypes::{DataType, Field, Schema};
 use datafusion::execution::SessionStateBuilder;
 use datafusion::functions_window::expr_fn::row_number;
 use datafusion::logical_expr::ExprFunctionExt;
 use datafusion::prelude::{DataFrame, SessionConfig, SessionContext, ident, lit};
 use datafusion::sql::TableReference;
-use datafusion::sql::parser::{DFParserBuilder, Statement};
 use datafusion::sql::sqlparser::dialect::dialect_from_str;
 
 use super::catalog::{INFORMATION_SCHEMA, LakeCatalog};
 use super::provider::TimelakeProvider;
 use super::rewrite::LatestRewrite;
+use super::rollup::{definition_of, refresh_session, rollup_frame};
+use super::route::{RollupRewrite, RouteMap, prepare};
 use super::settings::SessionSettings;
+use super::statement::{self, RollupStatement, Statement};
 use super::{CATALOG, PLAN_CACHE_TTL};
 use crate::error::{Error, Result};
 use crate::lake::Lake;
 use crate::name::{DEFAULT_NAMESPACE, TableName};
+use crate::rollup::{Definition, RollupRefresh};
+use crate::{Chunk, TableOptions, parse_duration, property};
 
 /// Name of the helper column of [`Session::latest`]'s fallback query.
 const ROW_NUMBER: &str = "__timelake_row_number";
@@ -38,6 +44,8 @@ pub struct Session {
     lake: Lake,
     ctx: SessionContext,
     catalog: Arc<LakeCatalog>,
+    /// What rollup routing may use, worked out before each query is planned.
+    routes: RouteMap,
 }
 
 impl Session {
@@ -76,10 +84,12 @@ impl Session {
             .with_information_schema(true)
             .with_default_catalog_and_schema(CATALOG, namespace)
             .set_bool("datafusion.execution.parquet.pushdown_filters", false);
+        let routes = RouteMap::default();
         let state = SessionStateBuilder::new()
             .with_config(config)
             .with_default_features()
             .with_optimizer_rule(Arc::new(LatestRewrite))
+            .with_optimizer_rule(Arc::new(RollupRewrite { routes: routes.clone() }))
             .build();
         let ctx = SessionContext::new_with_state(state);
         ctx.register_object_store(lake.storage().url(), lake.storage().object_store());
@@ -88,7 +98,7 @@ impl Session {
         // time_bucket(width, ts [, origin]) is the name time-series users know for date_bin.
         let time_bucket = datafusion::functions::datetime::date_bin().as_ref().clone().with_aliases(["time_bucket"]);
         ctx.register_udf(time_bucket);
-        Self { lake, ctx, catalog }
+        Self { lake, ctx, catalog, routes }
     }
 
     /// The lake this session reads.
@@ -103,28 +113,32 @@ impl Session {
 
     /// Plans one SQL statement.
     pub async fn sql(&self, sql: &str) -> Result<DataFrame> {
-        let state = self.ctx.state();
-        let dialect = state.config().options().sql_parser.dialect;
-        self.execute(state.sql_to_statement(sql, &dialect)?).await
+        let mut statements = self.parse(sql)?;
+        match (statements.pop(), statements.is_empty()) {
+            (Some(statement), true) => self.execute(statement).await,
+            _ => Err(Error::invalid("expected one SQL statement")),
+        }
     }
 
-    /// Splits SQL text into statements with DataFusion's parser (so a `;` inside a string literal
-    /// or comment doesn't split), for running a script one statement at a time with [`Self::execute`].
+    /// Splits SQL text into statements (so a `;` inside a string literal or comment doesn't
+    /// split), for running a script one statement at a time with [`Self::execute`].
     pub fn parse(&self, sql: &str) -> Result<Vec<Statement>> {
         let state = self.ctx.state();
         let options = &state.config().options().sql_parser;
         let dialect = dialect_from_str(options.dialect)
             .ok_or_else(|| Error::config(format!("unsupported SQL dialect {}", options.dialect)))?;
-        let statements = DFParserBuilder::new(sql)
-            .with_dialect(dialect.as_ref())
-            .with_recursion_limit(options.recursion_limit)
-            .build()?
-            .parse_statements()?;
-        Ok(statements.into())
+        statement::parse(sql, dialect.as_ref(), options.recursion_limit)
     }
 
-    /// Plans one parsed statement.
+    /// Plans one parsed statement. Statements about rollups run here and return a summary.
     pub async fn execute(&self, statement: Statement) -> Result<DataFrame> {
+        match statement {
+            Statement::Sql(s) => self.execute_sql(*s).await,
+            Statement::Rollup(r) => self.execute_rollup(r).await,
+        }
+    }
+
+    async fn execute_sql(&self, statement: datafusion::sql::parser::Statement) -> Result<DataFrame> {
         let state = self.ctx.state();
         // DataFusion resolves tables one after another; on object storage each costs several
         // round trips (version hint, metadata, manifest list, manifests). Load every table the
@@ -141,9 +155,79 @@ impl Session {
                 .filter_map(|r| TableName::new(r.schema().unwrap_or(default_namespace), r.table()).ok())
                 .collect();
             futures::future::join_all(names.iter().map(|n| self.prefetch(n))).await;
+            futures::future::join_all(names.iter().map(|n| prepare(&self.lake, n, &self.routes))).await;
         }
         let plan = state.statement_to_plan(statement).await?;
         Ok(self.ctx.execute_logical_plan(plan).await?)
+    }
+
+    /// `CREATE`, `DROP` or `REFRESH MATERIALIZED ROLLUP`: one row with the rollup and the rows
+    /// it took.
+    async fn execute_rollup(&self, statement: RollupStatement) -> Result<DataFrame> {
+        let (name, rows) = match statement {
+            RollupStatement::Create { name, query, options, if_not_exists } => {
+                let name = self.table_name(&name)?;
+                match self.lake.table(&name).await {
+                    Ok(_) if if_not_exists => (name, 0),
+                    Ok(_) => return Err(Error::AlreadyExists(name.to_string())),
+                    Err(Error::NotFound(_)) => {
+                        let rows = self.create_rollup(&name, &query, options).await?;
+                        (name, rows)
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+            RollupStatement::Drop { name, if_exists } => {
+                let name = self.table_name(&name)?;
+                match crate::rollup::drop(&self.lake, &name).await {
+                    Ok(()) => {}
+                    Err(Error::NotFound(_)) if if_exists => {}
+                    Err(e) => return Err(e),
+                }
+                (name, 0)
+            }
+            RollupStatement::Refresh { name } => {
+                let name = self.table_name(&name)?;
+                let rows = crate::rollup::refresh(&self.lake, &name, None, RollupRefresh::Always).await?;
+                (name, rows)
+            }
+        };
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("rollup", DataType::Utf8, false),
+            Field::new("rows", DataType::UInt64, false),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![Arc::new(StringArray::from(vec![name.to_string()])), Arc::new(UInt64Array::from(vec![rows]))],
+        )?;
+        Ok(self.ctx.read_batch(batch)?)
+    }
+
+    /// Creates rollup `name` defined by `query` and computes it. Returns the rows written.
+    async fn create_rollup(&self, name: &TableName, query: &str, options: Vec<(String, String)>) -> Result<u64> {
+        // Plan the definition as written, not routed to another rollup.
+        let mut config = self.ctx.copied_config();
+        config.options_mut().set("timelake.rollup_routing", "false")?;
+        let planner = Session::with_config(self.lake.clone(), config);
+        let mut statements = planner.parse(query)?;
+        let (Some(Statement::Sql(select)), true) = (statements.pop(), statements.is_empty()) else {
+            return Err(Error::invalid(format!("rollup {name}: AS must be followed by one SELECT")));
+        };
+        let plan = planner.execute_sql(*select).await?.into_optimized_plan()?;
+        let (raw, def, order) = definition_of(&plan, name)?;
+        let ctx = refresh_session(&self.lake)?;
+        let order: Vec<&str> = order.iter().map(String::as_str).collect();
+        let frame = rollup_frame(&ctx, &raw, &def, Some(&[]))?.select_columns(&order)?;
+        let schema = frame.schema().as_arrow().clone();
+        crate::rollup::create(&raw, name, &def, &schema, rollup_options(&def, options)?).await
+    }
+
+    /// A table name, in the session's default namespace when it has none.
+    fn table_name(&self, name: &str) -> Result<TableName> {
+        match name.split_once('.') {
+            Some((namespace, table)) => TableName::new(namespace, table),
+            None => TableName::new(&self.ctx.state().config().options().catalog.default_schema, name),
+        }
     }
 
     /// Loads a table's metadata, file list and last-value index into the lake's caches. Errors
@@ -185,6 +269,33 @@ impl Session {
             .drop_columns(&[ROW_NUMBER])?;
         Ok(df)
     }
+}
+
+/// The rollup table's options: bucket and keys from the definition, dedup on, no insertion time,
+/// and the `WITH` options (`chunk_interval`, `retention`, `refresh_interval`, or any table setting).
+fn rollup_options(def: &Definition, options: Vec<(String, String)>) -> Result<TableOptions> {
+    const HOUR_MICROS: i64 = 3_600_000_000;
+    let mut opts = TableOptions {
+        time_column: Some(def.bucket.clone()),
+        series_key: def.keys.clone(),
+        chunk: Some(if def.width < HOUR_MICROS { Chunk::Day } else { Chunk::Month }),
+        dedup: Some(true),
+        ingest_time: Some(false),
+        ..Default::default()
+    };
+    for (key, value) in options {
+        match key.trim().to_ascii_lowercase().replace('_', "-").as_str() {
+            "chunk-interval" | "chunk" => opts.chunk = Some(value.parse()?),
+            "retention" => opts.retention = Some(parse_duration(&value)?),
+            "refresh-interval" => {
+                opts.properties.insert(property::ROLLUP_REFRESH_INTERVAL.into(), value);
+            }
+            _ => {
+                opts.properties.insert(crate::alter::property_key(&key)?, value);
+            }
+        }
+    }
+    Ok(opts)
 }
 
 impl fmt::Debug for Session {

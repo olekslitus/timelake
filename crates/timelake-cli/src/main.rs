@@ -11,7 +11,7 @@ use std::time::Instant;
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use timelake::datafusion::prelude::DataFrame;
-use timelake::{Lake, MaintainOptions, Session, TableName, UpgradeOptions};
+use timelake::{Lake, MaintainOptions, RollupRefresh, Session, TableName, UpgradeOptions};
 
 use crate::info::TableInfo;
 use crate::load::{LoadArgs, TableDef};
@@ -62,7 +62,7 @@ enum Cmd {
         #[arg(long, value_enum, default_value_t = Format::Table)]
         format: Format,
     },
-    /// Compact, apply retention, expire snapshots. All tables if none given.
+    /// Compact, apply retention, refresh rollups, expire snapshots. All tables if none given.
     Maintain {
         tables: Vec<String>,
         #[arg(long)]
@@ -71,6 +71,9 @@ enum Cmd {
         no_retention: bool,
         #[arg(long)]
         no_expire: bool,
+        /// Don't refresh the tables' rollups.
+        #[arg(long)]
+        no_rollups: bool,
     },
     /// Bring tables to the current format: format version, last-value index, sorted and compacted
     /// files, head object. Each step is a commit; no snapshot expires for --keep-snapshots, so
@@ -182,11 +185,12 @@ async fn run(cli: Cli) -> Result<()> {
         Cmd::Import { table, files, def, load } => import(&lake, &table, &files, &def, &load).await,
         Cmd::Sql(args) => sql(lake, args, started).await,
         Cmd::Latest { table, format } => print_df(Session::new(lake).latest(&table).await?, format).await,
-        Cmd::Maintain { tables, no_compact, no_retention, no_expire } => {
+        Cmd::Maintain { tables, no_compact, no_retention, no_expire, no_rollups } => {
             let opts = MaintainOptions {
                 compact: !no_compact,
                 retention: !no_retention,
                 expire: !no_expire,
+                rollups: if no_rollups { RollupRefresh::Never } else { RollupRefresh::Always },
                 ..Default::default()
             };
             maintain(&lake, tables, opts).await
@@ -322,13 +326,15 @@ async fn maintain(lake: &Lake, tables: Vec<String>, opts: MaintainOptions) -> Re
     for (name, label) in targets(lake, tables).await? {
         let (t, r) = lake.table(name).await?.maintain(opts.clone()).await?;
         println!(
-            "{label}: compacted {} partitions ({} → {} files, {} rows, {} duplicates removed), dropped {} partitions, expired {} snapshots, deleted {} objects in {:.2}s → v{}",
+            "{label}: compacted {} partitions ({} → {} files, {} rows, {} duplicates removed), dropped {} partitions, refreshed {} rollups ({} rows), expired {} snapshots, deleted {} objects in {:.2}s → v{}",
             r.partitions_compacted,
             r.files_rewritten,
             r.files_written,
             r.rows_rewritten,
             r.duplicates_removed,
             r.partitions_dropped,
+            r.rollups_refreshed,
+            r.rollup_rows,
             r.snapshots_expired,
             r.objects_deleted,
             r.duration.as_secs_f64(),

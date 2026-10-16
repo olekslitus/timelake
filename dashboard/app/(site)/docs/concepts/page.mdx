@@ -36,7 +36,11 @@ Each append updates a small Parquet file holding the newest row of every series 
 
 ## Maintenance
 
-- **Inline (default).** After each append, small files in the touched partitions that have grown into a group of similar size are merged, partitions past the retention period are dropped, and old snapshots are expired in batches.
-- **Explicit.** `timelake maintain` (or `Table.maintain()`) rewrites each partition with several small or unsorted files into sorted, deduplicated files of the target size, drops partitions past retention, expires snapshots, and deletes files no snapshot references any more.
+- **Inline (default).** After each append, small files in the touched partitions that have grown into a group of similar size are merged, partitions past the retention period are dropped, rollups whose last refresh is older than their refresh interval are refreshed, and old snapshots are expired in batches.
+- **Explicit.** `timelake maintain` (or `Table.maintain()`) rewrites each partition with several small or unsorted files into sorted, deduplicated files of the target size, drops partitions past retention, refreshes the table's rollups, expires snapshots, and deletes files no snapshot references any more.
+
+## Rollups
+
+A rollup is a table of aggregates per time bucket, kept up to date from a raw table by maintenance. Matching `GROUP BY time_bucket(…)` queries on the raw table read the buckets the rollup has right from it, and the rest from the raw table. See [Rollups](/docs/rollups).
 
 Both are safe to run while others write: they commit like any writer and abort if the files they rewrote were changed concurrently.

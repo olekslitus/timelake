@@ -300,6 +300,12 @@ impl<'a> SnapshotWriter<'a> {
         // One round of uploads: the data files (on the first attempt) and this attempt's files.
         futures::try_join!(data.send(), self.uploads.send())?;
         let mut summary = props.clone();
+        // What a rollup reflects stays recorded until a refresh records something newer.
+        for key in [summary::ROLLUP_SOURCE_SNAPSHOT, summary::ROLLUP_SOURCE_SEQUENCE] {
+            if let (false, Some(v)) = (summary.contains_key(key), base_summary.get(key)) {
+                summary.insert(key.into(), v.clone());
+            }
+        }
         if let Some(location) = &index.location {
             summary.insert(summary::LAST_VALUE_INDEX.into(), location.clone());
         }

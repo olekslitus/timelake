@@ -193,13 +193,25 @@ impl Lake {
         N: TryInto<TableName>,
         Error: From<N::Error>,
     {
-        let name = name.try_into()?;
+        self.create_table_with(&name.try_into()?, schema, opts, HashMap::new()).await
+    }
+
+    /// Creates a table with properties Timelake manages itself (`managed`, unchecked), such as a
+    /// rollup's definition.
+    pub(crate) async fn create_table_with(
+        &self,
+        name: &TableName,
+        schema: &ArrowSchema,
+        opts: TableOptions,
+        managed: HashMap<String, String>,
+    ) -> Result<Table> {
+        let name = name.clone();
         let location = self.table_location(&name);
         let storage = self.storage();
         if storage.exists(&hint_uri(&location)).await? {
             return Err(Error::AlreadyExists(name.to_string()));
         }
-        let metadata = new_table_metadata(&name, &location, schema, &opts)?;
+        let metadata = new_table_metadata(&name, &location, schema, &opts, managed)?;
         self.check_head_format(&Contract::from_properties(metadata.properties())?.head_format)?;
         if !storage.write_if_absent(&metadata_uri(&location, 1), Bytes::from(serde_json::to_vec(&metadata)?)).await? {
             return Err(Error::AlreadyExists(name.to_string()));
@@ -448,6 +460,7 @@ fn new_table_metadata(
     location: &str,
     schema: &ArrowSchema,
     opts: &TableOptions,
+    managed: HashMap<String, String>,
 ) -> Result<TableMetadata> {
     let mut normalized = normalize_schema(schema, opts.time_column.as_deref())?;
     let ingest_time = opts.time_column.is_some() && opts.ingest_time.unwrap_or(true);
@@ -482,6 +495,7 @@ fn new_table_metadata(
         props.insert(property::RETENTION.into(), format_duration(retention));
     }
     props.extend(settings::check_properties(&opts.properties, Level::Table)?);
+    props.extend(managed);
     Contract::from_properties(&props)?; // validate
     creation.properties = props;
     Ok(TableMetadataBuilder::from_table_creation(creation)?.build()?.metadata)

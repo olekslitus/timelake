@@ -76,6 +76,40 @@ fn create_import_query_maintain() {
     assert_eq!(out.trim(), "dropped iot.readings");
 }
 
+#[test]
+fn rollups_from_sql() {
+    let dir = tempfile::tempdir().unwrap();
+    let warehouse = dir.path().join("warehouse");
+    let csv = dir.path().join("readings.csv");
+    let write = |rows: &str| std::fs::write(&csv, format!("time,device,value\n{rows}")).unwrap();
+    write(
+        "2026-01-01T00:00:00Z,1,1.5\n2026-01-01T06:00:00Z,1,2.5\n2026-01-01T00:00:00Z,2,10.0\n2026-01-02T00:00:00Z,2,11.0\n",
+    );
+    let csv_path = csv.to_str().unwrap();
+    timelake(&warehouse, &["import", "iot.readings", csv_path, "--time-column", "time", "--series-key", "device"]);
+
+    let create = "CREATE MATERIALIZED ROLLUP iot.daily AS \
+                  SELECT device, time_bucket(INTERVAL '1 day', time) AS day, max(value) AS peak \
+                  FROM iot.readings GROUP BY device, day; \
+                  SELECT device, peak FROM iot.daily ORDER BY device, day";
+    let (out, _) = timelake(&warehouse, &["sql", "--format", "csv", create]);
+    assert_eq!(out, "rollup,rows\niot.daily,3\ndevice,peak\n1,2.5\n2,10.0\n2,11.0\n");
+
+    write("2026-01-01T12:00:00Z,1,9.0\n");
+    timelake(&warehouse, &["append", "iot.readings", csv_path]);
+    let (out, _) = timelake(&warehouse, &["maintain", "iot.readings"]);
+    // The changed day is recomputed for both devices.
+    assert!(out.contains("refreshed 1 rollups (2 rows)"), "{out}");
+    let (out, _) = timelake(&warehouse, &["sql", "--format", "csv", "SELECT peak FROM iot.daily WHERE device = 1"]);
+    assert_eq!(out, "peak\n9.0\n");
+
+    let (out, _) = timelake(&warehouse, &["settings", "iot.readings"]);
+    assert!(out.lines().any(|l| l.starts_with("rollups") && l.contains("iot.daily")), "{out}");
+    timelake(&warehouse, &["sql", "DROP MATERIALIZED ROLLUP iot.daily"]);
+    let (out, _) = timelake(&warehouse, &["ls"]);
+    assert_eq!(out.trim(), "iot.readings");
+}
+
 /// Commits the table's metadata again without `timelake.format-version`, as Timelake 0.2 wrote it.
 /// Timelake never removes the property itself, so the test edits the metadata files directly.
 fn as_written_by_timelake_0_2(metadata: &Path) {

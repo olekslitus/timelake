@@ -1,0 +1,122 @@
+export const metadata = { title: "Rollups" }
+
+# Rollups
+
+A rollup is a table of aggregates per time bucket, such as the hourly average and maximum of each device, that Timelake keeps up to date as data arrives. Dashboards that ask for hourly values then read one row per device and hour instead of every reading.
+
+A rollup is an ordinary Timelake table, so DuckDB and other Iceberg readers can query it directly. The Timelake reader also uses it on its own: a `GROUP BY time_bucket(…)` query on the raw table that the rollup matches is answered from the rollup, with the same rows the raw table would give.
+
+## Create a rollup
+
+```sql
+CREATE MATERIALIZED ROLLUP iot.readings_1h AS
+SELECT device_id, time_bucket(INTERVAL '1 hour', time) AS bucket,
+       avg(temp) AS avg_temp, max(temp) AS max_temp, count(*) AS n
+FROM iot.readings
+GROUP BY device_id, bucket
+WITH (retention = '2y');
+```
+
+```console
+$ timelake sql "CREATE MATERIALIZED ROLLUP iot.readings_1h AS SELECT …"
++-----------------+------+
+| rollup          | rows |
++-----------------+------+
+| iot.readings_1h | 216  |
++-----------------+------+
+```
+
+The statement creates the table, computes it from the data already in `iot.readings`, and records it on the raw table (setting `rollups`). `IF NOT EXISTS` makes it do nothing when a table of that name exists.
+
+The query must have this shape:
+
+- It reads one Timelake time-series table, with no `WHERE`, join, or subquery.
+- It groups by one `time_bucket` (or `date_bin`) of the table's time column, with a fixed width (seconds to days, not months) and the default origin.
+- It also groups by any of the table's series-key columns, and selects each of them under its own name.
+- Its aggregates are `count(*)`, `count(x)`, `sum`, `min`, `max`, `avg`, `first_value(x ORDER BY time)`, and `last_value(x ORDER BY time)`. Each bucket's rows give these exactly.
+
+Outputs the query doesn't name get names like `bucket`, `avg_temp`, and `count`. Grouping only by series-key columns keeps a reading in the same group when a newer write replaces it (see [Rows sent twice](/docs/querying#rows-sent-twice)), so a rollup only ever gains rows.
+
+`WITH` sets the rollup table's options:
+
+- `retention`: keep buckets this long, e.g. `2y`. It is independent of the raw table's retention, so a rollup can keep history the raw table has dropped.
+- `chunk_interval`: partition size, `hour`, `day`, or `month`. Default: day for buckets under an hour, else month.
+- `refresh_interval`: how often inline maintenance refreshes it (see below). Default `1m`; `off` for never.
+- Any other setting is set on the rollup table, e.g. `min_snapshots = 3`.
+
+## Query a rollup
+
+Query the rollup table like any table:
+
+```sql
+SELECT device_id, bucket, avg_temp FROM iot.readings_1h
+WHERE bucket >= now() - INTERVAL '7 days'
+```
+
+Or query the raw table. The reader answers from the rollup when:
+
+- the query groups by `time_bucket` of the same width and by the same series-key columns,
+- every aggregate it asks for is one the rollup stores, and
+- its filters compare the time column with constants (`now()` included) or filter the grouping columns.
+
+The answer is exact. Buckets that are inside the query's time range and unchanged since the rollup's last refresh come from the rollup. The rest come from the raw table, as without a rollup: buckets that changed since the refresh, and the partial buckets at the edges of the time range. `EXPLAIN` shows both parts under a `Union`:
+
+```console
+$ timelake sql "EXPLAIN SELECT device_id, time_bucket(INTERVAL '1 hour', time) AS hour, max(temp)
+                FROM iot.readings WHERE time >= TIMESTAMP '2026-10-02 00:30:00' GROUP BY 1, 2"
+…
+|   Union
+|     Aggregate: groupBy=[[iot.readings.device_id, date_bin(…)]], aggr=[[max(iot.readings.temp)]]
+|       Filter: iot.readings.time >= TimestampMicrosecond(1790901000000000, None) AND iot.readings.time < TimestampMicrosecond(1790902800000000, None)
+|         TableScan: iot.readings …
+|     Projection: iot.readings_1h.device_id AS device_id, iot.readings_1h.bucket AS …, iot.readings_1h.max_temp AS …
+|       Filter: iot.readings_1h.bucket >= TimestampMicrosecond(1790902800000000, None)
+|         TableScan: iot.readings_1h …
+```
+
+Here the half hour from 00:30 comes from the raw table, and every whole hour after it from the rollup.
+
+Buckets older than the raw table's retention are never read from the rollup: the raw table has no rows there, so neither does the answer. Query the rollup table to see that history.
+
+`SET timelake.rollup_routing = false` turns this off for a session, and the table setting `rollup-routing` for one raw table. A session that reads without dedup (`timelake.read_dedup = false`) isn't routed either, since a rollup counts each reading once.
+
+## Refresh
+
+A refresh recomputes the buckets that the raw table's new data files cover since the last refresh, and appends them to the rollup. The rollup reads with dedup on and keeps the newest copy of each bucket; its own compaction removes the older ones.
+
+- **Inline.** After an append to the raw table, maintenance refreshes each rollup whose last refresh is older than its `refresh_interval` (setting `rollup-refresh-interval`, default 1 minute), so a busy table doesn't commit to its rollups on every append.
+- **Maintain.** `timelake maintain` and `Table.maintain()` refresh every rollup of the table, after compaction (`--no-rollups`, `rollups=False` to skip).
+- **Now.** `REFRESH MATERIALIZED ROLLUP iot.readings_1h` brings one rollup up to date and returns the rows it took.
+
+Late data is handled the same way: a reading for last week makes its bucket count as changed until the next refresh recomputes it. A refresh that stops halfway leaves the rollup's record of what it reflects where it was, so the next one recomputes the same buckets. If the raw table is rolled back to an earlier snapshot, its rollups aren't used until the next refresh, which rebuilds them.
+
+## Drop a rollup
+
+```sql
+DROP MATERIALIZED ROLLUP [IF EXISTS] iot.readings_1h;
+```
+
+This removes the rollup from the raw table's `rollups` setting and deletes the table. Dropping the raw table leaves its rollups in place.
+
+## From Python
+
+`Lake.sql` runs the same statements, and `Table.maintain()` reports the refresh:
+
+```python
+lake.sql("""
+    CREATE MATERIALIZED ROLLUP iot.readings_1h AS
+    SELECT device_id, time_bucket(INTERVAL '1 hour', time) AS bucket, avg(temp) AS avg_temp
+    FROM iot.readings GROUP BY device_id, bucket
+""")
+report = lake.table("iot.readings").maintain()
+print(report["rollups_refreshed"], report["rollup_rows"])
+```
+
+## Not yet
+
+- Rollups built from other rollups (hourly from minutes).
+- Aggregates that need stored state: percentiles, time-weighted averages.
+- Answering a coarser query (daily from an hourly rollup) or one grouped by fewer columns.
+- Calendar buckets (months), filters in the definition, and routing in plain DuckDB.
+
+The design is in SPEC.md §11.1.

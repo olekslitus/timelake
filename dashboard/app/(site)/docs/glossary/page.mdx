@@ -22,7 +22,7 @@ The words used in these docs, in plain terms.
 | **Hot tier** | A planned fast buffer for rows that aren't committed to the lake yet, for second-level freshness. Not built yet. |
 | **Last-value index (LVI)** | A small Parquet file with the newest row of every series, updated on every append. Queries for the latest values read it instead of scanning the table. |
 | **Manifest, manifest list** | Iceberg metadata files (Avro format). A manifest lists data files with their row counts and min and max values. A manifest list lists the manifests of one version. |
-| **Materialized rollup** | A planned table of aggregates per time bucket, such as the average temperature per device per minute, that Timelake keeps up to date as data lands. Dashboards read it instead of the raw data. Not built yet. |
+| **Materialized rollup** | A table of aggregates per time bucket, such as the average temperature per device per hour, that Timelake keeps up to date as data lands. Matching queries on the raw table read it instead of the raw data. See [Rollups](/docs/rollups). |
 | **Namespace** | A group of tables, like a schema in a database. iot.readings is table readings in namespace iot. Tables without a namespace go to default. |
 | **Object storage, object store** | A service that stores files (objects) by name: AWS S3, Cloudflare R2, Google Cloud Storage, Azure Blob Storage, MinIO, RustFS. Each request has a delay and a price, which shapes how Timelake reads and writes. |
 | **Parquet** | Apache Parquet, a compressed, column-by-column file format with min and max values per block. The data files of a Timelake table are Parquet. |

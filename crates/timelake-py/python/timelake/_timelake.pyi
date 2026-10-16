@@ -97,6 +97,9 @@ class Lake:
     def sql(self, query: str, namespace: str = "default") -> pa.Table:
         """Runs SQL and returns the result. Unqualified table names resolve in ``namespace``.
 
+        Besides queries, it runs ``CREATE``, ``DROP`` and ``REFRESH MATERIALIZED ROLLUP``, which return one row
+        with the rollup and the rows it took.
+
         Raises:
             RuntimeError: The query failed to plan or run.
         """
@@ -150,8 +153,10 @@ class Table:
             ConflictError: A concurrent commit could not be rebased.
         """
 
-    def maintain(self, compact: bool = True, retention: bool = True, expire: bool = True) -> MaintainReport:
-        """Compacts (sort and dedup), applies retention and expires old snapshots.
+    def maintain(
+        self, compact: bool = True, retention: bool = True, expire: bool = True, rollups: bool = True
+    ) -> MaintainReport:
+        """Compacts (sort and dedup), applies retention, refreshes the table's rollups and expires old snapshots.
 
         Raises:
             ConflictError: A concurrent commit could not be rebased.

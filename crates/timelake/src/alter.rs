@@ -56,7 +56,7 @@ impl Table {
 
 /// The property a user's key names: a Timelake setting in its canonical spelling (a bare
 /// setting name counts), or any other key as it is.
-fn property_key(key: &str) -> Result<String> {
+pub(crate) fn property_key(key: &str) -> Result<String> {
     let trimmed = key.trim();
     if trimmed.to_ascii_lowercase().starts_with(settings::PREFIX) || !trimmed.contains('.') {
         return settings::find(trimmed)
@@ -69,12 +69,22 @@ fn property_key(key: &str) -> Result<String> {
 /// Commits new table properties without checking them (no new snapshot): for Timelake's own
 /// changes, such as `timelake upgrade` recording the format.
 pub(crate) async fn write_properties(table: &Table, set: &[(String, String)], remove: &[String]) -> Result<Table> {
+    update_properties(table, |_| (set.to_vec(), remove.to_vec())).await
+}
+
+/// Like [`write_properties`], with the change computed from the table version it applies to
+/// (again after a concurrent commit), such as adding a name to a list.
+pub(crate) async fn update_properties(
+    table: &Table,
+    change: impl Fn(&Table) -> (Vec<(String, String)>, Vec<String>),
+) -> Result<Table> {
     let mut base = table.clone();
     loop {
+        let (set, remove) = change(&base);
         let previous = Some(metadata_uri(base.location(), base.version()));
         let metadata = TableMetadataBuilder::new_from_metadata(base.metadata().clone(), previous)
-            .set_properties(set.iter().cloned().collect())?
-            .remove_properties(remove)?
+            .set_properties(set.into_iter().collect())?
+            .remove_properties(&remove)?
             .build()?
             .metadata;
         match publish(&base, metadata, base.known_files().cloned()).await? {

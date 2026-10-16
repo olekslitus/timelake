@@ -32,6 +32,8 @@ Methods we adopted or plan to, and implemented ourselves.
 | Table layout readable with no catalog service (D17) | Iceberg's Hadoop catalog | Apache-2.0 | `lake.rs`; docs Architecture |
 | Stage on a branch, check, then publish (backfill, planned) | Iceberg branches (write-audit-publish) | Apache-2.0 | SPEC §8.4 |
 | `quality` column (good / uncertain / bad) | OPC UA | Specification | SPEC §7 |
+| Tables of aggregates per time bucket, kept as data arrives (rollups) | [Apache Druid](https://druid.apache.org) (rollup) | Apache-2.0 | `rollup.rs`; SPEC §11.1 |
+| Answering an aggregate query from a materialized aggregate that matches it | [Apache Calcite](https://calcite.apache.org) (materialized view rewriting) | Apache-2.0 | `query/route.rs`; SPEC §11.1 |
 | How commit operations work (rewrite, row delta, branches, expiry) | [Iceberg Java](https://github.com/apache/iceberg), [iceberg-cpp](https://github.com/apache/iceberg-cpp), [iceberg-go](https://github.com/apache/iceberg-go) | Apache-2.0 | References to learn from and test oracles (D13, `spikes/iceberg-write`); our commit layer is our own code |
 
 ### Third-party files

@@ -16,6 +16,7 @@ export const DOCS_NAV: { title: string; items: { href: string; label: string }[]
       { href: "/docs/python", label: "Python API" },
       { href: "/docs/typescript", label: "TypeScript client" },
       { href: "/docs/querying", label: "Querying" },
+      { href: "/docs/rollups", label: "Rollups" },
       { href: "/docs/settings", label: "Settings" },
       { href: "/docs/storage", label: "Storage & configuration" },
       { href: "/docs/upgrading", label: "Upgrading" },

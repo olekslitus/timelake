@@ -62,7 +62,7 @@ Inputs: `.parquet` files or directories of Parquet, and `.csv`, `.csv.gz`, and `
 
 ## sql
 
-Run SQL given as an argument or on stdin. Several statements separated by `;` run in order.
+Run SQL given as an argument or on stdin. Several statements separated by `;` run in order. Besides queries, it runs `CREATE`, `DROP`, and `REFRESH MATERIALIZED ROLLUP` (see [Rollups](/docs/rollups)).
 
 ```bash
 timelake sql "SELECT count(*) FROM iot.readings"
@@ -87,7 +87,7 @@ $ timelake latest iot.readings --format json
 
 ## maintain
 
-Compact, apply retention, and expire snapshots, for the given tables or all tables.
+Compact, apply retention, refresh rollups, and expire snapshots, for the given tables or all tables.
 
 ```bash
 timelake maintain
@@ -99,6 +99,7 @@ timelake maintain iot.readings --no-expire
 | `--no-compact` | Skip compaction. |
 | `--no-retention` | Skip dropping partitions past the retention period. |
 | `--no-expire` | Skip snapshot expiry and file cleanup. |
+| `--no-rollups` | Skip refreshing the tables' [rollups](/docs/rollups). |
 
 ## upgrade
 

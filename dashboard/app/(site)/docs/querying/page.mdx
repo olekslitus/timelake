@@ -66,6 +66,10 @@ SET timelake.read_dedup = false;
 
 On the command line: `timelake sql --set timelake.read_dedup=false "…"`; in Python: `Lake(..., settings={"read_dedup": "false"})`. All settings are on the [Settings](/docs/settings) page.
 
+### Bucketed aggregates
+
+A `GROUP BY time_bucket(…)` query on a table with a [rollup](/docs/rollups) of the same bucket width and grouping reads the buckets the rollup has right from it, and the rest (buckets changed since its refresh, partial buckets at the edges of the time range) from the table. The rows are the same either way. `SET timelake.rollup_routing = false` turns it off.
+
 ### Object storage
 
 Before planning, the reader loads every table a query references concurrently, each from one head object when it has one (otherwise version hint, metadata, manifests, and last-value index), and it reads each Parquet footer once, unless the head carried it. On remote stores it uses more scan partitions than cores (4× cores, at least 32) because the work is latency-bound. Table versions loaded for planning are reused for one second within a process; the process’s own commits are always visible immediately.
