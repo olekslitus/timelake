@@ -5,11 +5,9 @@ import { Suspense } from "react"
 import { BenchRanking } from "@/components/bench-ranking"
 import { WORDMARK } from "@/components/brand/mark-geometry"
 import { TimelakeMark } from "@/components/brand/timelake-mark"
-import { CodeBlock } from "@/components/code-block"
 import { GithubIcon } from "@/components/github-icon"
 import { StackDiagram } from "@/components/stack-diagram"
 import { Button } from "@/components/ui/button"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { SYSTEMS, latestByTarget, loadRuns, rankings } from "@/lib/benchmarks"
 import { REPO_URL } from "@/lib/site"
 
@@ -143,44 +141,6 @@ export default function Home() {
       <Suspense fallback={null}>
         <Measurements />
       </Suspense>
-
-      <section className="flex flex-col gap-6">
-        <SectionHead label="How do I start?">Use a local folder, or an s3://, gs:// or az:// location.</SectionHead>
-        <Tabs defaultValue="cli">
-          <TabsList>
-            <TabsTrigger value="cli">CLI</TabsTrigger>
-            <TabsTrigger value="python">Python</TabsTrigger>
-            <TabsTrigger value="duckdb">DuckDB</TabsTrigger>
-          </TabsList>
-          <TabsContent value="cli" className="pt-2">
-            <CodeBlock title="shell">{`export TIMELAKE_WAREHOUSE=s3://my-bucket/lake
-
-# Create a time-series table from a file's schema and load it
-timelake import iot.readings readings.parquet --time-column time --series-key device_id
-
-timelake sql "SELECT device_id, time_bucket(INTERVAL '1 hour', time) AS h, avg(temp)
-              FROM iot.readings WHERE time > now() - INTERVAL '1 day' GROUP BY 1, 2"
-timelake latest iot.readings     # newest row per device, from the index`}</CodeBlock>
-          </TabsContent>
-          <TabsContent value="python" className="pt-2">
-            <CodeBlock title="python">{`import timelake
-
-lake = timelake.Lake("s3://my-bucket/lake")
-t = lake.create_table("iot.readings", batch.schema,
-                      time_column="time", series_key=["device_id"], retention="365d")
-t.append(batch)                                   # pyarrow, polars, any Arrow stream
-
-lake.sql("SELECT * FROM iot.readings WHERE device_id = 'pump-7' ORDER BY time DESC LIMIT 1")
-lake.latest("iot.readings")                       # pyarrow.Table, one row per device`}</CodeBlock>
-          </TabsContent>
-          <TabsContent value="duckdb" className="pt-2">
-            <CodeBlock title="duckdb">{`INSTALL iceberg; LOAD iceberg;
--- no catalog and no Timelake needed
-SELECT device_id, max(time) FROM iceberg_scan('s3://my-bucket/lake/iot/readings') GROUP BY 1;`}</CodeBlock>
-          </TabsContent>
-        </Tabs>
-        <MoreLink href="/docs/quick-start">Quick start</MoreLink>
-      </section>
     </div>
   )
 }
