@@ -63,7 +63,7 @@ export async function BenefitCards() {
       icon: PiggyBank,
       art: "cheap",
       title: "Cheap",
-      body: "You pay only for storage, reads and writes. Keeping the same data costs about 6× less than TimescaleDB on an EBS disk, before counting its server.",
+      body: "You pay only for storage, reads and writes. Data costs about 6× less to keep than in TimescaleDB.",
       link: { label: "Cost", href: "/docs/storage#requests-and-cost" },
     },
     {
