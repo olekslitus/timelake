@@ -18,7 +18,9 @@ export type ArtKind =
   | "serverless"
   | "layout"
   | "fast"
+  | "cheap"
   | "stores"
+  | "formats"
 
 /** Columns in a picture, unless a wider one is asked for. */
 const COLS = 64
@@ -219,6 +221,21 @@ const PICTURES: Record<ArtKind, (cols: number) => Cell[]> = {
       ).flat(),
     )
   },
+  cheap: (cols) => {
+    // A bill over time: a server's hours fill every column; a bucket's storage is a thin line, and its requests show
+    // only when something reads or writes, in green for what you save.
+    const rnd = seeded(12)
+    const cells: Cell[] = []
+    for (let x = 0; x < cols; x++) {
+      for (const y of [1, 2, 3]) cells.push({ x, y, color: "var(--muted-foreground)", alpha: 0.55 })
+      cells.push({ x, y: ROWS - 2, color: "var(--chart-3)", alpha: 0.4 })
+      if (rnd() < 0.15) {
+        const height = 1 + Math.floor(rnd() * 4)
+        for (let k = 0; k < height; k++) cells.push({ x, y: ROWS - 4 - k, color: "var(--chart-3)", alpha: 0.9 })
+      }
+    }
+    return cells
+  },
   stores: (cols) => {
     // Buckets side by side, each with a few files: one per store the card names when there is room.
     const rnd = seeded(10)
@@ -236,6 +253,21 @@ const PICTURES: Record<ArtKind, (cols: number) => Cell[]> = {
         for (let x = left + 2; x < right - 1; x += 2)
           if (rnd() < 0.6) cells.push({ x, y, color: "var(--primary)", alpha: 0.85 })
     }
+    return cells
+  },
+  formats: (cols) => {
+    // Iceberg metadata along the top, pointing down to rows of Parquet files.
+    const cells: Cell[] = []
+    for (let x = 1; x < cols - 4; x += 10) {
+      for (const dx of [0, 1, 2])
+        for (const y of [0, 1]) cells.push({ x: x + dx, y, color: "var(--primary)", alpha: 1 })
+      for (let y = 3; y < 5; y++) cells.push({ x: x + 1, y, color: "var(--primary)", alpha: 0.45 })
+    }
+    for (let top = 6; top < ROWS - 1; top += 4)
+      for (let x = 0; x < cols - 5; x += 7)
+        for (let dx = 0; dx < 6; dx++)
+          for (const dy of [0, 1, 2])
+            cells.push({ x: x + dx, y: top + dy, color: "var(--muted-foreground)", alpha: dy === 0 ? 0.8 : 0.45 })
     return cells
   },
 }
