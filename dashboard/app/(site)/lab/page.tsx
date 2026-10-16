@@ -10,6 +10,7 @@ import { Suspense } from "react"
 import { GithubIcon } from "@/components/github-icon"
 import { AgentTerminal } from "@/components/lab/agent-terminal"
 import { BucketAnimation } from "@/components/lab/bucket-animation"
+import { DotStripChart } from "@/components/lab/dot-strip-chart"
 import { LiveStripChart } from "@/components/lab/live-strip-chart"
 import { Race, type Racer } from "@/components/lab/race"
 import { SeriesField } from "@/components/lab/series-field"
@@ -65,7 +66,17 @@ function Chip({ children }: { children: React.ReactNode }) {
   )
 }
 
-function Idea({ n, title, children, note }: { n: number; title: string; note: string; children: React.ReactNode }) {
+function Idea({
+  n,
+  title,
+  children,
+  note,
+}: {
+  n: number | string
+  title: string
+  note: string
+  children: React.ReactNode
+}) {
   return (
     <section className="flex flex-col gap-4">
       <div className="flex flex-col gap-1.5">
@@ -99,6 +110,19 @@ export default function Lab() {
             <HeroPanel />
             <Chip>Open source · Apache 2.0 · Iceberg compatible</Chip>
           </StripChart>
+        </div>
+      </Idea>
+
+      <Idea
+        n="1b"
+        title="Strip-chart recorder on a dot grid"
+        note="The same recorder on the races' grid of squares: the trace lights the squares it passes through, and the area under it glows faintly. Generated data."
+      >
+        <div className="cells">
+          <DotStripChart>
+            <HeroPanel />
+            <Chip>Open source · Apache 2.0 · Iceberg compatible</Chip>
+          </DotStripChart>
         </div>
       </Idea>
 

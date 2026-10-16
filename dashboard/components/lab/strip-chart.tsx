@@ -8,7 +8,7 @@ const STEP = 3
 const TICK = 60
 
 /** Slow waves with a little noise, for the recorder when it has no data; stays within -1..1. */
-function* generated(): Generator<number> {
+export function* generated(): Generator<number> {
   let noise = 0
   for (let i = 0; ; i++) {
     noise = 0.9 * noise + (Math.random() - 0.5) * 0.08
@@ -17,7 +17,7 @@ function* generated(): Generator<number> {
 }
 
 /** The values in a loop. */
-function* looped(values: number[]): Generator<number> {
+export function* looped(values: number[]): Generator<number> {
   for (;;) yield* values
 }
 
