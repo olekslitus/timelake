@@ -132,7 +132,7 @@ function MoreLink({ href, children }: { href: string; children: React.ReactNode 
 
 export default function Home() {
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-24 px-4 pt-8 pb-24">
+    <div className="mx-auto flex max-w-6xl flex-col gap-16 px-4 pt-8 pb-24">
       <section className="flex flex-col gap-8">
         <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
           <h1 className="text-4xl leading-[1.05] font-light tracking-tight sm:text-5xl">
