@@ -134,12 +134,12 @@ export default function Home() {
       </section>
 
       <section className="flex flex-col gap-6">
-        <SectionHead label="How it works" />
+        <SectionHead label="How does it work?" />
         <StackDiagram />
       </section>
 
       <section className="flex flex-col gap-6">
-        <SectionHead label="Use cases" />
+        <SectionHead label="What is it for?" />
         <div className="cells sm:grid-cols-2">
           {USE_CASES.map((u) => (
             <div key={u.title} className="flex flex-col gap-2 p-6">
@@ -155,7 +155,7 @@ export default function Home() {
       </Suspense>
 
       <section className="flex flex-col gap-6">
-        <SectionHead label="Limitations">Timelake is at v0. What it doesn&apos;t do yet:</SectionHead>
+        <SectionHead label="What doesn't it do yet?">Timelake is at v0. The main gaps:</SectionHead>
         <ul className="flex max-w-3xl list-disc flex-col gap-1.5 pl-5 text-sm text-muted-foreground">
           {LIMITATIONS.map((l) => (
             <li key={l}>{l}</li>
@@ -168,7 +168,7 @@ export default function Home() {
       </section>
 
       <section className="flex flex-col gap-6">
-        <SectionHead label="Quick start">Use a local folder, or an s3://, gs:// or az:// location.</SectionHead>
+        <SectionHead label="How do I start?">Use a local folder, or an s3://, gs:// or az:// location.</SectionHead>
         <Tabs defaultValue="cli">
           <TabsList>
             <TabsTrigger value="cli">CLI</TabsTrigger>
@@ -217,7 +217,7 @@ async function Measurements() {
   const systems = Object.keys(run.header.readers).map((s) => SYSTEMS[s] ?? s)
   return (
     <section className="flex flex-col gap-6">
-      <SectionHead label="Measurements">
+      <SectionHead label="How fast is it?">
         Every Monday, timebench, our benchmark tool, streams the same data into {systems.join(", ")} on one AWS instance
         in us-east-2 and times every query from a fresh process. Below: TSBS IoT on S3, run of{" "}
         {run.header.started.slice(0, 10)}. It uses TSBS&apos;s data and queries with our own method, so the numbers
