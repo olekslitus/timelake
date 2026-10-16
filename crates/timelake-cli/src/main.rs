@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
-use timelake::datafusion::prelude::{DataFrame, SessionConfig};
+use timelake::datafusion::prelude::DataFrame;
 use timelake::{Lake, MaintainOptions, Session, TableName, UpgradeOptions};
 
 use crate::info::TableInfo;
@@ -234,7 +234,7 @@ async fn sql(lake: Lake, args: SqlArgs, started: Instant) -> Result<()> {
         std::io::stdin().read_to_string(&mut s)?;
         s
     };
-    let mut config = SessionConfig::new().with_default_catalog_and_schema("timelake", &args.namespace);
+    let mut config = Session::config().with_default_catalog_and_schema("timelake", &args.namespace);
     for (k, v) in &args.settings {
         config = config.set_str(k, v);
     }

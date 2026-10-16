@@ -86,7 +86,11 @@ uv run timebench history --workload tsbs-iot                  # one line per run
   database server's buffer cache stays warm too.
 - On S3 targets every request goes through the proxy, which counts requests (by kind, in AWS mode) and bytes for
   ingest, maintenance and each query run. With `--ttfb-ms` it adds a fixed delay per request (local stores).
-- A failing system or query is recorded and the run goes on.
+- A failing system or query is recorded and the run goes on. `--timeout` (600 s; the reference gets
+  `--reference-timeout`, 1800 s) caps each query process, first run and repeats together. A query that timed out on a
+  system's reader is recorded as `skipped` at that system's later checkpoints instead of running again
+  (`--no-skip-after-timeout` runs it anyway). Profiles set the same as `timeout`, `reference_timeout` and
+  `skip_after_timeout`.
 - `--live-interval S`: while each system ingests, a probe round every S seconds runs the dashboard queries (the
   workload's `dashboard_suite`) in fresh processes with the system's own reader, plus a freshness probe (the newest
   timestamp of `live_table`). Recorded per system as a `live` record: query latency under writes, and how far behind

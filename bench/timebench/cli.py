@@ -76,6 +76,8 @@ def cmd_run(args: argparse.Namespace) -> None:
         queries=set(split(args.queries) or []) or None,
         runs=args.runs,
         timeout=args.timeout,
+        reference_timeout=args.reference_timeout,
+        skip_after_timeout=args.skip_after_timeout,
         ttfb_ms=args.ttfb_ms,
         label=args.label,
         reuse=args.reuse,
@@ -100,6 +102,8 @@ def cmd_profile(args: argparse.Namespace) -> None:
             systems=entry["systems"],
             runs=entry.get("runs", profile.get("runs", 2)),
             timeout=entry.get("timeout", profile.get("timeout", 600)),
+            reference_timeout=entry.get("reference_timeout", profile.get("reference_timeout", 1800)),
+            skip_after_timeout=entry.get("skip_after_timeout", profile.get("skip_after_timeout", True)),
             label=profile.get("label", args.name),
             live_interval=entry.get("live_interval", profile.get("live_interval", 0)),
             concurrency=tuple(entry.get("concurrency", profile.get("concurrency", []))),
@@ -155,6 +159,13 @@ def main() -> None:
     r.add_argument("--queries", help="comma-separated query names (default: all)")
     r.add_argument("--runs", type=int, default=2, help="repeat runs per query after the first run")
     r.add_argument("--timeout", type=int, default=600, help="seconds per query, all runs")
+    r.add_argument("--reference-timeout", type=int, default=1800, help="--timeout for the reference system")
+    r.add_argument(
+        "--skip-after-timeout",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="skip a query at a system's later checkpoints once it timed out there",
+    )
     r.add_argument("--ttfb-ms", type=int, help="latency the proxy adds per request (local object stores)")
     r.add_argument("--param", action="append", default=[], help="workload parameter key=value (repeatable)")
     r.add_argument("--label", default="", help="free text recorded with the run")

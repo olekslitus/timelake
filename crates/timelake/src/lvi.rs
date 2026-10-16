@@ -22,7 +22,8 @@ use crate::sort::{last_per_group, stable_sort};
 use crate::table::Table;
 
 /// Newest row per series among `batches`, or `None` without a time column or rows. On equal
-/// times the later row wins (later input position), matching dedup's "latest write wins".
+/// times the later insertion wins, then the later row (later input position), matching dedup's
+/// "latest write wins".
 pub fn latest_per_series(
     schema: &SchemaRef,
     contract: &Contract,
@@ -31,7 +32,7 @@ pub fn latest_per_series(
     if contract.time_column.is_none() || batches.iter().all(|b| b.num_rows() == 0) {
         return Ok(None);
     }
-    let sorted = stable_sort(&concat_batches(schema, batches)?, &contract.sort_columns())?;
+    let sorted = stable_sort(&concat_batches(schema, batches)?, &contract.write_order())?;
     Ok(Some(last_per_group(&sorted, &contract.series_key)?))
 }
 

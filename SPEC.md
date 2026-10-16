@@ -252,7 +252,8 @@ Users define their own schema. A table becomes a **Timelake table** when it meet
 | `series_key` | Optional (strongly recommended) | One or more columns identifying a series, e.g. `(device_id, metric)`. Drives sort order, dedup, series indexes, bucket partitioning. If absent, the table is treated as a single stream (e.g. an event log). |
 | `dedup_key` | Optional | Defaults to `series_key + time_column`. Set to none to disable dedup. |
 | `chunk_interval` | Optional | Time partition granularity. Auto-chosen from expected volume if omitted. |
-| `_ingest_ts` | Added automatically (opt-out) | Arrival time. Powers late-data detection, last-write-wins dedup, and freshness metrics. |
+| `_ingest_ts` | Added automatically (opt-out) | Insertion time, set by the writer per append (built 2026-10-16, table format 0.3.0, §9.1). Decides which copy of a row is the latest write; powers late-data detection and freshness metrics. |
+| Supplemental time columns | Optional | Other times a sample carries (server, gateway, sent, corrected), declared so Timelake understands them (§7.4, proposed). |
 | All other columns | Free-form | Any Iceberg type, including `variant` on v3. Evolves via Iceberg schema evolution (add / rename / widen / drop). |
 
 **Creating a table:**
@@ -287,6 +288,26 @@ IoT tip: include a `quality` column (OPC-UA-style good/uncertain/bad flag). It i
 - **Sort order:** `(series_key…, time_column)` within each file. This gives excellent compression (delta-encoded timestamps, similar adjacent values) and tight row-group statistics for series pruning.
 - **File sizing:** Target 128–512 MB files with row groups sized for selective reads. Tunable per table.
 - **Encodings:** Parquet `DELTA_BINARY_PACKED` for timestamps and integers, `BYTE_STREAM_SPLIT` for floats, and ZSTD.
+
+
+### 7.4 Supplemental timestamps (proposed 2026-10-16, for review)
+
+**The need.** A sample often carries more than one time. In industrial data the source (a PLC or sensor) stamps when it measured; a server or gateway stamps when it received the value (OPC UA sends both: `SourceTimestamp` and `ServerTimestamp`); a device stamps when it sent a store-and-forward batch; a correction carries when it was made. Timelake adds its own insertion time (`_ingest_ts`, §9.1). Users want to keep these times, query them, measure delays between them, and sometimes decide by one of them which copy of a reading is current.
+
+**Today** they can already be ordinary timestamp columns: stored, queried, and pruned on (every column has Iceberg min/max bounds). What Timelake doesn't know is what they mean.
+
+**Proposal: declare them in the contract.**
+- **Declaring:** `timelake.supplemental-time-columns = server_ts, sent_ts` at creation (`supplemental_time_columns=[…]` in Python, `--time-columns server_ts,sent_ts` on the CLI). Each must be a timestamp; it is stored as µs UTC like the time column. Adding one later waits for schema evolution.
+- **Which copy wins** (setting `latest-by`, §21.9): by default the latest `_ingest_ts`, then the later commit. A table can instead name a column, for example `latest-by = server_ts`, so a resent old reading never overrides a newer correction however late it arrives; `_ingest_ts` and commit order still break ties. Dedup on read, compaction, the last-value index and in-append dedup all use the same order. A numeric version column would work the same way; whether to allow non-timestamp columns is a question below.
+- **What arrived when, from metadata:** each commit records the min and max of every supplemental time and of `_ingest_ts` in its snapshot summary, next to the time ranges it touched (§9.1). "Which partitions got data the server stamped after 10:00" and freshness dashboards then need no scan.
+- **Delays:** per commit, the largest gap between the time column and `_ingest_ts` (and each supplemental time) goes in the snapshot summary, so store-and-forward lateness is visible per gateway or table without a query; SQL can compute it per row (`_ingest_ts - time`).
+- **As of an insertion time:** `SET timelake.as_of_inserted = '2026-01-05 10:00'` answers "what did we know at 10:00": rows inserted later are left out before dedup, so a reading corrected at 10:30 shows its 10:00 value. It reads only `_ingest_ts`, or the column `latest-by` names.
+
+**Questions for review:**
+- **Names:** `supplemental-time-columns` and `latest-by`, or role names (`server-time-column`, `sent-time-column`) that tools could rely on, OPC UA style?
+- **Non-timestamp `latest-by`:** allow a version number or sequence column, or timestamps only?
+- **As-of:** a session setting (switchable, works in any SQL), or also a table function (`as_of_inserted('iot.readings', TIMESTAMP …)`) for one table in a join?
+- **Writers that don't fill them:** a supplemental column may be null (the source didn't send it); `latest-by` then falls back to `_ingest_ts` for those rows. Or require it?
 
 ---
 
@@ -456,6 +477,23 @@ lake.import_from("postgres://…/factory", hypertable="public.sensor_data", tabl
   - `append` (default for raw): Duplicates are removed at compaction and at read time by the Timelake reader, using `dedup_key` and keeping the latest `_ingest_ts`.
   - `upsert`: Same as `append`, but exposed as a first-class semantic for corrections.
 - **Trade-off:** Plain DuckDB may see duplicates in recently written, not-yet-compacted partitions. The Timelake DuckDB extension removes them on read. *Open question Q3.*
+
+**Built so far (2026-10-16).** The key is `(series…, time)`. The latest write wins: the higher Iceberg data sequence number (commit order), and within one append the later row. An append keeps only the last of equal keys, so every file is free of duplicates on its own. The Timelake reader removes copies on read (*merge* below); compaction merges only runs of files next to each other in commit order, and a merged file keeps the newest data sequence number it replaces. The first version cost 1–4.6× on not-yet-compacted IIoT data (§17.6), because there nearly every file of a day overlaps every other; see the measurements below for where it stands now.
+
+**Insertion time, `_ingest_ts` (built 2026-10-16, table format 0.3.0).**
+- Tables created with a time column get a `_ingest_ts` column (timestamp with time zone, µs, not null) unless created with `ingest_time = false` (`--no-ingest-time`). The table records it in `timelake.ingest-time-column`.
+- The writer sets it once per append, to the time the append started, for every row. An input that already has the column (an import keeping the original arrival times) keeps its values.
+- The latest write is the highest `(_ingest_ts, commit order)`; tables without the column use commit order alone. Writers with skewed clocks can therefore order copies by their clocks rather than by commit; commit order breaks ties.
+- Other engines can dedup with it: `QUALIFY row_number() OVER (PARTITION BY <series…>, <time> ORDER BY _ingest_ts DESC) = 1`. Arrival delay (`_ingest_ts - time`) measures store-and-forward lateness per row.
+- It costs little storage (one value per append, run-length encoded). Adding it needs table format 0.3.0: older Timelakes can't open such tables. Existing tables can't gain the column until schema evolution exists.
+
+**Dedup on read strategies** (setting `read-dedup-strategy`, §21.9):
+- **merge** (built): files that may share a key are read with their commit rank, split by a hash of the key, merged in key order per slice, and the last row of each key kept. Only filters on key columns may apply before the merge, so filters on other columns can't prune those files.
+- **keys-first** (built 2026-10-16): pass 1 reads only the key columns (and `_ingest_ts` or the rank) of the files that may share keys, restricted by key filters, merges them and lists the older copies as `(file rank, key)`. Pass 2 is the normal parallel scan with every filter pushed down, anti-joined against that list. Pass 1 reads two or three columns instead of every projected one; pass 2 prunes as freely as a scan without dedup, because the list was built from all rows.
+- **Measured (2026-10-16, IIoT 50 machines × 9 days, before maintenance, laptop):** keys-first was slower on every query (1.3–6×; pass 2's anti-join probe costs more than merging the value columns), so merge is the default and keys-first stays a setting.
+- **What made merge cheap:** splitting by the series hash inside the dedup operator (DataFusion otherwise re-sorts each slice), keeping each series whole in one slice so windows and groups by series need no new sort, filtering rows by key filters and a join's runtime filters before the merge, and comparing neighbouring keys column by column instead of row by row. Window queries (`gaps`, `time-above-limit`) then cost the same with and without dedup; scans of every row (`daily-stats`) still cost 2.6×, which cold-partition compaction removes (1.1×), leaving only the newest day to merge.
+
+**Cold partitions compact sooner (built 2026-10-16, setting `compact-cold-after`).** Inline maintenance rewrites a partition into one sorted, duplicate-free file once its time range ended longer ago than the setting (default 1 hour) and it has more than one file. Backfill into a cold partition triggers the same rewrite after `compact-min-files` new files, not after every append. Dedup on read then only touches the current partitions, and DuckDB sees copies for a shorter time.
 
 ### 9.2 Deletes: immutable by design (D6)
 
@@ -820,7 +858,7 @@ PyIceberg appends are the naive baseline (what v0 compares against today). Publi
   - **Under load (2026-10-15):** fresh readers probe each system while it ingests (query latency under writes, and whether they see every finished commit); then 1, 4 and 16 dashboard clients query at once (queries per second, p50/p95/p99). On AWS, every record carries its cost at S3 list prices; machines are not priced yet.
   - **History:** every run is one file in `bench/results/runs/` with the commit, machine, versions and all measurements. The website charts it per target. Runs from before the harness (v0, Tiger Cloud) were converted.
   - `timebench run tsbs-iot --scale small` reproduces a run; `report` and `history` read them back.
-- **Weekly regression run (decided 2026-10-15):** `bench/profiles/weekly.toml` every Monday on one fixed instance in us-east-2 (c8gd.2xlarge, local NVMe), started by a GitHub Actions workflow through a role limited to that instance. The instance stops itself when done; an hourly job commits finished runs, so a run may take longer than a GitHub job. Same workloads, scales and pinned competitor versions each week, so changes in the history come from Timelake. No benchmark runs in CI.
+- **Weekly regression run (decided 2026-10-15):** `bench/profiles/weekly.toml` every Monday (and `iiot.toml`, industrial IoT, every Thursday, so each fits in a day) on one fixed instance in us-east-2 (c8gd.2xlarge, local NVMe), started by a GitHub Actions workflow through a role limited to that instance. The instance stops itself when done; an hourly job commits finished runs, so a run may take longer than a GitHub job. Same workloads, scales and pinned competitor versions each week, so changes in the history come from Timelake. No benchmark runs in CI.
 - **Spike: a CI gate on request and byte counts.** Those counts don't depend on the machine, so they could catch regressions (an extra metadata read, a lost pruning step) on every push. **Measured (2026-10-15, `spikes/request-counts`):** across three identical runs, query request counts were exact or within one or two requests, bytes within 0.5%, and Timelake's ingest within 0.1%. A gate, Timelake only at `small` scale (3–4 minutes), could require exact counts after maintenance (identical in every run) and allow 5% and 3 requests elsewhere. Not built yet: weekly runs only, for now.
 
 ### 17.5 Phase 0 baseline (2026-10-11)
@@ -1121,6 +1159,7 @@ New product features beyond the original requirements, recorded on 2026-10-13. N
 | F6 | Device sync: devices write locally, Timelake moves the data to the lake | R24 | Local tables, idempotent batches, F7 | 6 |
 | F7 | Edge gateway: local endpoints for data, metrics, logs and blobs, plus a local cache | R25 | Ingest (§13), reader | 6 |
 | F8 | Server mode: Timelake as a database on local disk, the bucket as the durable copy (experiment first) | R26 | Reader, hot tier (§8), F7 | Experiment after §17.6 |
+| F9 | Settings: every engine feature can be turned on or off or tuned, per table, per session or per call | — | Table properties (§7.1) | Now (design for review) |
 
 ### 21.1 F1: Agent access with permission sets (R19)
 
@@ -1255,3 +1294,39 @@ A single binary on site (factory, vessel, rig, substation) that devices send dat
   - no multi-statement transactions;
   - Postgres compatibility limited to the SQL that DataFusion supports;
   - one server holds one site's working set.
+
+### 21.9 F9: Settings (proposed 2026-10-16, for review)
+
+**Principle.** Every engine feature has a setting that turns it on or off or picks its behaviour, a bit like Postgres's configuration variables. During fast development this keeps trade-offs explicit, lets benchmarks measure each feature on and off, and records how behaviour changed.
+
+**One registry.** Every setting is declared once (in `timelake-format`): name, type, default, the levels it may be set at, a description, and the version that added it. From it come the docs page, `SHOW timelake.*` in SQL, `timelake settings` on the CLI, and validation: an unknown name or a bad value is an error, not ignored.
+
+**Levels, the more specific winning:**
+
+| Level | How it's set | Lifetime |
+|---|---|---|
+| Built-in default | the registry | — |
+| Table | table property `timelake.<name>`, at creation or later (`timelake alter`, `Table.set_properties`) | stored in the table, applies to every reader and writer |
+| Session | SQL `SET timelake.<name> = …`; `Session` / `Lake` options in Rust and Python; `--set <name>=<value>` on the CLI | one connection or process |
+| Call | `AppendOptions`, `MaintainOptions`, … | one call |
+
+A setting declares which levels it allows: the time column and series key only at creation; read settings at every level; write settings at table and call level.
+
+**First settings:**
+
+| Setting | Values (default) | Levels | Meaning |
+|---|---|---|---|
+| `read-dedup` | on, off (on when `dedup` is on) | table, session | Remove copies when the Timelake reader reads (§9.1) |
+| `read-dedup-strategy` | merge, keys-first (decided by benchmark) | table, session | How copies are removed on read (§9.1) |
+| `append-dedup` | on, off (on when `dedup` is on) | table, call | Keep only the last of equal keys within one append |
+| `ingest-time-column` | a column name, or none (`_ingest_ts`) | creation | Insertion time per row (§9.1), built |
+| `latest-by` | a column (`_ingest_ts`) | table | Which copy of a row is the latest write (§7.4, proposed) |
+| `as_of_inserted` | a timestamp, or none | session | Leave out rows inserted after it, before dedup (§7.4, proposed) |
+| `compact-cold-after` | a duration, or off (1h) | table, call | Full compaction of partitions whose time range has ended (§9.1) |
+
+The existing `timelake.*` properties become registry entries unchanged. Hard-coded behaviour moves into settings as it's touched: compaction tiers, the small-file ratio, scan parallelism, the planning cache's lifetime.
+
+**Questions for review:**
+- **Names in SQL.** Table properties use kebab-case (`timelake.target-file-size-bytes`), but `SET` needs identifiers. Proposal: SQL uses underscores (`SET timelake.read_dedup = off`) and both spellings name the same setting.
+- **Locked settings.** Should a table be able to forbid a session from overriding a setting (for example turning dedup off and seeing copies)? Proposal: no locking for now; a session override is the reader's choice.
+- **Environment variables.** `TIMELAKE_SET_<NAME>` for process-wide defaults, or only explicit options? Proposal: not until needed.

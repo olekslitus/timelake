@@ -12,6 +12,7 @@ use datafusion::sql::sqlparser::dialect::dialect_from_str;
 use super::catalog::{INFORMATION_SCHEMA, LakeCatalog};
 use super::provider::TimelakeProvider;
 use super::rewrite::LatestRewrite;
+use super::settings::SessionSettings;
 use super::{CATALOG, PLAN_CACHE_TTL};
 use crate::error::{Error, Result};
 use crate::lake::Lake;
@@ -42,7 +43,13 @@ pub struct Session {
 impl Session {
     /// A session with DataFusion's default configuration.
     pub fn new(lake: Lake) -> Self {
-        Self::with_config(lake, SessionConfig::new())
+        Self::with_config(lake, Self::config())
+    }
+
+    /// DataFusion's default configuration with Timelake's settings registered, so `timelake.*`
+    /// keys can be set on it ([`SessionSettings`]).
+    pub fn config() -> SessionConfig {
+        SessionConfig::new().with_option_extension(SessionSettings::default())
     }
 
     /// A session with a custom DataFusion configuration. Its default schema, if set, is the
@@ -59,6 +66,11 @@ impl Session {
             config.with_target_partitions((cores * REMOTE_PARTITIONS_PER_CORE).max(MIN_REMOTE_PARTITIONS))
         } else {
             config
+        };
+        let config = if config.options().extensions.get::<SessionSettings>().is_some() {
+            config
+        } else {
+            config.with_option_extension(SessionSettings::default())
         };
         let config = config
             .with_information_schema(true)
@@ -223,7 +235,7 @@ mod tests {
         let df = Session::new(lake).latest("iot.my-readings").await.unwrap();
         let batches = df.sort(vec![ident("dev\"ice").sort(true, true)]).unwrap().collect().await.unwrap();
         let batch = arrow::compute::concat_batches(&batches[0].schema(), &batches).unwrap();
-        assert_eq!(batch.num_columns(), 3);
+        assert_eq!(batch.num_columns(), 4, "time, device, value and the insertion time");
         let values = batch.column(2).as_any().downcast_ref::<Float64Array>().unwrap();
         assert_eq!(values.values(), &[2.0, 4.0]);
     }

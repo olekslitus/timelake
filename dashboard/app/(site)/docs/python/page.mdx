@@ -22,7 +22,7 @@ Opens a warehouse. `location` is a local path or an `s3://`, `gs://`, `az://`, o
 
 | Method | Returns |
 | --- | --- |
-| `create_table(name, schema, time_column=None, series_key=None, chunk=None, retention=None, dedup=None, properties=None)` | `Table`. `schema` is a pyarrow schema or anything with a `.schema`. `chunk` is "hour", "day", or "month"; `retention` a duration such as "90d"; `properties` extra table properties. |
+| `create_table(name, schema, time_column=None, series_key=None, chunk=None, retention=None, dedup=None, ingest_time=None, properties=None)` | `Table`. `schema` is a pyarrow schema or anything with a `.schema`. `chunk` is "hour", "day", or "month"; `retention` a duration such as "90d"; `ingest_time=False` leaves out the `_ingest_ts` column; `properties` extra table properties. |
 | `table(name)` | `Table` at its latest version. |
 | `tables()` | `list[str]` of `namespace.table`. |
 | `sql(query, namespace="default")` | `pyarrow.Table`. Unqualified names resolve in `namespace`. |

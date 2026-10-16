@@ -88,7 +88,7 @@ class QueryRecord(TypedDict, total=False):
     query: str
     direct: bool
     status: str
-    """``ok``, ``error`` or ``timeout``."""
+    """``ok``, ``error``, ``timeout``, or ``skipped`` (it timed out at an earlier checkpoint)."""
     error: str
     times: list[float]
     """Seconds per run: the first run, then the repeats."""

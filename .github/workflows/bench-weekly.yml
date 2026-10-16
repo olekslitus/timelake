@@ -1,13 +1,15 @@
-# The weekly regression benchmark (SPEC §17.4): bench/profiles/weekly.toml on a fixed instance in us-east-2, at the
-# newest commit on main. "start" (Mondays) starts the instance and the run; the instance stops itself when done.
-# "collect" (hourly, Monday to Wednesday) commits finished run files to bench/results/runs and the website's copy,
-# so the history on timelake.dev/benchmarks grows each week. Setup: bench/infra/README.md, "Weekly runs".
+# The weekly regression benchmark (SPEC §17.4) on a fixed instance in us-east-2, at the newest commit on main.
+# "start" starts the instance and a run: bench/profiles/weekly.toml on Mondays, iiot.toml (industrial IoT) on
+# Thursdays; the instance stops itself when done. "collect" (hourly, Monday to Friday) commits finished run files to
+# bench/results/runs and the website's copy, so the history on timelake.dev/benchmarks grows each week.
+# Setup: bench/infra/README.md, "Weekly runs".
 name: Weekly benchmark
 
 on:
   schedule:
-    - cron: "0 6 * * 1" # start: Mondays 06:00 UTC
-    - cron: "30 * * * 1-3" # collect: hourly, Monday to Wednesday
+    - cron: "0 6 * * 1" # start weekly: Mondays 06:00 UTC
+    - cron: "0 6 * * 4" # start iiot: Thursdays 06:00 UTC
+    - cron: "30 * * * 1-5" # collect: hourly, Monday to Friday
   workflow_dispatch:
     inputs:
       action:
@@ -15,6 +17,11 @@ on:
         type: choice
         options: [start, collect]
         default: start
+      profile:
+        description: the profile a start runs (bench/profiles)
+        type: choice
+        options: [weekly, iiot]
+        default: weekly
 
 permissions:
   contents: write # commit the results
@@ -30,7 +37,9 @@ env:
 jobs:
   start:
     name: Start the run
-    if: vars.BENCH_ROLE_ARN != '' && (github.event.schedule == '0 6 * * 1' || inputs.action == 'start')
+    if: >-
+      vars.BENCH_ROLE_ARN != '' &&
+      (github.event.schedule == '0 6 * * 1' || github.event.schedule == '0 6 * * 4' || inputs.action == 'start')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -41,11 +50,13 @@ jobs:
         with:
           role-to-assume: ${{ vars.BENCH_ROLE_ARN }}
           aws-region: us-east-2
-      - run: bench/infra/weekly.sh start "$GITHUB_SHA"
+      - run: bench/infra/weekly.sh start "$GITHUB_SHA" "$PROFILE"
+        env:
+          PROFILE: ${{ github.event.schedule == '0 6 * * 4' && 'iiot' || inputs.profile || 'weekly' }}
 
   collect:
     name: Commit finished runs
-    if: vars.BENCH_ROLE_ARN != '' && (github.event.schedule == '30 * * * 1-3' || inputs.action == 'collect')
+    if: vars.BENCH_ROLE_ARN != '' && (github.event.schedule == '30 * * * 1-5' || inputs.action == 'collect')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

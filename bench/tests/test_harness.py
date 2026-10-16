@@ -131,6 +131,35 @@ def test_a_run_ingests_maintains_and_queries(system: str) -> None:
 
 
 @pytest.mark.usefixtures("bench_dirs")
+@pytest.mark.parametrize("skip", [True, False])
+def test_a_timed_out_query_is_skipped_at_later_checkpoints(skip: bool, monkeypatch: pytest.MonkeyPatch) -> None:
+    measured: list[tuple[str, str]] = []
+
+    def measure(_spec: harness.RunSpec, _system: object, reader: str, query: Query, at: harness.At) -> QueryRecord:
+        measured.append((at.checkpoint, query.name))
+        r = harness.query_record("parquet", reader, query, at)
+        r.update(status="timeout" if query.name == "count" else "ok", times=[0.1], rows=1)
+        return r
+
+    monkeypatch.setattr(harness, "measure", measure)
+    spec = harness.RunSpec(
+        workload=Tiny(), target=Target("local"), systems=["parquet"], readers=["duckdb"], skip_after_timeout=skip
+    )
+    path = harness.RUNS / "run.jsonl"
+    earlier = harness.query_pass(spec, path, ["parquet"], harness.At("ingested", None))
+    later = harness.query_pass(spec, path, ["parquet"], harness.At("maintained", None), earlier)
+    count = next(r for r in later if r["query"] == "count")
+    if skip:
+        assert count["status"] == "skipped"
+        assert count["error"] == "timed out at ingested"
+        assert ("maintained", "count") not in measured
+    else:
+        assert count["status"] == "timeout"
+        assert ("maintained", "count") in measured
+    assert all(r["status"] == "ok" for r in later if r["query"] != "count")
+
+
+@pytest.mark.usefixtures("bench_dirs")
 def test_iceberg_maintenance_rewrites_each_day_into_one_file() -> None:
     start = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
     data = pa.table(

@@ -84,6 +84,11 @@ class RunSpec:
     """Repeat runs per query after the first run."""
     timeout: int = 600
     """Seconds per query process (all its runs)."""
+    reference_timeout: int = 1800
+    """``timeout`` for the reference system, whose answers the checks need."""
+    skip_after_timeout: bool = True
+    """A query that timed out on a system's reader is skipped at that system's later checkpoints (status
+    ``skipped``), instead of waiting out the timeout again."""
     ttfb_ms: int | None = None
     """Latency the proxy adds per request (local object stores)."""
     label: str = ""
@@ -279,7 +284,19 @@ def query_pass(
             for query in spec.workload.queries():
                 if spec.queries and query.name not in spec.queries:
                     continue
-                r = measure(spec, spec.system(s), reader, query, at)
+                timed_out = next(
+                    (
+                        q["checkpoint"]
+                        for q in [*(earlier or []), *results]
+                        if (q["system"], q["reader"], q["query"], q["status"]) == (s, reader, query.name, "timeout")
+                    ),
+                    None,
+                )
+                if spec.skip_after_timeout and timed_out is not None:
+                    r = query_record(s, reader, query, at)
+                    r.update(status="skipped", error=f"timed out at {timed_out}")
+                else:
+                    r = measure(spec, spec.system(s), reader, query, at)
                 expected = reference_answer([*(earlier or []), *results], at.checkpoint, query.name)
                 if expected is not None and s != REFERENCE and r["status"] == "ok":
                     correct = same_answer(r, expected)
@@ -522,16 +539,21 @@ def proxy_delta(before: ProxyStats | None) -> IngestRecord:
     return out
 
 
-def measure(spec: RunSpec, system: System, reader: str, query: Query, at: At) -> QueryRecord:
-    """Runs one query in a fresh process: its record, with ``status`` ok, error or timeout."""
-    out: QueryRecord = {
+def query_record(system: str, reader: str, query: Query, at: At) -> QueryRecord:
+    """A query record's identifying fields."""
+    return {
         "kind": "query",
-        "system": system.name,
+        "system": system,
         "reader": reader,
         "checkpoint": at.checkpoint,
         "suite": query.suite,
         "query": query.name,
     }
+
+
+def measure(spec: RunSpec, system: System, reader: str, query: Query, at: At) -> QueryRecord:
+    """Runs one query in a fresh process: its record, with ``status`` ok, error or timeout."""
+    out = query_record(system.name, reader, query, at)
     sql = query.sql_for(reader, at.now)
     place = system.place
     if reader in system.commands:
@@ -542,7 +564,8 @@ def measure(spec: RunSpec, system: System, reader: str, query: Query, at: At) ->
     before = PROXY.stats() if counted(system) else None
     try:
         # A failing query is a result to record, not a reason to stop: no check=True.
-        proc = subprocess.run(cmd, input=sql, capture_output=True, text=True, timeout=spec.timeout, check=False)
+        timeout = spec.reference_timeout if system.name == REFERENCE else spec.timeout
+        proc = subprocess.run(cmd, input=sql, capture_output=True, text=True, timeout=timeout, check=False)
     except subprocess.TimeoutExpired:
         return {**out, "status": "timeout"}
     if proc.returncode != 0:

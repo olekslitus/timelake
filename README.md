@@ -105,6 +105,8 @@ SELECT * FROM iceberg_scan('s3://lake/wh/iot/readings');   -- reads metadata/ver
 | `timelake.retention` | forever | Drop partitions older than this, e.g. `90d` |
 | `timelake.auto-maintain` | `true` | Run compaction, retention and expiry inline after appends |
 | `timelake.compact-min-files` | `8` | Inline compaction merges a size tier once it has this many files |
+| `timelake.compact-cold-after` | `1h` | Inline maintenance rewrites a partition whole once newer data is this far past its end (`off`: size tiers only) |
+| `timelake.read-dedup` | as `timelake.dedup` | The Timelake reader returns only the latest write of each `(series, time)`; `SET timelake.read_dedup = false` per session |
 | `timelake.target-file-size-bytes` | 256 MiB | Compaction output size |
 | `timelake.row-group-rows` | 1048576 | Parquet row group size (page indexes keep single-series reads selective) |
 | `timelake.snapshot-retention` | `1h` | Expire snapshots older than this… |

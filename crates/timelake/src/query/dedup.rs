@@ -4,36 +4,38 @@
 //!
 //! Every file is sorted by the key and free of duplicates on its own (a write keeps the last of
 //! equal keys), so only files of one partition whose key bounds overlap can share a key. Such files
-//! are read with their commit rank as a constant column, split by a hash of the key (every copy of
-//! a key lands in the same slice), each slice merged by `(series…, time, rank)`, and [`DedupExec`]
+//! are read with their commit rank as a constant column, split by a hash of the series (every copy
+//! of a key lands in the same slice), each slice merged by `(series…, time, rank)`, and [`DedupExec`]
 //! keeps the last row of each key in each slice.
 
 use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
-use arrow::array::{RecordBatch, UInt32Array};
-use arrow::compute::{concat_batches, take_record_batch};
+use arrow::array::{BooleanArray, RecordBatch};
+use arrow::compute::kernels::cmp::not_distinct;
+use arrow::compute::{and, concat_batches, filter_record_batch};
 use arrow::datatypes::SchemaRef;
-use arrow::row::{OwnedRow, RowConverter, SortField};
 use datafusion::common::Statistics;
 use datafusion::config::ConfigOptions;
-use datafusion::error::{DataFusionError, Result as DfResult};
+use datafusion::error::Result as DfResult;
 use datafusion::execution::TaskContext;
+use datafusion::logical_expr::utils::split_conjunction;
+use datafusion::logical_expr::{Expr, Operator};
 use datafusion::physical_expr::expressions::Column;
 use datafusion::physical_expr::{EquivalenceProperties, LexOrdering, OrderingRequirements, PhysicalExpr};
 use datafusion::physical_plan::execution_plan::{Boundedness, EmissionType};
 use datafusion::physical_plan::filter_pushdown::{ChildFilterDescription, FilterDescription, FilterPushdownPhase};
+use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
+use datafusion::physical_plan::repartition::RepartitionExec;
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::{
-    DisplayAs, DisplayFormatType, Distribution, ExecutionPlan, ExecutionPlanProperties, PlanProperties,
-    SendableRecordBatchStream,
+    DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, PlanProperties, SendableRecordBatchStream,
 };
 use futures::StreamExt;
 use iceberg::spec::{Datum, PrimitiveLiteral};
 
 use super::stats::field_id;
-use crate::sort::ASCENDING;
 use crate::table::LiveEntry;
 use crate::write::file_partition;
 
@@ -112,29 +114,77 @@ fn union(parent: &mut [usize], a: usize, b: usize) {
     parent[ra.max(rb)] = ra.min(rb);
 }
 
-/// Keeps the last row of each run of equal keys, in each input partition: the input is
-/// hash-partitioned by the key (so all copies of a key are in one partition) and sorted by the key
-/// and, among equal keys, oldest write first.
+/// The fewest values `filters` (all must hold) allow for one of the `series` columns: `col = literal` or
+/// `col IN (literals…)`. `None` if no filter pins a series column.
+pub(super) fn series_values(filters: &[Expr], series: &[String]) -> Option<usize> {
+    let pinned = |e: &Expr| match e {
+        Expr::BinaryExpr(b) if b.op == Operator::Eq => match (b.left.as_ref(), b.right.as_ref()) {
+            (Expr::Column(c), Expr::Literal(..)) | (Expr::Literal(..), Expr::Column(c)) => {
+                series.contains(&c.name).then_some(1)
+            }
+            _ => None,
+        },
+        Expr::InList(l) if !l.negated && l.list.iter().all(|v| matches!(v, Expr::Literal(..))) => {
+            matches!(l.expr.as_ref(), Expr::Column(c) if series.contains(&c.name)).then_some(l.list.len())
+        }
+        _ => None,
+    };
+    filters.iter().flat_map(split_conjunction).filter_map(pinned).min()
+}
+
+/// Which rows [`DedupExec`] returns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Keep {
+    /// The newest write of each key: the deduplicated rows.
+    Latest,
+    /// The older copies of each key (strategy keys-first: what a later scan must leave out).
+    Older,
+}
+
+/// Keeps the newest write of each key. Its input is sorted by the key and the commit rank (each
+/// partition on its own); it splits the rows into `slices` by a hash of the series (of the key,
+/// without a series), so every copy of a key lands in the same slice, merges each slice in order
+/// and keeps the last row of each key. `keys` are `(series…, time)`.
+///
+/// The split is built here, not left to the optimizer: DataFusion would replace an order-preserving
+/// repartition with a plain one and a full sort of each slice unless `prefer_existing_sort` is on.
 #[derive(Debug)]
 pub(super) struct DedupExec {
     input: Arc<dyn ExecutionPlan>,
+    /// The order-preserving hash split of `input`, shared by the output partitions.
+    split: Arc<RepartitionExec>,
     /// Key column indices in the input schema.
     keys: Vec<usize>,
     ordering: LexOrdering,
+    by_series: bool,
+    keep: Keep,
     properties: Arc<PlanProperties>,
+    metrics: ExecutionPlanMetricsSet,
 }
 
 impl DedupExec {
-    /// `ordering` is the input's sort order, the key columns `keys` first.
-    pub(super) fn new(input: Arc<dyn ExecutionPlan>, keys: Vec<usize>, ordering: LexOrdering) -> Self {
-        let eq = EquivalenceProperties::new_with_orderings(input.schema(), [ordering.clone()]);
-        let properties = Arc::new(PlanProperties::new(
-            eq,
-            input.output_partitioning().clone(),
-            EmissionType::Incremental,
-            Boundedness::Bounded,
-        ));
-        Self { input, keys, ordering, properties }
+    /// `ordering` is the input's sort order, the key columns `keys` first; `slices` the number of
+    /// output partitions, split by a hash of the series (`by_series`) or of the whole key.
+    pub(super) fn try_new(
+        input: Arc<dyn ExecutionPlan>,
+        keys: Vec<usize>,
+        ordering: LexOrdering,
+        slices: usize,
+        by_series: bool,
+        keep: Keep,
+    ) -> DfResult<Self> {
+        let schema = input.schema();
+        // Copies share the series, so splitting by it alone is enough, and leaves each series whole
+        // in one slice, sorted by time: what windows and groups by series need downstream. When a
+        // query reads only a few series, splitting by the whole key keeps every core busy.
+        let by = if by_series && keys.len() > 1 { &keys[..keys.len() - 1] } else { &keys[..] };
+        let hash = by.iter().map(|&k| Arc::new(Column::new(schema.field(k).name(), k)) as Arc<dyn PhysicalExpr>);
+        let partitioning = Partitioning::Hash(hash.collect(), slices.max(1));
+        let split = Arc::new(RepartitionExec::try_new(input.clone(), partitioning.clone())?.with_preserve_order());
+        let eq = EquivalenceProperties::new_with_orderings(schema, [ordering.clone()]);
+        let properties =
+            Arc::new(PlanProperties::new(eq, partitioning, EmissionType::Incremental, Boundedness::Bounded));
+        Ok(Self { input, split, keys, ordering, by_series, keep, properties, metrics: ExecutionPlanMetricsSet::new() })
     }
 }
 
@@ -142,7 +192,12 @@ impl DisplayAs for DedupExec {
     fn fmt_as(&self, _t: DisplayFormatType, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let schema = self.input.schema();
         let keys: Vec<&str> = self.keys.iter().map(|&k| schema.field(k).name().as_str()).collect();
-        write!(f, "DedupExec: keep last of [{}]", keys.join(", "))
+        let slices = self.properties.output_partitioning().partition_count();
+        let keep = match self.keep {
+            Keep::Latest => "last",
+            Keep::Older => "older copies",
+        };
+        write!(f, "DedupExec: keep {keep} of [{}], {slices} slices by hash", keys.join(", "))
     }
 }
 
@@ -157,12 +212,6 @@ impl ExecutionPlan for DedupExec {
 
     fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
         vec![&self.input]
-    }
-
-    fn required_input_distribution(&self) -> Vec<Distribution> {
-        let schema = self.input.schema();
-        let keys = self.keys.iter().map(|&k| Arc::new(Column::new(schema.field(k).name(), k)) as Arc<dyn PhysicalExpr>);
-        vec![Distribution::HashPartitioned(keys.collect())]
     }
 
     fn required_input_ordering(&self) -> Vec<Option<OrderingRequirements>> {
@@ -181,25 +230,37 @@ impl ExecutionPlan for DedupExec {
         self: Arc<Self>,
         mut children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> DfResult<Arc<dyn ExecutionPlan>> {
-        Ok(Arc::new(Self::new(children.swap_remove(0), self.keys.clone(), self.ordering.clone())))
+        let slices = self.properties.output_partitioning().partition_count();
+        let (keys, ordering, by_series, keep) = (self.keys.clone(), self.ordering.clone(), self.by_series, self.keep);
+        Ok(Arc::new(Self::try_new(children.swap_remove(0), keys, ordering, slices, by_series, keep)?))
     }
 
     fn execute(&self, partition: usize, context: Arc<TaskContext>) -> DfResult<SendableRecordBatchStream> {
         let schema = self.input.schema();
-        let fields =
-            self.keys.iter().map(|&k| SortField::new_with_options(schema.field(k).data_type().clone(), ASCENDING));
-        let mut state =
-            LastOfKey { keys: self.keys.clone(), rows: RowConverter::new(fields.collect())?, pending: None };
-        let input = self.input.execute(partition, context)?.map(Some).chain(futures::stream::once(async { None }));
+        let mut state = match self.keep {
+            Keep::Latest => State::Latest(LastOfKey { keys: self.keys.clone(), held: None }),
+            Keep::Older => State::Older(OlderCopies { keys: self.keys.clone(), last: None }),
+        };
+        let baseline = BaselineMetrics::new(&self.metrics, partition);
+        let input = self.split.execute(partition, context)?.map(Some).chain(futures::stream::once(async { None }));
         let output = input.filter_map(move |item| {
+            let timer = baseline.elapsed_compute().timer();
             let out = match item {
                 Some(Ok(batch)) => state.push(&batch).transpose(),
                 Some(Err(e)) => Some(Err(e)),
-                None => state.pending.take().map(|(_, row)| Ok(row)),
+                None => state.finish().map(Ok),
             };
+            timer.done();
+            if let Some(Ok(batch)) = &out {
+                baseline.record_output(batch.num_rows());
+            }
             futures::future::ready(out)
         });
         Ok(Box::pin(RecordBatchStreamAdapter::new(schema, output)))
+    }
+
+    fn metrics(&self) -> Option<MetricsSet> {
+        Some(self.metrics.clone_inner())
     }
 
     fn gather_filters_for_pushdown(
@@ -221,43 +282,122 @@ impl ExecutionPlan for DedupExec {
     }
 }
 
-/// The streaming state of [`DedupExec`]: the last row seen, held back until the next row shows
-/// whether a newer write of its key follows.
-struct LastOfKey {
-    keys: Vec<usize>,
-    rows: RowConverter,
-    pending: Option<(OwnedRow, RecordBatch)>,
+/// The streaming state of a [`DedupExec`] partition.
+enum State {
+    Latest(LastOfKey),
+    Older(OlderCopies),
 }
 
-impl LastOfKey {
-    /// The rows of `batch` (and the held-back row before it) that are the last of their key.
+impl State {
+    fn push(&mut self, batch: &RecordBatch) -> DfResult<Option<RecordBatch>> {
+        match self {
+            Self::Latest(s) => s.push(batch),
+            Self::Older(s) => s.push(batch),
+        }
+    }
+
+    fn finish(&mut self) -> Option<RecordBatch> {
+        match self {
+            Self::Latest(s) => s.finish(),
+            // The last row seen has no newer copy.
+            Self::Older(_) => None,
+        }
+    }
+}
+
+/// The older copies of each key: every row followed by a row with the same key.
+struct OlderCopies {
+    keys: Vec<usize>,
+    /// The previous batch's last row, until the next batch shows whether it has a newer copy.
+    last: Option<RecordBatch>,
+}
+
+impl OlderCopies {
     fn push(&mut self, batch: &RecordBatch) -> DfResult<Option<RecordBatch>> {
         let n = batch.num_rows();
         if n == 0 {
             return Ok(None);
         }
-        let keys: Vec<_> = self.keys.iter().map(|&k| batch.column(k).clone()).collect();
-        let rows = self.rows.convert_columns(&keys)?;
         let mut out = vec![];
-        if let Some((key, row)) = self.pending.take()
-            && key.row() != rows.row(0)
+        if let Some(last) = self.last.replace(batch.slice(n - 1, 1))
+            && same_keys(&self.keys, &last, &batch.slice(0, 1))?.value(0)
         {
-            out.push(row);
+            out.push(last);
         }
-        let last = (0..n - 1)
-            .filter(|&i| rows.row(i) != rows.row(i + 1))
-            .map(u32::try_from)
-            .collect::<Result<UInt32Array, _>>()
-            .map_err(|e| DataFusionError::External(Box::new(e)))?;
-        if !last.is_empty() {
-            out.push(take_record_batch(batch, &last)?);
+        if n > 1 {
+            let same = same_keys(&self.keys, &batch.slice(0, n - 1), &batch.slice(1, n - 1))?;
+            if same.true_count() > 0 {
+                out.push(filter_record_batch(&batch.slice(0, n - 1), &same)?);
+            }
         }
-        self.pending = Some((rows.row(n - 1).owned(), batch.slice(n - 1, 1)));
-        if out.is_empty() {
+        match out.len() {
+            0 => Ok(None),
+            1 => Ok(out.pop()),
+            _ => Ok(Some(concat_batches(&batch.schema(), &out)?)),
+        }
+    }
+}
+
+/// The streaming state of [`DedupExec`]. Each batch keeps the last of equal keys within it; the
+/// previous batch is held back until the next one shows whether its last row has a newer copy.
+/// Without copies (the common case) batches pass through unchanged.
+struct LastOfKey {
+    keys: Vec<usize>,
+    held: Option<RecordBatch>,
+}
+
+impl LastOfKey {
+    /// The held-back batch, now that `batch` follows it (minus its last row if `batch` starts with
+    /// a newer copy of that row's key).
+    fn push(&mut self, batch: &RecordBatch) -> DfResult<Option<RecordBatch>> {
+        if batch.num_rows() == 0 {
             return Ok(None);
         }
-        Ok(Some(concat_batches(&batch.schema(), &out)?))
+        let current = self.last_of_each_key(batch)?;
+        let out = match self.held.replace(current) {
+            None => None,
+            Some(held) => {
+                let n = held.num_rows();
+                let next = self.held.as_ref().map(|b| b.slice(0, 1));
+                let superseded = next.map(|next| same_keys(&self.keys, &held.slice(n - 1, 1), &next)).transpose()?;
+                let held = if superseded.is_some_and(|s| s.value(0)) { held.slice(0, n - 1) } else { held };
+                (held.num_rows() > 0).then_some(held)
+            }
+        };
+        Ok(out)
     }
+
+    /// The last batch, at the end of the input.
+    fn finish(&mut self) -> Option<RecordBatch> {
+        self.held.take()
+    }
+
+    /// `batch` without rows whose next row has the same key (the batch itself if there are none).
+    fn last_of_each_key(&self, batch: &RecordBatch) -> DfResult<RecordBatch> {
+        let n = batch.num_rows();
+        if n < 2 {
+            return Ok(batch.clone());
+        }
+        let same = same_keys(&self.keys, &batch.slice(0, n - 1), &batch.slice(1, n - 1))?;
+        if same.true_count() == 0 {
+            return Ok(batch.clone());
+        }
+        let keep: BooleanArray = same.iter().map(|s| Some(s != Some(true))).chain([Some(true)]).collect();
+        Ok(filter_record_batch(batch, &keep)?)
+    }
+}
+
+/// Row by row, whether `a` and `b` (as long) have the same `keys`; nulls equal nulls.
+fn same_keys(keys: &[usize], a: &RecordBatch, b: &RecordBatch) -> DfResult<BooleanArray> {
+    let mut same: Option<BooleanArray> = None;
+    for &k in keys {
+        let column = not_distinct(a.column(k), b.column(k))?;
+        same = Some(match same {
+            Some(s) => and(&s, &column)?,
+            None => column,
+        });
+    }
+    Ok(same.unwrap_or_else(|| BooleanArray::from(vec![true; a.num_rows()])))
 }
 
 #[cfg(test)]
@@ -309,18 +449,48 @@ mod tests {
         assert_eq!(values, [2.0, 3.0, 4.0]);
     }
 
+    /// The older-copies mode returns exactly the rows the default mode drops.
+    #[test]
+    fn lists_the_older_copies_across_batches() {
+        let mut state = State::Older(OlderCopies { keys: vec![0], last: None });
+        let mut out = vec![];
+        for b in [batch(&[1, 1, 2], &["a", "b", "c"]), batch(&[2, 3], &["d", "e"]), batch(&[3, 3], &["f", "g"])] {
+            out.extend(state.push(&b).unwrap());
+        }
+        out.extend(state.finish());
+        assert_eq!(tags(&out), ["a", "c", "e", "f"]);
+    }
+
     /// Runs of equal keys that span batches keep their last row, wherever it is.
     #[test]
     fn keeps_the_last_row_of_each_key_across_batches() {
-        let fields = vec![SortField::new_with_options(DataType::Int32, ASCENDING)];
-        let mut state = LastOfKey { keys: vec![0], rows: RowConverter::new(fields).unwrap(), pending: None };
+        let mut state = LastOfKey { keys: vec![0], held: None };
         let mut out = vec![];
         for b in
             [batch(&[1, 1, 2], &["a", "b", "c"]), batch(&[2, 3], &["d", "e"]), batch(&[3], &["f"]), batch(&[], &[])]
         {
             out.extend(state.push(&b).unwrap());
         }
-        out.extend(state.pending.take().map(|(_, row)| row));
+        out.extend(state.finish());
         assert_eq!(tags(&out), ["b", "d", "f"]);
+        // Nulls equal nulls, and a run can span a whole batch.
+        let mut state = LastOfKey { keys: vec![0], held: None };
+        let nullable = |keys: &[Option<i32>], tags: &[&str]| {
+            let schema =
+                Schema::new(vec![Field::new("k", DataType::Int32, true), Field::new("tag", DataType::Utf8, false)]);
+            RecordBatch::try_new(
+                Arc::new(schema),
+                vec![Arc::new(Int32Array::from(keys.to_vec())), Arc::new(StringArray::from(tags.to_vec()))],
+            )
+            .unwrap()
+        };
+        let mut out = vec![];
+        for b in
+            [nullable(&[None, None], &["a", "b"]), nullable(&[None], &["c"]), nullable(&[None, Some(1)], &["d", "e"])]
+        {
+            out.extend(state.push(&b).unwrap());
+        }
+        out.extend(state.finish());
+        assert_eq!(tags(&out), ["d", "e"]);
     }
 }
