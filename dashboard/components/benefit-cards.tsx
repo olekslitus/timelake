@@ -1,6 +1,8 @@
 import { Activity, ArrowRight, Cloud, Gauge, Layers, PiggyBank, ServerOff, type LucideIcon } from "lucide-react"
 import Link from "next/link"
+import type { ReactNode } from "react"
 
+import { type Latency, LatencyChart } from "@/components/latency-chart"
 import { type ArtKind, UseCaseArt } from "@/components/use-case-art"
 import { latestByTarget, loadRuns, rankings } from "@/lib/benchmarks"
 import { cn } from "@/lib/utils"
@@ -12,38 +14,65 @@ type Card = {
   body: string
   link: { label: string; href: string }
   wide?: boolean
+  /** Shown instead of the picture. */
+  figure?: ReactNode
 }
 
-/** Timelake's query times in the newest weekly S3 run, against the other systems in it. */
-async function speed(): Promise<string> {
+/** The value at percentile `p` (0..1) of `values`, by nearest rank. */
+const percentile = (values: number[], p: number) => {
+  const sorted = values.toSorted((a, b) => a - b)
+  return sorted[Math.max(0, Math.ceil(p * sorted.length) - 1)] ?? 0
+}
+
+/**
+ * Timelake's query times in the newest weekly S3 run: p50, p90, and p99 after maintenance, cold (each query's first
+ * run, in a fresh process) and warm (the mean of its repeats), and how much faster it is than the other lakes.
+ */
+async function speed(): Promise<{ body: string; latency: Latency[] | null }> {
   const run = latestByTarget(await loadRuns(), "tsbs-iot").find(
     (r) => r.header.target === "aws-s3" && !r.header.variant,
   )
   const ranked = run ? rankings(run) : []
-  const rows = (prefix: string) => ranked.find((r) => r.title.startsWith(prefix))?.rows ?? []
-  const maintained = rows("Queries, after").find((r) => r.timelake)
-  const ingested = rows("Queries, right")
+  const ingested = ranked.find((r) => r.title.startsWith("Queries, right"))?.rows ?? []
   const own = ingested.find((r) => r.timelake)
   const others = ingested.filter((r) => r.system !== "timelake").map((r) => r.value)
-  if (!maintained || !own || others.length === 0) return "Measured every week against other lakes on S3."
+  const queries = (run?.queries ?? []).filter(
+    (q) => q.system === "timelake" && q.reader === "timelake" && q.checkpoint === "maintained" && q.status === "ok",
+  )
+  if (!own || others.length === 0 || queries.length === 0)
+    return { body: "Measured every week against other lakes on S3.", latency: null }
   const x = (v: number) => Math.round(v / own.value)
   const range = `${x(Math.min(...others))}⁠–⁠${x(Math.max(...others))}×`
-  return `Queries on S3 return in ${Math.round(maintained.value * 1000)} ms, and are ${range} faster than other lakes on fresh data.`
+  const cold = queries.map((q) => q.times[0])
+  const warm = queries.map((q) => {
+    const repeats = q.times.slice(1)
+    return repeats.length > 0 ? repeats.reduce((a, b) => a + b, 0) / repeats.length : q.times[0]
+  })
+  return {
+    body: `Query times on S3 over ${queries.length} TSBS IoT queries, and ${range} faster than other lakes on fresh data.`,
+    latency: [0.5, 0.9, 0.99].map((p) => ({
+      label: `p${Math.round(p * 100)}`,
+      warm: percentile(warm, p),
+      cold: percentile(cold, p),
+    })),
+  }
 }
 
 /** Columns in a wide card's picture, twice a narrow one's. */
 const WIDE_COLS = 128
 
 export async function BenefitCards() {
+  const fast = await speed()
   // Two rows of three: a wide card first in the top row, in the middle of the bottom one.
   const cards: Card[] = [
     {
       icon: Gauge,
       art: "fast",
       title: "Fast",
-      body: await speed(),
+      body: fast.body,
       link: { label: "Benchmarks", href: "/benchmarks" },
       wide: true,
+      figure: fast.latency && <LatencyChart rows={fast.latency} />,
     },
     {
       icon: PiggyBank,
@@ -92,9 +121,7 @@ export async function BenefitCards() {
             data-use-case
             className={cn("flex flex-col gap-2 rounded-lg border bg-card p-6", c.wide && "md:col-span-2")}
           >
-            <div className="mb-3">
-              <UseCaseArt kind={c.art} cols={c.wide ? WIDE_COLS : undefined} />
-            </div>
+            <div className="mb-3">{c.figure ?? <UseCaseArt kind={c.art} cols={c.wide ? WIDE_COLS : undefined} />}</div>
             <h3 className="flex items-center gap-2.5 text-lg font-normal">
               <Icon className="size-4.5 text-muted-foreground" aria-hidden />
               {c.title}
