@@ -14,6 +14,7 @@ A table’s contract and maintenance policy live in Iceberg table properties und
 | `timelake.auto-maintain` | true | Run size-tiered compaction, retention and snapshot expiry inline after appends. |
 | `timelake.compact-min-files` | 8 | Inline compaction merges a size tier of a partition once it has this many files. |
 | `timelake.compact-cold-after` | 1h | Inline maintenance rewrites a partition whole (sorted, duplicates removed) once the table holds data newer than the partition's end by this much and the partition has two small files, whether the append touched it or not. `off` leaves it to the size tiers. |
+| `timelake.ingest-time-column` | `_ingest_ts` for time-series tables | The column holding each row's insertion time, set at creation (`ingest_time=False` / `--no-ingest-time` leaves it out). Each append fills it with the time the append started, unless the input brings its own values. Among rows with the same (series, time), the latest insertion wins, then the later commit. |
 | `timelake.read-dedup` | as `timelake.dedup` | The Timelake reader returns only the latest write of each (series, time). A session can override it: `SET timelake.read_dedup = false`. |
 | `timelake.read-dedup-strategy` | merge | How the reader removes copies: `merge` merges the files that may share keys in key order; `keys-first` lists the older copies from the key columns, then reads the files like any scan and leaves them out (slower on the IIoT benchmark). A session can override it: `SET timelake.read_dedup_strategy = 'keys-first'`. |
 | `timelake.target-file-size-bytes` | 268435456 (256 MiB) | Size at which compaction output and writes roll to a new file. |
@@ -21,7 +22,7 @@ A table’s contract and maintenance policy live in Iceberg table properties und
 | `timelake.snapshot-retention` | 1h | Expire snapshots older than this… |
 | `timelake.min-snapshots` | 5 | …but always keep at least this many, |
 | `timelake.max-snapshots` | 100 | and never keep more than this many (older ones expire even if younger than the retention). |
-| `timelake.format-version` | `0.2.0` for new tables; absent means `0.1.0` | The [table format](/docs/upgrading#table-format), a semantic version. Timelake refuses tables of a newer format it can't handle; `timelake upgrade` brings a table to the current format. |
+| `timelake.format-version` | `0.3.0` for new tables; absent means `0.1.0` | The [table format](/docs/upgrading#table-format), a semantic version. Timelake refuses tables of a newer format it can't handle; `timelake upgrade` brings a table to the current format. |
 | `timelake.keep-snapshots-until` | (none) | No snapshot expires before this time, in milliseconds since the epoch. `upgrade` sets it so the upgrade can be rolled back. |
 | `timelake.head-format` | arrow | Format of the head object (`metadata/timelake-head`): `arrow`, `json`, a registered codec, or `none` for no head. See [Architecture](/docs/architecture#head-object). |
 | `timelake.head-inline-bytes` | 1048576 (1 MiB) | Room in the head for the last-value index, then the Parquet footers of the newest files. What doesn’t fit is read separately. |

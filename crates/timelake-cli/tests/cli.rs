@@ -89,7 +89,7 @@ fn upgrade_and_rollback() {
     timelake(&warehouse, &["append", "iot.r", csv]);
 
     let (out, _) = timelake(&warehouse, &["upgrade", "--dry-run"]);
-    assert!(out.contains("iot.r: would:") && out.contains("set table format 0.1.0 → 0.2.0"), "{out}");
+    assert!(out.contains("iot.r: would:") && out.contains("set table format 0.1.0 → 0.3.0"), "{out}");
     let (out, _) = timelake(&warehouse, &["upgrade", "iot.r"]);
     let undo = out.lines().find_map(|l| l.split("undo: ").nth(1)).unwrap_or_else(|| panic!("{out}"));
     let (out, _) = timelake(&warehouse, &["upgrade", "iot.r"]);

@@ -19,7 +19,7 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use arrow::datatypes::{DataType, Schema as ArrowSchema};
+use arrow::datatypes::{DataType, Field, Schema as ArrowSchema, TimeUnit};
 use bytes::Bytes;
 use futures::{FutureExt, StreamExt, TryStreamExt};
 use iceberg::TableCreation;
@@ -35,9 +35,10 @@ use crate::error::{Error, Result};
 use crate::head::{self, Codecs, HeadCodec};
 use crate::name::TableName;
 use crate::property;
-use crate::schema::normalize_schema;
+use crate::schema::{UTC, normalize_schema};
 use crate::storage::{Storage, warehouse_url};
 use crate::table::{FreshnessCheck, LiveEntry, Table};
+use timelake_format::INGEST_TIME_COLUMN;
 
 /// Where a cold load starts.
 enum Start {
@@ -442,7 +443,11 @@ fn new_table_metadata(
     schema: &ArrowSchema,
     opts: &TableOptions,
 ) -> Result<TableMetadata> {
-    let normalized = normalize_schema(schema, opts.time_column.as_deref())?;
+    let mut normalized = normalize_schema(schema, opts.time_column.as_deref())?;
+    let ingest_time = opts.time_column.is_some() && opts.ingest_time.unwrap_or(true);
+    if ingest_time {
+        normalized = with_ingest_time_column(&normalized)?;
+    }
     let ice_schema = arrow_schema_to_schema_auto_assign_ids(&normalized)?;
     let mut creation = TableCreation::builder()
         .name(name.name().to_string())
@@ -464,6 +469,9 @@ fn new_table_metadata(
         None if !opts.series_key.is_empty() => return Err(Error::invalid("series_key requires a time_column")),
         None => {}
     }
+    if ingest_time {
+        props.insert(property::INGEST_TIME_COLUMN.into(), INGEST_TIME_COLUMN.into());
+    }
     if let Some(retention) = opts.retention {
         props.insert(property::RETENTION.into(), format_duration(retention));
     }
@@ -471,6 +479,21 @@ fn new_table_metadata(
     Contract::from_properties(&props)?; // validate
     creation.properties = props;
     Ok(TableMetadataBuilder::from_table_creation(creation)?.build()?.metadata)
+}
+
+/// `schema` with the insertion-time column (`_ingest_ts`, a timestamp, never null) at the end, or
+/// in its place if the schema has it already (an import keeping arrival times).
+fn with_ingest_time_column(schema: &ArrowSchema) -> Result<ArrowSchema> {
+    let ingest = Field::new(INGEST_TIME_COLUMN, DataType::Timestamp(TimeUnit::Microsecond, Some(UTC.into())), false);
+    let mut fields: Vec<Field> = schema.fields().iter().map(|f| f.as_ref().clone()).collect();
+    match fields.iter_mut().find(|f| f.name() == INGEST_TIME_COLUMN) {
+        Some(f) if matches!(f.data_type(), DataType::Timestamp(_, _)) => *f = ingest,
+        Some(f) => {
+            return Err(Error::invalid(format!("{INGEST_TIME_COLUMN} must be a timestamp, got {}", f.data_type())));
+        }
+        None => fields.push(ingest),
+    }
+    Ok(ArrowSchema::new(fields))
 }
 
 /// Partitions a time-series table by time, sorts it by `(series_key…, time)`, and records the

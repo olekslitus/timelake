@@ -256,11 +256,12 @@ async fn scan_deduplicated(
     let schema = table.schema();
     let keys = table.contract().sort_columns();
     let ranked = Ranked::new(table, files)?;
-    let (requested, read) = read_columns(&schema, projection, &keys)?;
+    let order = table.contract().write_order();
+    let (requested, read) = read_columns(&schema, projection, &order)?;
     let plan = ranked.scan(table, state, url, read, key_filters, true).await?;
     let read_schema = plan.schema();
     let key_positions = keys.iter().map(|k| read_schema.index_of(k)).collect::<Result<Vec<_>, _>>()?;
-    let ordering = rank_ordering(&read_schema, &keys)?;
+    let ordering = rank_ordering(&read_schema, &order)?;
     let slices = state.config().target_partitions();
     let series = &keys[..keys.len().saturating_sub(usize::from(table.contract().time_column.is_some()))];
     let by_series = series_values(key_filters, series).is_none_or(|n| n >= slices);
@@ -284,11 +285,12 @@ async fn scan_keys_first(
     let schema = table.schema();
     let keys = table.contract().sort_columns();
     let ranked = Ranked::new(table, files)?;
+    let order = table.contract().write_order();
     let key_read: Vec<usize> =
-        keys.iter().map(|k| schema.index_of(k)).chain([Ok(schema.fields().len())]).collect::<Result<_, _>>()?;
+        order.iter().map(|k| schema.index_of(k)).chain([Ok(schema.fields().len())]).collect::<Result<_, _>>()?;
     let pass1 = ranked.scan(table, state, url, key_read, key_filters, true).await?;
     let pass1_schema = pass1.schema();
-    let ordering = rank_ordering(&pass1_schema, &keys)?;
+    let ordering = rank_ordering(&pass1_schema, &order)?;
     let key_positions: Vec<usize> = (0..keys.len()).collect();
     let slices = state.config().target_partitions();
     let older: Arc<dyn ExecutionPlan> =
@@ -345,9 +347,9 @@ fn project(plan: Arc<dyn ExecutionPlan>, n: usize) -> DfResult<Arc<dyn Execution
     Ok(Arc::new(ProjectionExec::try_new(output, plan)?))
 }
 
-/// `(series…, time, rank)` ascending, over `schema`.
-fn rank_ordering(schema: &SchemaRef, keys: &[String]) -> DfResult<LexOrdering> {
-    let ranked: Vec<String> = keys.iter().cloned().chain([RANK.to_string()]).collect();
+/// `(series…, time, insertion time, rank)` ascending (`order` is the write order), over `schema`.
+fn rank_ordering(schema: &SchemaRef, order: &[String]) -> DfResult<LexOrdering> {
+    let ranked: Vec<String> = order.iter().cloned().chain([RANK.to_string()]).collect();
     key_ordering(schema, &ranked)?.ok_or_else(|| DataFusionError::Internal("dedup scan without a key".into()))
 }
 
@@ -393,7 +395,9 @@ impl Ranked {
         ordered: bool,
     ) -> DfResult<Arc<dyn ExecutionPlan>> {
         let schema = table.schema();
-        let keys = table.contract().sort_columns();
+        // A Timelake file has each key once, so sorted by the key it is also sorted by the key and
+        // the insertion time; with the rank (constant per file) that is the merge order.
+        let order = table.contract().write_order();
         let rank_field = Arc::new(Field::new(RANK, DataType::UInt32, false));
         let table_schema = TableSchema::new(schema.clone(), vec![rank_field]);
         let with_rank = table_schema.table_schema().clone();
@@ -409,7 +413,7 @@ impl Ranked {
             .with_statistics(stats)
             .with_projection_indices(Some(read))?;
         if ordered && self.sorted {
-            builder = builder.with_output_ordering(vec![rank_ordering(&with_rank, &keys)?]);
+            builder = builder.with_output_ordering(vec![rank_ordering(&with_rank, &order)?]);
         }
         // The filters remove rows, not only prune row groups: merging fewer rows saves more than
         // filtering them costs (a join's runtime filters on the key included). It's also required:
@@ -420,7 +424,7 @@ impl Ranked {
         let format = ParquetFormat::default().with_options(options);
         let plan = format.create_physical_plan(state, builder.build()).await?;
         if ordered && !self.sorted {
-            let ordering = rank_ordering(&plan.schema(), &keys)?;
+            let ordering = rank_ordering(&plan.schema(), &order)?;
             return Ok(Arc::new(SortExec::new(ordering, plan).with_preserve_partitioning(true)));
         }
         Ok(plan)

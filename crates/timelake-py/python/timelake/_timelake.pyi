@@ -49,6 +49,7 @@ class Lake:
         chunk: str | None = None,
         retention: str | None = None,
         dedup: bool | None = None,
+        ingest_time: bool | None = None,
         properties: Mapping[str, str] | None = None,
     ) -> Table:
         """Creates a table.
@@ -63,7 +64,9 @@ class Lake:
             series_key: Columns that identify a series, such as ``["device_id"]``.
             chunk: Time partition size: ``"hour"``, ``"day"`` or ``"month"``.
             retention: Drop partitions older than this duration, such as ``"90d"``.
-            dedup: Keep only the last row per ``(series_key, time)`` when compacting.
+            dedup: Keep only the latest write per ``(series_key, time)``.
+            ingest_time: Add an ``_ingest_ts`` column with each row's insertion time (default: on
+                for time-series tables). The latest insertion wins among rows with the same key.
             properties: Extra table properties.
 
         Raises:

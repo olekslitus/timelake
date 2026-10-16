@@ -123,6 +123,8 @@ pub struct TableOptions {
     pub dedup: Option<bool>,
     /// Drop partitions entirely older than this.
     pub retention: Option<Duration>,
+    /// Add an insertion-time column (`_ingest_ts`) to a time-series table (default: on).
+    pub ingest_time: Option<bool>,
     /// Extra Iceberg/Timelake table properties.
     pub properties: HashMap<String, String>,
 }
@@ -138,6 +140,8 @@ pub struct Contract {
     pub chunk: Option<Chunk>,
     /// Remove rows with the same `(series_key, time)` during compaction; the latest write wins.
     pub dedup: bool,
+    /// The column holding each row's insertion time, if the table has one.
+    pub ingest_time_column: Option<String>,
     /// Partitions entirely older than this are dropped by maintenance.
     pub retention: Option<Duration>,
     /// Compaction writes files of about this size.
@@ -194,6 +198,7 @@ impl Contract {
                 .unwrap_or_default(),
             chunk: p.get(property::CHUNK).map(str::parse).transpose()?,
             dedup: p.flag(property::DEDUP, false)?,
+            ingest_time_column: p.get(property::INGEST_TIME_COLUMN).map(str::to_string),
             retention: p.duration(property::RETENTION)?,
             target_file_size: p.number(property::TARGET_FILE_SIZE, Self::DEFAULT_TARGET_FILE_SIZE)?,
             row_group_rows: p.number(property::ROW_GROUP_ROWS, Self::DEFAULT_ROW_GROUP_ROWS)?,
@@ -252,6 +257,14 @@ impl Contract {
     pub fn sort_columns(&self) -> Vec<String> {
         let mut v = self.series_key.clone();
         v.extend(self.time_column.clone());
+        v
+    }
+
+    /// The sort key, then the insertion time: in this order (ties kept in commit order) the last
+    /// row of each `(series…, time)` is its latest write.
+    pub fn write_order(&self) -> Vec<String> {
+        let mut v = self.sort_columns();
+        v.extend(self.ingest_time_column.clone());
         v
     }
 }

@@ -235,7 +235,7 @@ mod tests {
         let df = Session::new(lake).latest("iot.my-readings").await.unwrap();
         let batches = df.sort(vec![ident("dev\"ice").sort(true, true)]).unwrap().collect().await.unwrap();
         let batch = arrow::compute::concat_batches(&batches[0].schema(), &batches).unwrap();
-        assert_eq!(batch.num_columns(), 3);
+        assert_eq!(batch.num_columns(), 4, "time, device, value and the insertion time");
         let values = batch.column(2).as_any().downcast_ref::<Float64Array>().unwrap();
         assert_eq!(values.values(), &[2.0, 4.0]);
     }

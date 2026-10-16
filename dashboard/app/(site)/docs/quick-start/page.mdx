@@ -164,8 +164,9 @@ table      iot.readings (v4, Iceberg V2)
 time       time (chunk day)
 series key device_id
 dedup      true
+inserted   _ingest_ts
 retention  forever
-schema     time Timestamp(µs), device_id Utf8, temp Float64, humidity Int64
+schema     time Timestamp(µs), device_id Utf8, temp Float64, humidity Int64, _ingest_ts Timestamp(µs, "+00:00")
 data       7 rows in 1 files, 0.0 MB
 …
 ```
@@ -204,7 +205,7 @@ batch = pa.table(
     schema=schema,
 )
 print(t.append(batch, batch_id="gateway-7-000001"))
-# {'rows': 3, 'files': 1, 'bytes': 1399, 'version': 2, 'commit_ms': 6.8, 'attempts': 1, 'duplicate': False}
+# {'rows': 3, 'files': 1, 'bytes': 1804, 'version': 2, 'commit_ms': 6.8, 'attempts': 1, 'duplicate': False}
 
 print(lake.sql("SELECT device_id, avg(temp) AS avg_temp FROM iot.py_readings GROUP BY 1 ORDER BY 1").to_pylist())
 # [{'device_id': 'pump-1', 'avg_temp': 61.6}, {'device_id': 'pump-2', 'avg_temp': 58.9}]

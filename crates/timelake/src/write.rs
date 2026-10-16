@@ -4,8 +4,9 @@
 use std::sync::Arc;
 
 use arrow::array::{Array, ArrayRef, Int32Array, RecordBatch, TimestampMicrosecondArray};
-use arrow::compute::{cast, concat_batches, take_record_batch};
-use arrow::datatypes::{DataType, TimeUnit};
+use arrow::compute::kernels::zip::zip;
+use arrow::compute::{cast, concat_batches, is_not_null, take_record_batch};
+use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use iceberg::spec::{DataContentType, DataFile, Literal, PrimitiveLiteral, Struct};
 use iceberg::writer::CurrentFileStatus;
 use iceberg::writer::file_writer::{FileWriter, FileWriterBuilder, ParquetWriterBuilder};
@@ -16,7 +17,7 @@ use parquet::schema::types::ColumnPath;
 
 use crate::contract::Contract;
 use crate::error::{Error, Result};
-use crate::schema::align_batch;
+use crate::schema::{UTC, align_batch};
 use crate::sort::{ASCENDING, columns, last_per_group, stable_sort_indices};
 use crate::storage::Uploads;
 use crate::table::Table;
@@ -41,8 +42,13 @@ pub(crate) fn sort_and_split(table: &Table, batches: &[RecordBatch]) -> Result<V
 
 fn sort_and_split_all(table: &Table, batches: &[RecordBatch]) -> Result<Vec<PartitionRows>> {
     let schema = table.schema();
-    let aligned =
-        batches.iter().filter(|b| b.num_rows() > 0).map(|b| align_batch(b, &schema)).collect::<Result<Vec<_>>>()?;
+    let now = chrono::Utc::now().timestamp_micros();
+    let ingest = table.contract().ingest_time_column.as_deref();
+    let aligned = batches
+        .iter()
+        .filter(|b| b.num_rows() > 0)
+        .map(|b| align_batch(&ingest.map_or_else(|| Ok(b.clone()), |c| with_ingest_time(b, c, now))?, &schema))
+        .collect::<Result<Vec<_>>>()?;
     if aligned.is_empty() {
         return Ok(vec![]);
     }
@@ -50,7 +56,7 @@ fn sort_and_split_all(table: &Table, batches: &[RecordBatch]) -> Result<Vec<Part
     let partitions = partition_values(&all, table.contract())?;
     let mut keys: Vec<ArrayRef> =
         partitions.iter().map(|p| Arc::new(Int32Array::from(p.clone())) as ArrayRef).collect();
-    keys.extend(columns(&all, &table.contract().sort_columns())?);
+    keys.extend(columns(&all, &table.contract().write_order())?);
     if keys.is_empty() {
         return Ok(vec![(None, all)]);
     }
@@ -67,6 +73,31 @@ fn sort_and_split_all(table: &Table, batches: &[RecordBatch]) -> Result<Vec<Part
         offset += run.len();
     }
     Ok(out)
+}
+
+/// `batch` with its insertion-time `column` set to `now` (µs since the epoch) where it is missing or
+/// null; values a caller supplied (an import keeping arrival times) stay.
+pub(crate) fn with_ingest_time(batch: &RecordBatch, column: &str, now: i64) -> Result<RecordBatch> {
+    let n = batch.num_rows();
+    let fill = || Arc::new(TimestampMicrosecondArray::from_value(now, n).with_timezone(UTC)) as ArrayRef;
+    let schema = batch.schema();
+    let Ok(i) = schema.index_of(column) else {
+        let mut fields: Vec<_> = schema.fields().iter().cloned().collect();
+        fields.push(Arc::new(Field::new(column, DataType::Timestamp(TimeUnit::Microsecond, Some(UTC.into())), false)));
+        let mut columns = batch.columns().to_vec();
+        columns.push(fill());
+        return Ok(RecordBatch::try_new(Arc::new(Schema::new(fields)), columns)?);
+    };
+    if batch.column(i).null_count() == 0 {
+        return Ok(batch.clone());
+    }
+    let given = cast(batch.column(i), &DataType::Timestamp(TimeUnit::Microsecond, Some(UTC.into())))?;
+    let filled = zip(&is_not_null(&given)?, &given, &fill())?;
+    let mut fields: Vec<_> = schema.fields().iter().cloned().collect();
+    fields[i] = Arc::new(Field::new(column, filled.data_type().clone(), false));
+    let mut columns = batch.columns().to_vec();
+    columns[i] = filled;
+    Ok(RecordBatch::try_new(Arc::new(Schema::new(fields)), columns)?)
 }
 
 /// Partition value of every row (`None` for unpartitioned tables).

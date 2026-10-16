@@ -252,7 +252,8 @@ Users define their own schema. A table becomes a **Timelake table** when it meet
 | `series_key` | Optional (strongly recommended) | One or more columns identifying a series, e.g. `(device_id, metric)`. Drives sort order, dedup, series indexes, bucket partitioning. If absent, the table is treated as a single stream (e.g. an event log). |
 | `dedup_key` | Optional | Defaults to `series_key + time_column`. Set to none to disable dedup. |
 | `chunk_interval` | Optional | Time partition granularity. Auto-chosen from expected volume if omitted. |
-| `_ingest_ts` | Added automatically (opt-out) | Arrival time. Powers late-data detection, last-write-wins dedup, and freshness metrics. |
+| `_ingest_ts` | Added automatically (opt-out) | Insertion time, set by the writer per append (built 2026-10-16, table format 0.3.0, §9.1). Decides which copy of a row is the latest write; powers late-data detection and freshness metrics. |
+| Supplemental time columns | Optional | Other times a sample carries (server, gateway, sent, corrected), declared so Timelake understands them (§7.4, proposed). |
 | All other columns | Free-form | Any Iceberg type, including `variant` on v3. Evolves via Iceberg schema evolution (add / rename / widen / drop). |
 
 **Creating a table:**
@@ -287,6 +288,26 @@ IoT tip: include a `quality` column (OPC-UA-style good/uncertain/bad flag). It i
 - **Sort order:** `(series_key…, time_column)` within each file. This gives excellent compression (delta-encoded timestamps, similar adjacent values) and tight row-group statistics for series pruning.
 - **File sizing:** Target 128–512 MB files with row groups sized for selective reads. Tunable per table.
 - **Encodings:** Parquet `DELTA_BINARY_PACKED` for timestamps and integers, `BYTE_STREAM_SPLIT` for floats, and ZSTD.
+
+
+### 7.4 Supplemental timestamps (proposed 2026-10-16, for review)
+
+**The need.** A sample often carries more than one time. In industrial data the source (a PLC or sensor) stamps when it measured; a server or gateway stamps when it received the value (OPC UA sends both: `SourceTimestamp` and `ServerTimestamp`); a device stamps when it sent a store-and-forward batch; a correction carries when it was made. Timelake adds its own insertion time (`_ingest_ts`, §9.1). Users want to keep these times, query them, measure delays between them, and sometimes decide by one of them which copy of a reading is current.
+
+**Today** they can already be ordinary timestamp columns: stored, queried, and pruned on (every column has Iceberg min/max bounds). What Timelake doesn't know is what they mean.
+
+**Proposal: declare them in the contract.**
+- **Declaring:** `timelake.supplemental-time-columns = server_ts, sent_ts` at creation (`supplemental_time_columns=[…]` in Python, `--time-columns server_ts,sent_ts` on the CLI). Each must be a timestamp; it is stored as µs UTC like the time column. Adding one later waits for schema evolution.
+- **Which copy wins** (setting `latest-by`, §21.9): by default the latest `_ingest_ts`, then the later commit. A table can instead name a column, for example `latest-by = server_ts`, so a resent old reading never overrides a newer correction however late it arrives; `_ingest_ts` and commit order still break ties. Dedup on read, compaction, the last-value index and in-append dedup all use the same order. A numeric version column would work the same way; whether to allow non-timestamp columns is a question below.
+- **What arrived when, from metadata:** each commit records the min and max of every supplemental time and of `_ingest_ts` in its snapshot summary, next to the time ranges it touched (§9.1). "Which partitions got data the server stamped after 10:00" and freshness dashboards then need no scan.
+- **Delays:** per commit, the largest gap between the time column and `_ingest_ts` (and each supplemental time) goes in the snapshot summary, so store-and-forward lateness is visible per gateway or table without a query; SQL can compute it per row (`_ingest_ts - time`).
+- **As of an insertion time:** `SET timelake.as_of_inserted = '2026-01-05 10:00'` answers "what did we know at 10:00": rows inserted later are left out before dedup, so a reading corrected at 10:30 shows its 10:00 value. It reads only `_ingest_ts`, or the column `latest-by` names.
+
+**Questions for review:**
+- **Names:** `supplemental-time-columns` and `latest-by`, or role names (`server-time-column`, `sent-time-column`) that tools could rely on, OPC UA style?
+- **Non-timestamp `latest-by`:** allow a version number or sequence column, or timestamps only?
+- **As-of:** a session setting (switchable, works in any SQL), or also a table function (`as_of_inserted('iot.readings', TIMESTAMP …)`) for one table in a join?
+- **Writers that don't fill them:** a supplemental column may be null (the source didn't send it); `latest-by` then falls back to `_ingest_ts` for those rows. Or require it?
 
 ---
 
@@ -459,7 +480,7 @@ lake.import_from("postgres://…/factory", hypertable="public.sensor_data", tabl
 
 **Built so far (2026-10-16).** The key is `(series…, time)`. The latest write wins: the higher Iceberg data sequence number (commit order), and within one append the later row. An append keeps only the last of equal keys, so every file is free of duplicates on its own. The Timelake reader removes copies on read (*merge* below); compaction merges only runs of files next to each other in commit order, and a merged file keeps the newest data sequence number it replaces. The first version cost 1–4.6× on not-yet-compacted IIoT data (§17.6), because there nearly every file of a day overlaps every other; see the measurements below for where it stands now.
 
-**Insertion time, `_ingest_ts` (proposed 2026-10-16, agreed: on by default).**
+**Insertion time, `_ingest_ts` (built 2026-10-16, table format 0.3.0).**
 - Tables created with a time column get a `_ingest_ts` column (timestamp with time zone, µs, not null) unless created with `ingest_time = false` (`--no-ingest-time`). The table records it in `timelake.ingest-time-column`.
 - The writer sets it once per append, to the time the append started, for every row. An input that already has the column (an import keeping the original arrival times) keeps its values.
 - The latest write is the highest `(_ingest_ts, commit order)`; tables without the column use commit order alone. Writers with skewed clocks can therefore order copies by their clocks rather than by commit; commit order breaks ties.
@@ -1298,7 +1319,9 @@ A setting declares which levels it allows: the time column and series key only a
 | `read-dedup` | on, off (on when `dedup` is on) | table, session | Remove copies when the Timelake reader reads (§9.1) |
 | `read-dedup-strategy` | merge, keys-first (decided by benchmark) | table, session | How copies are removed on read (§9.1) |
 | `append-dedup` | on, off (on when `dedup` is on) | table, call | Keep only the last of equal keys within one append |
-| `ingest-time-column` | a column name, or none (`_ingest_ts`) | creation | Insertion time per row (§9.1) |
+| `ingest-time-column` | a column name, or none (`_ingest_ts`) | creation | Insertion time per row (§9.1), built |
+| `latest-by` | a column (`_ingest_ts`) | table | Which copy of a row is the latest write (§7.4, proposed) |
+| `as_of_inserted` | a timestamp, or none | session | Leave out rows inserted after it, before dedup (§7.4, proposed) |
 | `compact-cold-after` | a duration, or off (1h) | table, call | Full compaction of partitions whose time range has ended (§9.1) |
 
 The existing `timelake.*` properties become registry entries unchanged. Hard-coded behaviour moves into settings as it's touched: compaction tiers, the small-file ratio, scan parallelism, the planning cache's lifetime.

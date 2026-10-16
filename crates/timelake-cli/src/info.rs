@@ -131,6 +131,7 @@ impl TableInfo {
             "series_key": c.series_key,
             "chunk": c.chunk.map(Chunk::as_str),
             "dedup": c.dedup,
+            "ingest_time_column": c.ingest_time_column,
             "retention_days": c.retention.map(|d| d.as_secs() / DAY_SECS),
             "schema": self.columns.iter().map(|(name, ty, nullable)| json!({ "name": name, "type": ty, "nullable": nullable })).collect::<Vec<_>>(),
             "rows": self.rows,
@@ -169,6 +170,7 @@ impl fmt::Display for TableInfo {
             let key = if c.series_key.is_empty() { "-".to_string() } else { c.series_key.join(", ") };
             writeln!(f, "series key {key}")?;
             writeln!(f, "dedup      {}", c.dedup)?;
+            writeln!(f, "inserted   {}", c.ingest_time_column.as_deref().unwrap_or("-"))?;
             let retention =
                 c.retention.map_or_else(|| "forever".to_string(), |d| format!("{}d", d.as_secs() / DAY_SECS));
             writeln!(f, "retention  {retention}")?;

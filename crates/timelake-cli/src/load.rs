@@ -38,6 +38,9 @@ pub(crate) struct TableDef {
     /// Disable dedup of identical (series, time) rows during compaction.
     #[arg(long)]
     no_dedup: bool,
+    /// Leave out the insertion-time column of a time-series table.
+    #[arg(long)]
+    no_ingest_time: bool,
     /// Extra table property k=v.
     #[arg(long = "prop", value_parser = parse_kv)]
     props: Vec<(String, String)>,
@@ -50,6 +53,7 @@ impl TableDef {
             series_key: self.series_key.clone(),
             chunk: self.chunk.as_deref().map(str::parse).transpose()?,
             dedup: self.no_dedup.then_some(false),
+            ingest_time: self.no_ingest_time.then_some(false),
             retention: self.retention.as_deref().map(parse_duration).transpose()?,
             properties: self.props.iter().cloned().collect(),
         })

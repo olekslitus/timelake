@@ -90,4 +90,11 @@ SELECT * FROM iceberg_scan('s3://my-bucket/lake/iot/readings');
 SELECT * FROM read_parquet('s3://my-bucket/lake/iot/readings/metadata/lvi-….parquet');
 ```
 
-Duplicates written since the last compaction are visible to DuckDB until compaction removes them. The Timelake reader skips them: it merges the files that may hold the same `(series, time)` and keeps the latest write.
+Duplicates written since the last compaction are visible to DuckDB until compaction removes them. The Timelake reader skips them: it merges the files that may hold the same `(series, time)` and keeps the latest write. In DuckDB, the insertion time picks the same rows:
+
+```sql
+SELECT * FROM iceberg_scan('s3://my-bucket/lake/iot/readings')
+QUALIFY row_number() OVER (PARTITION BY device_id, time ORDER BY _ingest_ts DESC) = 1;
+```
+
+Two copies inserted in the same microsecond tie here; Timelake then takes the later commit.

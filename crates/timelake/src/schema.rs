@@ -8,7 +8,7 @@ use arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use crate::error::{Error, Result};
 
 /// The time zone timestamps with any zone are stored in.
-const UTC: &str = "+00:00";
+pub(crate) const UTC: &str = "+00:00";
 
 /// Maps Arrow types to ones with a lossless Iceberg equivalent: any timestamp → microseconds,
 /// small ints → int, dictionaries → their value type, large/view strings → strings. The time

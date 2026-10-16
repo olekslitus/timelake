@@ -11,9 +11,10 @@ Tables have a version of their own, the **table format**, stored as the table pr
 | Format | Written by | What it adds |
 | --- | --- | --- |
 | 0.1.0 | Timelake 0.1, 0.2 (no property) | Iceberg tables with Timelake’s layout and last-value index |
-| 0.2.0 | Timelake 0.3 and later | The head object, `metadata/timelake-head`: first queries in one round trip |
+| 0.2.0 | Timelake 0.3, 0.4 | The head object, `metadata/timelake-head`: first queries in one round trip |
+| 0.3.0 | Timelake 0.5 and later | An insertion-time column, `_ingest_ts`, that writers fill (`timelake.ingest-time-column`) |
 
-Timelake 0.3.0 wrote the format as `2`; it reads as 0.2.0, so those tables need no upgrade.
+Timelake 0.3.0 wrote the format as `2`; it reads as 0.2.0, so those tables need no upgrade. Upgrading a table to 0.3.0 doesn't add `_ingest_ts`: a table's columns are fixed at creation for now, so only tables created by Timelake 0.5 or later have it.
 
 ### What works across versions
 

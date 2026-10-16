@@ -60,6 +60,9 @@ pub mod property {
     /// Inline maintenance rewrites a partition whole (sorted, duplicates removed) once the table
     /// holds data newer than the partition's end by this much, or `off`.
     pub const COMPACT_COLD_AFTER: &str = "timelake.compact-cold-after";
+    /// The column holding each row's insertion time (`_ingest_ts`), set by the writer; absent for
+    /// tables without one. Among rows with the same `(series…, time)` the latest insertion wins.
+    pub const INGEST_TIME_COLUMN: &str = "timelake.ingest-time-column";
     /// The Timelake reader removes copies of a `(series…, time)` when reading (default: as `dedup`).
     pub const READ_DEDUP: &str = "timelake.read-dedup";
     /// How the Timelake reader removes copies: `merge` (default) or `keys-first` (SPEC §9.1).
@@ -115,7 +118,11 @@ pub mod summary {
 ///
 /// - 0.1.0: tables written by Timelake 0.1 and 0.2 (no property).
 /// - 0.2.0: the head object (`metadata/timelake-head`), from Timelake 0.3 (which wrote it as `2`).
-pub const FORMAT_VERSION: FormatVersion = FormatVersion::new(0, 2, 0);
+/// - 0.3.0: an insertion-time column (`timelake.ingest-time-column`) that writers fill.
+pub const FORMAT_VERSION: FormatVersion = FormatVersion::new(0, 3, 0);
+
+/// The name of the insertion-time column of new time-series tables.
+pub const INGEST_TIME_COLUMN: &str = "_ingest_ts";
 
 /// Optional warehouse-level index of table names, for stores that cannot list (plain HTTPS).
 pub const TABLES_INDEX: &str = "timelake-tables.json";

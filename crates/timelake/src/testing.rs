@@ -190,6 +190,10 @@ pub(crate) async fn append_unsorted(table: &Table, partition: Option<i32>, batch
     let props = writer_properties(table).unwrap();
     let uploads = Uploads::default();
     let spec_id = table.metadata().default_partition_spec().spec_id();
+    let batch = match &table.contract().ingest_time_column {
+        Some(c) => crate::write::with_ingest_time(&batch, c, 0).unwrap(),
+        None => batch,
+    };
     let batch = crate::schema::align_batch(&batch, &table.schema()).unwrap();
     let files = write_partition(table, partition, [batch], &props, &uploads).await.unwrap().into_iter().map(|f| {
         DataFileBuilder::default()

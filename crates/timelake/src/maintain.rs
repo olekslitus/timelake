@@ -312,11 +312,11 @@ async fn read_file(table: &Table, df: &DataFile) -> Result<Vec<RecordBatch>> {
     batches.iter().map(|b| align_batch(b, &schema)).collect()
 }
 
-/// Sorts by `(series…, time)` with input order as the tiebreak, then keeps the last row of each
-/// `(series…, time)` group if dedup is on.
+/// Sorts by `(series…, time, insertion time)` with input order as the tiebreak, then keeps the last
+/// row of each `(series…, time)` group if dedup is on.
 fn sort_dedup(table: &Table, batches: &[RecordBatch]) -> Result<RecordBatch> {
     let columns = table.contract().sort_columns();
-    let sorted = stable_sort(&concat_batches(&table.schema(), batches)?, &columns)?;
+    let sorted = stable_sort(&concat_batches(&table.schema(), batches)?, &table.contract().write_order())?;
     if table.contract().dedup && !columns.is_empty() { last_per_group(&sorted, &columns) } else { Ok(sorted) }
 }
 

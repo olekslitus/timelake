@@ -20,8 +20,18 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
   partition's end, inline maintenance rewrites the partition into sorted, duplicate-free files when it has two small
   files, even if the append didn't touch it.
 
+- **Insertion time.** Time-series tables get an `_ingest_ts` column: each append fills it with the time the append
+  started, unless the input brings its own values (an import keeping arrival times). Among rows with the same
+  `(series, time)` the latest insertion wins, then the later commit, everywhere: within an append, on read, in
+  compaction and in the last-value index. DuckDB can pick the same rows with
+  `QUALIFY row_number() OVER (PARTITION BY <series>, <time> ORDER BY _ingest_ts DESC) = 1`. Leave it out with
+  `ingest_time=False` (Python) or `--no-ingest-time` (CLI); `timelake info` shows it.
+
 ### Changed
 
+- **Table format 0.3.0** for new tables (the insertion-time column). Timelake 0.4 and older can't open them: upgrade
+  every reader and writer first. `timelake upgrade` raises older tables to 0.3.0 but doesn't add `_ingest_ts` (a
+  table's columns are fixed at creation for now).
 - With dedup on, rows with the same `(series, time)` within one append keep only the last, so the append's `rows`
   counts them once. Files written by earlier versions may still hold such copies until compaction.
 - The TypeScript client's WebAssembly reader is about 4% smaller (6.7 MB), built with Rust 1.99.

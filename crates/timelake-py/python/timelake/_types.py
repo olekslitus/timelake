@@ -97,6 +97,7 @@ class TableInfo(TypedDict):
     series_key: list[str]
     chunk: str | None
     dedup: bool
+    ingest_time_column: str | None
     rows: int
     files: int
     bytes: int

@@ -32,7 +32,13 @@ def test_unqualified_table_goes_to_default_namespace(lake: timelake.Lake) -> Non
 
 
 def test_table_schema_round_trips(table: timelake.Table) -> None:
+    assert table.schema.names == [*SCHEMA.names, "_ingest_ts"], "a time-series table records insertion times"
+
+
+def test_ingest_time_can_be_left_out(lake: timelake.Lake) -> None:
+    table = lake.create_table("iot.plain", SCHEMA, time_column="time", ingest_time=False)
     assert table.schema.names == SCHEMA.names
+    assert table.info()["ingest_time_column"] is None
 
 
 def test_table_location_is_under_the_lake(lake: timelake.Lake, table: timelake.Table) -> None:
@@ -44,7 +50,8 @@ def test_table_repr_shows_name_and_version(table: timelake.Table) -> None:
 
 
 def test_create_table_accepts_an_object_with_a_schema(lake: timelake.Lake) -> None:
-    assert lake.create_table("iot.copy", readings(), time_column="time").schema.names == SCHEMA.names
+    copy = lake.create_table("iot.copy", readings(), time_column="time", ingest_time=False)
+    assert copy.schema.names == SCHEMA.names
 
 
 @pytest.mark.usefixtures("table")
@@ -186,7 +193,7 @@ def test_upgrade_and_rollback(lake: timelake.Lake) -> None:
     version = table.info()["version"]
 
     plan = table.upgrade(dry_run=True)
-    assert plan["steps"][0] == "set table format 0.1.0 → 0.2.0"
+    assert plan["steps"][0] == "set table format 0.1.0 → 0.3.0"
     assert table.info()["version"] == version
     report = table.upgrade()
     assert report["steps"] == plan["steps"]
@@ -230,6 +237,7 @@ def test_info_has_documented_keys(table: timelake.Table) -> None:
         "version",
         "location",
         "time_column",
+        "ingest_time_column",
         "series_key",
         "chunk",
         "dedup",

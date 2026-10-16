@@ -19,7 +19,7 @@ A time-series table follows a small contract stored as Iceberg table properties 
 | time column | Required for time-series tables. A timestamp, stored with microsecond precision and NOT NULL. Text times (from CSV) are parsed as UTC. |
 | series key | Optional columns that identify a series, e.g. `device_id` or `(site, metric)`. |
 | chunk interval | Partition size: `hour`, `day` (default) or `month`. |
-| dedup | Rows with the same series key and time count once; the latest write wins. The Timelake reader skips older copies when reading, and compaction removes them. On by default when a series key is set. |
+| dedup | Rows with the same series key and time count once; the latest write wins: the latest insertion time (`_ingest_ts`), then the later commit. The Timelake reader skips older copies when reading, and compaction removes them. On by default when a series key is set. |
 | retention | Optional; whole partitions older than this are dropped by maintenance. |
 
 ## Partitions and sort order

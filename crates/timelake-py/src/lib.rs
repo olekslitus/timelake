@@ -132,7 +132,8 @@ impl Lake {
 
     /// Creates a table from a pyarrow schema (or anything with `.schema`).
     #[pyo3(signature = (
-        name, schema, time_column=None, series_key=None, chunk=None, retention=None, dedup=None, properties=None
+        name, schema, time_column=None, series_key=None, chunk=None, retention=None, dedup=None, ingest_time=None,
+        properties=None
     ))]
     #[expect(clippy::too_many_arguments, reason = "mirrors the Python keyword arguments")]
     fn create_table(
@@ -145,6 +146,7 @@ impl Lake {
         chunk: Option<&str>,
         retention: Option<&str>,
         dedup: Option<bool>,
+        ingest_time: Option<bool>,
         properties: Option<HashMap<String, String>>,
     ) -> PyResult<Table> {
         let schema = read_schema(schema)?;
@@ -153,6 +155,7 @@ impl Lake {
             series_key: series_key.unwrap_or_default(),
             chunk: chunk.map(str::parse::<Chunk>).transpose().map_err(|err| to_py_err(err.into()))?,
             dedup,
+            ingest_time,
             retention: retention.map(timelake::parse_duration).transpose().map_err(|err| to_py_err(err.into()))?,
             properties: properties.unwrap_or_default(),
         };
@@ -339,6 +342,7 @@ impl Table {
             series_key: contract.series_key.clone(),
             chunk: contract.chunk.map(Chunk::as_str),
             dedup: contract.dedup,
+            ingest_time_column: contract.ingest_time_column.clone(),
             rows: files.iter().map(|f| f.data_file.record_count()).sum(),
             files: files.len(),
             bytes: files.iter().map(|f| f.data_file.file_size_in_bytes()).sum(),
@@ -415,6 +419,7 @@ struct TableInfo {
     series_key: Vec<String>,
     chunk: Option<&'static str>,
     dedup: bool,
+    ingest_time_column: Option<String>,
     rows: u64,
     files: usize,
     bytes: u64,

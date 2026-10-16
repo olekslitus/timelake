@@ -233,6 +233,76 @@ mod tests {
         assert_eq!(r.rows, 3);
     }
 
+    /// `(time, device, value, _ingest_ts)` rows: an input that brings its own insertion times.
+    fn with_ingest(rows: &[(i64, i32, f64, i64)]) -> RecordBatch {
+        use std::sync::Arc;
+
+        use arrow::array::{Float64Array, Int32Array, TimestampMicrosecondArray};
+        let mut fields = schema().fields().to_vec();
+        fields.push(Arc::new(arrow::datatypes::Field::new(
+            "_ingest_ts",
+            arrow::datatypes::DataType::Timestamp(arrow::datatypes::TimeUnit::Microsecond, Some("UTC".into())),
+            false,
+        )));
+        let column = |f: fn(&(i64, i32, f64, i64)) -> i64| {
+            TimestampMicrosecondArray::from_iter_values(rows.iter().map(f)).with_timezone("UTC")
+        };
+        RecordBatch::try_new(
+            Arc::new(arrow::datatypes::Schema::new(fields)),
+            vec![
+                Arc::new(column(|r| r.0)),
+                Arc::new(Int32Array::from_iter_values(rows.iter().map(|r| r.1))),
+                Arc::new(Float64Array::from_iter_values(rows.iter().map(|r| r.2))),
+                Arc::new(column(|r| r.3)),
+            ],
+        )
+        .unwrap()
+    }
+
+    async fn values(lake: &crate::Lake, sql: &str) -> Vec<f64> {
+        let out = crate::Session::new(lake.clone()).sql(sql).await.unwrap().collect().await.unwrap();
+        out.iter()
+            .flat_map(|b| b.column(0).as_any().downcast_ref::<arrow::array::Float64Array>().unwrap().values().to_vec())
+            .collect()
+    }
+
+    /// A time-series table gets an insertion-time column the writer fills; `ingest_time = false`
+    /// leaves it out.
+    #[tokio::test]
+    async fn appends_record_their_insertion_time() {
+        let (lake, _store) = faulty_lake();
+        let t = lake.create_table("iot.r", &schema(), opts()).await.unwrap();
+        assert_eq!(t.contract().ingest_time_column.as_deref(), Some("_ingest_ts"));
+        let before = chrono::Utc::now().timestamp_micros();
+        t.append(&[batch(&[(T0, 1, 1.0)])], AppendOptions::default()).await.unwrap();
+        let sql = "SELECT CAST(to_unixtime(_ingest_ts) * 1000000 AS DOUBLE) FROM iot.r";
+        let stamped = values(&lake, sql).await[0];
+        assert!(stamped >= before as f64 - 1e6, "{stamped} vs {before}");
+
+        let plain = crate::TableOptions { ingest_time: Some(false), ..opts() };
+        let t = lake.create_table("iot.plain", &schema(), plain).await.unwrap();
+        assert!(t.contract().ingest_time_column.is_none());
+        assert_eq!(t.schema().fields().len(), 3);
+    }
+
+    /// The latest insertion wins over commit order: within one append, on read and in compaction.
+    #[tokio::test]
+    async fn the_latest_insertion_time_wins() {
+        let (lake, _store) = faulty_lake();
+        let t = lake.create_table("iot.r", &schema(), opts()).await.unwrap();
+        let no_maintenance = AppendOptions { maintain: Some(false), ..AppendOptions::default() };
+        // One append: the row inserted later (2) wins though it comes first.
+        let (t, r) =
+            t.append(&[with_ingest(&[(T0, 1, 2.0, 20), (T0, 1, 1.0, 10)])], no_maintenance.clone()).await.unwrap();
+        assert_eq!(r.rows, 1);
+        // A later commit carrying an older insertion time loses.
+        let (t, _) = t.append(&[with_ingest(&[(T0, 1, 3.0, 15)])], no_maintenance).await.unwrap();
+        let sql = "SELECT value FROM iot.r WHERE device = 1";
+        assert_eq!(values(&lake, sql).await, [2.0]);
+        t.maintain(MaintainOptions::default()).await.unwrap();
+        assert_eq!(values(&lake, sql).await, [2.0]);
+    }
+
     #[tokio::test]
     async fn empty_append_commits_nothing() {
         let (lake, _store) = faulty_lake();
