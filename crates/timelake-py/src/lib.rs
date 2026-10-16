@@ -15,7 +15,7 @@ use pyo3::types::PyDict;
 use timelake::arrow::array::{RecordBatch, RecordBatchIterator, RecordBatchReader};
 use timelake::arrow::datatypes::Schema;
 use timelake::arrow::error::ArrowError;
-use timelake::datafusion::prelude::{DataFrame, SessionConfig};
+use timelake::datafusion::prelude::DataFrame;
 use timelake::{AppendOptions, Chunk, Error, MaintainOptions, Session, TableOptions, UpgradeOptions};
 
 create_exception!(
@@ -106,7 +106,7 @@ impl Lake {
         lock(&self.sessions)
             .entry(namespace.to_owned())
             .or_insert_with(|| {
-                let config = SessionConfig::new().with_default_catalog_and_schema("timelake", namespace);
+                let config = Session::config().with_default_catalog_and_schema("timelake", namespace);
                 Session::with_config(self.inner.clone(), config)
             })
             .clone()

@@ -248,3 +248,15 @@ def test_duckdb_reads_the_table(table: timelake.Table) -> None:
     con = duckdb.connect()
     con.execute("INSTALL iceberg; LOAD iceberg")
     assert con.sql(f"SELECT count(*) FROM iceberg_scan('{table.location}')").fetchone() == (300,)  # noqa: S608 (the test's own table location)
+
+
+def test_rows_sent_twice_count_once_unless_a_session_turns_dedup_off(
+    lake: timelake.Lake, table: timelake.Table
+) -> None:
+    newer = readings(value=2.0)
+    table.append(readings(), maintain=False)
+    table.append(newer, maintain=False)
+    latest = sum(newer.column("value").to_pylist())
+    assert lake.sql("SELECT count(*) AS n, sum(value) AS s FROM iot.readings").to_pylist() == [{"n": 300, "s": latest}]
+    lake.sql("SET timelake.read_dedup = false")
+    assert lake.sql("SELECT count(*) AS n FROM iot.readings").to_pylist() == [{"n": 600}]

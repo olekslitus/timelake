@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use arrow::array::RecordBatch;
 use arrow::compute::concat_batches;
 use futures::{StreamExt, TryStreamExt};
-use iceberg::spec::{DataFile, ManifestStatus, SnapshotRef, TableMetadataBuilder};
+use iceberg::spec::{DataFile, Datum, ManifestStatus, PrimitiveLiteral, SnapshotRef, TableMetadataBuilder};
 use parquet::arrow::ParquetRecordBatchStreamBuilder;
 use parquet::arrow::async_reader::ParquetObjectReader;
 use parquet::file::properties::WriterProperties;
@@ -58,11 +58,23 @@ pub struct MaintainOptions {
     /// instead of rewriting whole partitions, so write amplification stays logarithmic while
     /// micro-batches stream in. `maintain` without it produces one sorted file per partition.
     pub tiered: bool,
+    /// In tiered mode, partitions whose end is this much older than the newest data in the table
+    /// are rewritten whole once they have two small files, touched by the append or not: data
+    /// stops arriving there, and one sorted, duplicate-free file reads fastest.
+    pub cold_after: Option<Duration>,
 }
 
 impl Default for MaintainOptions {
     fn default() -> Self {
-        Self { compact: true, retention: true, expire: true, min_small_files: 2, partitions: None, tiered: false }
+        Self {
+            compact: true,
+            retention: true,
+            expire: true,
+            min_small_files: 2,
+            partitions: None,
+            tiered: false,
+            cold_after: None,
+        }
     }
 }
 
@@ -222,10 +234,12 @@ pub(crate) async fn compaction_plan(
     let sorted_table = !c.sort_columns().is_empty();
     let min_files = opts.min_small_files.max(2);
 
+    let files = table.files().await?;
+    let cold = cold_partitions(table, &files, opts);
     let mut by_partition: BTreeMap<Option<i32>, Vec<LiveEntry>> = BTreeMap::new();
-    for e in table.files().await? {
+    for e in files {
         let p = file_partition(&e.data_file);
-        if opts.partitions.as_ref().is_none_or(|ps| ps.contains(&p)) {
+        if opts.partitions.as_ref().is_none_or(|ps| ps.contains(&p)) || cold.contains(&p) {
             by_partition.entry(p).or_default().push(e);
         }
     }
@@ -234,7 +248,8 @@ pub(crate) async fn compaction_plan(
         files.sort_by(|a, b| {
             (a.sequence_number, a.data_file.file_path()).cmp(&(b.sequence_number, b.data_file.file_path()))
         });
-        if opts.tiered {
+        let min_files = if cold.contains(&partition) { 2 } else { min_files };
+        if opts.tiered && !cold.contains(&partition) {
             let tier = |e: &LiveEntry| {
                 is_small(e).then(|| (e.data_file.file_size_in_bytes() >> TIER_BASE_SHIFT).max(1).ilog(TIER_GROWTH))
             };
@@ -245,7 +260,7 @@ pub(crate) async fn compaction_plan(
         }
         let n_small = files.iter().filter(|e| is_small(e)).count();
         let unsorted = sorted_table && files.iter().any(|e| e.data_file.sort_order_id() != sort_order_id);
-        if n_small < min_files && !(unsorted && opts.min_small_files <= 2) {
+        if n_small < min_files && !(unsorted && min_files <= 2) {
             continue;
         }
         let total: u64 = files.iter().map(|e| e.data_file.file_size_in_bytes()).sum();
@@ -257,6 +272,26 @@ pub(crate) async fn compaction_plan(
         plan.extend(runs.map(|run| (partition, run.to_vec())));
     }
     Ok(plan)
+}
+
+/// In tiered mode, the partitions whose end is `opts.cold_after` or more before the newest time in
+/// the table (the files' upper bounds): data has moved on from them.
+fn cold_partitions(table: &Table, files: &[LiveEntry], opts: &MaintainOptions) -> HashSet<Option<i32>> {
+    let c = table.contract();
+    let (true, Some(cold_after), Some(chunk), Some(time)) = (opts.tiered, opts.cold_after, c.chunk, &c.time_column)
+    else {
+        return HashSet::new();
+    };
+    let Some(id) = table.metadata().current_schema().field_by_name(time).map(|f| f.id) else { return HashSet::new() };
+    let newest = files.iter().filter_map(|f| match f.data_file.upper_bounds().get(&id).map(Datum::literal) {
+        Some(PrimitiveLiteral::Long(t)) => Some(*t),
+        _ => None,
+    });
+    let Some(newest) = newest.max() else { return HashSet::new() };
+    let cutoff = newest.saturating_sub(i64::try_from(cold_after.as_micros()).unwrap_or(i64::MAX));
+    let ended_before_cutoff =
+        |p: i32| p.checked_add(1).and_then(|next| chunk.start_micros(next).ok()).is_some_and(|end| end <= cutoff);
+    files.iter().filter_map(|f| file_partition(&f.data_file)).filter(|&p| ended_before_cutoff(p)).map(Some).collect()
 }
 
 /// Reads data files back, aligned to the table schema, in the given order.
@@ -419,6 +454,31 @@ mod tests {
             .iter()
             .flat_map(|b| b.column(0).as_any().downcast_ref::<Float64Array>().unwrap().values().to_vec())
             .collect()
+    }
+
+    /// Inline maintenance rewrites a partition whole once newer data has moved past it, even when
+    /// the append didn't touch it; with `compact-cold-after = off` it leaves it to the size tiers.
+    #[tokio::test]
+    async fn cold_partitions_are_rewritten_whole() {
+        const DAY: i64 = 86_400_000_000;
+        for (setting, files_on_day_one) in [(None, 1), (Some("off"), 3)] {
+            let (lake, _store) = faulty_lake();
+            let mut o = opts();
+            if let Some(v) = setting {
+                o.properties.insert(crate::property::COMPACT_COLD_AFTER.into(), v.into());
+            }
+            let mut t = lake.create_table("iot.r", &schema(), o).await.unwrap();
+            for i in 0..3 {
+                t = t.append(&[batch(&[(T0 + i, 1, 1.0)])], AppendOptions::default()).await.unwrap().0;
+            }
+            assert_eq!(t.files().await.unwrap().len(), 3, "below compact-min-files: no tier merge");
+            // Two days later: day one is cold, untouched by this append.
+            let (t, _) = t.append(&[batch(&[(T0 + 2 * DAY, 1, 2.0)])], AppendOptions::default()).await.unwrap();
+            let files = t.files().await.unwrap();
+            let first = files.iter().map(|f| file_partition(&f.data_file)).min().unwrap();
+            let on_day_one = files.iter().filter(|f| file_partition(&f.data_file) == first).count();
+            assert_eq!(on_day_one, files_on_day_one, "{setting:?}");
+        }
     }
 
     /// Tiered compaction merges files of a similar size. When a file of another size lies between

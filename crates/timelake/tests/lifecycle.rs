@@ -95,6 +95,25 @@ async fn append_query_latest_compact_expire() {
     let merged = merged.unwrap_or_default();
     assert!(merged.contains("predicate=device@") && !merged.contains("value@"), "{explain:?}");
     assert_eq!(scalar_i64(&s, "SELECT count(*) FROM iot.readings WHERE device = 4").await, 4320);
+    // The switch: a session can read the copies as they are, and SET turns it back.
+    let raw = Session::with_config(lake.clone(), Session::config().set_str("timelake.read_dedup", "false"));
+    assert_eq!(scalar_i64(&raw, "SELECT count(*) FROM iot.readings").await, 43_300);
+    assert!(!plan(&raw, "SELECT avg(value) FROM iot.readings").await.has("DedupExec"));
+    rows(&raw, "SET timelake.read_dedup = true").await;
+    assert_eq!(scalar_i64(&raw, "SELECT count(*) FROM iot.readings").await, 43_200);
+    // Strategy keys-first gives the same answers: older copies listed from the keys, then left out
+    // of a scan that every filter may prune.
+    rows(&raw, "SET timelake.read_dedup_strategy = 'keys-first'").await;
+    for (sql, n) in [
+        ("SELECT count(*) FROM iot.readings", 43_200),
+        ("SELECT count(*) FROM iot.readings WHERE value = -1", 100),
+        ("SELECT count(*) FROM iot.readings WHERE value >= 0", 43_100),
+        ("SELECT count(*) FROM iot.readings WHERE device = 4 AND value >= 0", 4310),
+    ] {
+        assert_eq!(scalar_i64(&raw, sql).await, n, "{sql}");
+    }
+    let explain = strings(&rows(&raw, "EXPLAIN SELECT avg(value) FROM iot.readings WHERE value >= 0").await, "plan");
+    assert!(explain.iter().any(|p| p.contains("keep older copies") && p.contains("RightAnti")), "{explain:?}");
     assert_eq!(scalar_i64(&s, "SELECT count(*) FROM iot.readings WHERE device < 5 AND value = -1").await, 50);
     assert_eq!(scalar_i64(&s, "SELECT count(*) FROM iot.readings WHERE device = 4 AND value >= 0").await, 4310);
     // Only the files that overlap the late append are merged; the other days aren't.

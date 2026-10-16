@@ -16,9 +16,11 @@ mod dedup;
 mod provider;
 mod rewrite;
 mod session;
+mod settings;
 mod stats;
 
 pub use session::Session;
+pub use settings::SessionSettings;
 
 /// Name of the lake's catalog in SQL.
 const CATALOG: &str = "timelake";

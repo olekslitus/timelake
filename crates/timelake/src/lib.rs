@@ -52,7 +52,7 @@ pub use lake::Lake;
 pub use lvi::latest_per_series;
 pub use maintain::{MaintainOptions, MaintainReport};
 pub use name::{DEFAULT_NAMESPACE, TableName};
-pub use query::Session;
+pub use query::{Session, SessionSettings};
 pub use schema::align_batch;
 pub use table::{LiveEntry, Table};
 pub use timelake_format::contract::{Chunk, Contract, TableOptions};

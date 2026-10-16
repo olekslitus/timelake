@@ -13,6 +13,9 @@ A table’s contract and maintenance policy live in Iceberg table properties und
 | `timelake.retention` | forever | Drop partitions that end before now minus this duration, e.g. 90d. |
 | `timelake.auto-maintain` | true | Run size-tiered compaction, retention and snapshot expiry inline after appends. |
 | `timelake.compact-min-files` | 8 | Inline compaction merges a size tier of a partition once it has this many files. |
+| `timelake.compact-cold-after` | 1h | Inline maintenance rewrites a partition whole (sorted, duplicates removed) once the table holds data newer than the partition's end by this much and the partition has two small files, whether the append touched it or not. `off` leaves it to the size tiers. |
+| `timelake.read-dedup` | as `timelake.dedup` | The Timelake reader returns only the latest write of each (series, time). A session can override it: `SET timelake.read_dedup = false`. |
+| `timelake.read-dedup-strategy` | merge | How the reader removes copies: `merge` merges the files that may share keys in key order; `keys-first` lists the older copies from the key columns, then reads the files like any scan and leaves them out (slower on the IIoT benchmark). A session can override it: `SET timelake.read_dedup_strategy = 'keys-first'`. |
 | `timelake.target-file-size-bytes` | 268435456 (256 MiB) | Size at which compaction output and writes roll to a new file. |
 | `timelake.row-group-rows` | 1048576 | Parquet row group size. Page indexes keep single-series reads selective inside large row groups. |
 | `timelake.snapshot-retention` | 1h | Expire snapshots older than this… |

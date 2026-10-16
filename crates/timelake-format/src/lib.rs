@@ -57,6 +57,13 @@ pub mod property {
     pub const MAX_SNAPSHOTS: &str = "timelake.max-snapshots";
     /// Files per size tier that trigger inline compaction.
     pub const COMPACT_MIN_FILES: &str = "timelake.compact-min-files";
+    /// Inline maintenance rewrites a partition whole (sorted, duplicates removed) once the table
+    /// holds data newer than the partition's end by this much, or `off`.
+    pub const COMPACT_COLD_AFTER: &str = "timelake.compact-cold-after";
+    /// The Timelake reader removes copies of a `(series…, time)` when reading (default: as `dedup`).
+    pub const READ_DEDUP: &str = "timelake.read-dedup";
+    /// How the Timelake reader removes copies: `merge` (default) or `keys-first` (SPEC §9.1).
+    pub const READ_DEDUP_STRATEGY: &str = "timelake.read-dedup-strategy";
     /// Format of the head object (`metadata/timelake-head`): `arrow` (default), `json`, another
     /// registered codec, or `none` to not write one.
     pub const HEAD_FORMAT: &str = "timelake.head-format";

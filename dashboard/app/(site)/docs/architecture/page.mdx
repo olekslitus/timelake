@@ -76,6 +76,8 @@ On each append, the newest row of every series in the new data is merged with th
 
 **Inline (size-tiered).** After an append, small files (under ¾ of the target size) in the touched partitions are grouped into size tiers of 4× (under 256 KiB, 256 KiB–1 MiB, 1–4 MiB, …). A run of at least `timelake.compact-min-files` files of one tier, next to each other in commit order, is merged into one file, which lands in a higher tier. Each row is rewritten about once per tier, so write amplification grows with the logarithm of the data size rather than linearly.
 
+**Cold partitions.** Once the table holds data newer than a partition's end by `timelake.compact-cold-after` (1 hour by default, measured on the data's time, not the clock), inline maintenance rewrites that partition whole when it has two small files, whether the append touched it or not: data has moved on, and one sorted, duplicate-free file reads fastest, also for engines that don't remove copies themselves. Backfill into a small cold partition rewrites it again.
+
 **Full (maintain).** A partition with at least two small files, or any file not in the table’s sort order, is rewritten. If it has an unsorted file or holds less than twice the target size, all its files are rewritten into sorted files; otherwise only runs of small files next to each other in commit order. Rows are merged in commit order and, with dedup on, the last row of each `(series key, time)` group wins. A merged file keeps the data sequence number of the newest file it replaces, so a file committed later still overrides its rows. v0 merges a partition in memory, so partitions should fit comfortably in RAM; pick the chunk interval accordingly.
 
 ## Snapshot expiry
@@ -86,6 +88,6 @@ Snapshots older than `timelake.snapshot-retention` are expired, keeping at least
 
 - A DataFusion catalog maps namespaces to schemas and tables to a Timelake table provider.
 - Before planning, all referenced tables are loaded concurrently, from their heads when they have one. A check for a newer version still pending runs while the query is planned, and the scan waits for it. Planning prunes files with DataFusion’s `PruningPredicate` over the Iceberg lower and upper bounds of each file.
-- With dedup on, files of one partition whose key bounds overlap may hold the same (series, time). They are pruned only on the key columns, split by a hash of (series, time) so all copies of a row land in the same slice, each slice merged by (series, time, commit order) in parallel, and only the latest write of each key is kept; other files are read as they are.
+- With dedup on, files of one partition whose key bounds overlap may hold the same (series, time). They are pruned only on the key columns, split by a hash of the series so all copies of a row land in the same slice, each slice merged by (series, time, commit order) in parallel, and only the latest write of each key is kept; other files are read as they are.
 - Remaining files are spread over scan partitions. Each file’s footer goes into DataFusion’s metadata cache once, from the head when it has it, otherwise read from the store. DataFusion’s Parquet scan does row-group and page pruning.
 - An optimizer rule replaces the scan in latest-row query shapes with a scan of the last-value index (see Querying).

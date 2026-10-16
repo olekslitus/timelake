@@ -13,7 +13,12 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
 - **Dedup on read.** In tables with dedup on, the Timelake reader (CLI, Python, Rust) returns only the latest write of
   each `(series, time)`, before compaction has removed the older copies. Only files that may share a key are merged;
   the rest are read as before. DuckDB, other Iceberg readers and the TypeScript client still see the copies until
-  compaction.
+  compaction. It can be turned off per table (`timelake.read-dedup = false`) or per session
+  (`SET timelake.read_dedup = false`, or `--set timelake.read_dedup=false` on the CLI). A second strategy,
+  `timelake.read-dedup-strategy = keys-first`, lists the older copies first and leaves them out of a normal scan.
+- **Cold partitions compact sooner.** Once newer data is `timelake.compact-cold-after` (default 1 hour) past a
+  partition's end, inline maintenance rewrites the partition into sorted, duplicate-free files when it has two small
+  files, even if the append didn't touch it.
 
 ### Changed
 

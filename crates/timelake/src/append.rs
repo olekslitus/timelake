@@ -153,6 +153,7 @@ impl Table {
             min_small_files: c.compact_min_files,
             partitions: Some(touched),
             tiered: true,
+            cold_after: c.compact_cold_after,
         }
     }
 }

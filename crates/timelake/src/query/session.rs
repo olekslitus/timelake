@@ -12,6 +12,7 @@ use datafusion::sql::sqlparser::dialect::dialect_from_str;
 use super::catalog::{INFORMATION_SCHEMA, LakeCatalog};
 use super::provider::TimelakeProvider;
 use super::rewrite::LatestRewrite;
+use super::settings::SessionSettings;
 use super::{CATALOG, PLAN_CACHE_TTL};
 use crate::error::{Error, Result};
 use crate::lake::Lake;
@@ -42,7 +43,13 @@ pub struct Session {
 impl Session {
     /// A session with DataFusion's default configuration.
     pub fn new(lake: Lake) -> Self {
-        Self::with_config(lake, SessionConfig::new())
+        Self::with_config(lake, Self::config())
+    }
+
+    /// DataFusion's default configuration with Timelake's settings registered, so `timelake.*`
+    /// keys can be set on it ([`SessionSettings`]).
+    pub fn config() -> SessionConfig {
+        SessionConfig::new().with_option_extension(SessionSettings::default())
     }
 
     /// A session with a custom DataFusion configuration. Its default schema, if set, is the
@@ -59,6 +66,11 @@ impl Session {
             config.with_target_partitions((cores * REMOTE_PARTITIONS_PER_CORE).max(MIN_REMOTE_PARTITIONS))
         } else {
             config
+        };
+        let config = if config.options().extensions.get::<SessionSettings>().is_some() {
+            config
+        } else {
+            config.with_option_extension(SessionSettings::default())
         };
         let config = config
             .with_information_schema(true)

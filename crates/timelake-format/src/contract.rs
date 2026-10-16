@@ -154,6 +154,13 @@ pub struct Contract {
     pub max_snapshots: usize,
     /// Inline auto-maintenance merges a size tier of a partition once it has this many files.
     pub compact_min_files: usize,
+    /// Inline auto-maintenance rewrites a partition whole once the table holds data newer than the
+    /// partition's end by this much (`None`: never).
+    pub compact_cold_after: Option<Duration>,
+    /// The Timelake reader removes copies of a `(series…, time)` when reading.
+    pub read_dedup: bool,
+    /// How the Timelake reader removes copies: `merge` or `keys-first`.
+    pub read_dedup_strategy: String,
     /// Format of the head object, or `none` to not write one.
     pub head_format: String,
     /// Bytes the head may spend on optional sections (the last-value index).
@@ -172,6 +179,7 @@ impl Contract {
     const DEFAULT_MIN_SNAPSHOTS: usize = 5;
     const DEFAULT_MAX_SNAPSHOTS: usize = 100;
     const DEFAULT_COMPACT_MIN_FILES: usize = 8;
+    const DEFAULT_COMPACT_COLD_AFTER: Duration = Duration::from_secs(3600);
     const DEFAULT_HEAD_FORMAT: &str = "arrow";
     const DEFAULT_HEAD_INLINE_BYTES: u64 = 1 << 20;
 
@@ -194,6 +202,13 @@ impl Contract {
             min_snapshots: p.number(property::MIN_SNAPSHOTS, Self::DEFAULT_MIN_SNAPSHOTS)?,
             max_snapshots: p.number(property::MAX_SNAPSHOTS, Self::DEFAULT_MAX_SNAPSHOTS)?,
             compact_min_files: p.number(property::COMPACT_MIN_FILES, Self::DEFAULT_COMPACT_MIN_FILES)?,
+            compact_cold_after: match p.get(property::COMPACT_COLD_AFTER) {
+                Some(s) if s.eq_ignore_ascii_case("off") => None,
+                Some(s) => Some(parse_duration(s)?),
+                None => Some(Self::DEFAULT_COMPACT_COLD_AFTER),
+            },
+            read_dedup: p.flag(property::READ_DEDUP, p.flag(property::DEDUP, false)?)?,
+            read_dedup_strategy: p.get(property::READ_DEDUP_STRATEGY).unwrap_or("merge").to_ascii_lowercase(),
             head_format: p.get(property::HEAD_FORMAT).unwrap_or(Self::DEFAULT_HEAD_FORMAT).to_ascii_lowercase(),
             head_inline_bytes: p.number(property::HEAD_INLINE_BYTES, Self::DEFAULT_HEAD_INLINE_BYTES)?,
             format_version: p.get(property::FORMAT_VERSION).map_or(Ok(FormatVersion::UNVERSIONED), str::parse)?,
@@ -396,6 +411,15 @@ mod tests {
             (c.head_format.as_str(), c.head_inline_bytes, c.format_version),
             ("arrow", 1 << 20, FormatVersion::UNVERSIONED)
         );
+        assert_eq!((c.compact_cold_after, c.read_dedup), (Some(Duration::from_hours(1)), false));
+        let dedup = Contract::from_properties(&props(&[(property::DEDUP, "true")])).unwrap();
+        assert!(dedup.read_dedup, "read dedup follows dedup");
+        let off =
+            props(&[(property::DEDUP, "true"), (property::READ_DEDUP, "false"), (property::COMPACT_COLD_AFTER, "off")]);
+        let off = Contract::from_properties(&off).unwrap();
+        assert_eq!((off.compact_cold_after, off.read_dedup), (None, false));
+        let cold = Contract::from_properties(&props(&[(property::COMPACT_COLD_AFTER, "6h")])).unwrap();
+        assert_eq!(cold.compact_cold_after, Some(Duration::from_hours(6)));
         assert_eq!(c.sort_columns(), [] as [String; 0]);
     }
 
