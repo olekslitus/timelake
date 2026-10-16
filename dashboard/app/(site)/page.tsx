@@ -115,7 +115,7 @@ function UseCaseGrid({ cases, columns }: { cases: UseCase[]; columns: string }) 
 
 function SectionHead({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-2">
       <h2 className="text-2xl leading-tight font-light tracking-tight">{label}</h2>
       <p className="text-sm text-muted-foreground">{children}</p>
     </div>
@@ -163,26 +163,26 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="flex flex-col gap-6">
+      <section className="flex flex-col gap-4">
         <SectionHead label="Features">
           Fast, cheap time-series queries on open files in your own bucket, with no server to run.
         </SectionHead>
         <BenefitCards />
       </section>
 
-      <section className="flex flex-col gap-6">
+      <section className="flex flex-col gap-4">
         <SectionHead label="Data">Time series from machines, vehicles, markets, and servers.</SectionHead>
         <UseCaseGrid cases={DATA} columns="lg:grid-cols-5" />
       </section>
 
-      <section className="flex flex-col gap-6">
+      <section className="flex flex-col gap-4">
         <SectionHead label="Uses">
           Read straight from your bucket by apps, notebooks, functions, and agents.
         </SectionHead>
         <UseCaseGrid cases={USES} columns="lg:grid-cols-4" />
       </section>
 
-      <section className="flex flex-col gap-6">
+      <section className="flex flex-col gap-4">
         <SectionHead label="Architecture">
           From the sources that send data to the tools that read it, with only your bucket in between.
         </SectionHead>
@@ -203,7 +203,7 @@ async function Measurements() {
   )
   if (!run) return null
   return (
-    <section className="flex flex-col gap-6">
+    <section className="flex flex-col gap-4">
       <div className="flex flex-col gap-3">
         <SectionHead label="Benchmarks">
           Measured every week on AWS S3, against other lakes with the same data and queries. Lower is better.
