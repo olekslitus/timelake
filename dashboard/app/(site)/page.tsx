@@ -65,14 +65,14 @@ const LIMITATIONS = [
 /** Mark + "timelake" in the middle of the hero, on a card-coloured rectangle that masks the field. */
 function HeroLockup() {
   // The mark's height, from the container's width; the rest follows the brand proportions (brand/marks.mjs).
-  const m = "12cqw"
+  const m = "10cqw"
   const of = (k: number) => `calc(${m} * ${k})`
   return (
     <div
       role="img"
       aria-label="Timelake"
       className="relative flex items-center bg-card"
-      style={{ gap: of(WORDMARK.gapOfMark), padding: `${of(0.2)} ${of(0.3)}` }}
+      style={{ gap: of(WORDMARK.gapOfMark), padding: `${of(0.1)} ${of(0.16)}` }}
     >
       <TimelakeMark
         className="shrink-0"
