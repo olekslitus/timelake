@@ -8,18 +8,13 @@ const SCALE = 40
 /** Results within 5% of the fastest get no multiplier. */
 const SAME_AS_FASTEST = 1.05
 
-/** A system's color for a ranking row ("system" or "system+reader"); another engine's reader is drawn at half strength. */
-function rowStyle(run: Run, key: string): { color: string; alpha: number } {
-  const [system = "", reader] = key.split("+")
-  const own = reader === undefined || run.header.readers[system]?.[0] === reader
-  return { color: SYSTEM_COLORS[system] ?? "var(--chart-2)", alpha: own ? 1 : 0.5 }
-}
-
-/** One ranking as a card: each system's value and a bar of squares in its color, fastest first. */
-function RankingCard({ run, ranking }: { run: Run; ranking: Ranking }) {
-  const largest = Math.max(...ranking.rows.map((r) => r.value))
-  const best = ranking.rows[0]?.value ?? 0
-  const seconds = ranking.rows.map((r) => (ranking.unit === "seconds" ? r.value : r.value / 1000))
+/** One ranking as a card: each system's fastest engine, its value and a bar of squares in its color, fastest first. */
+function RankingCard({ ranking }: { ranking: Ranking }) {
+  // One row per system: its fastest engine (rows come fastest first).
+  const rows = ranking.rows.filter((r, i, all) => all.findIndex((x) => x.system === r.system) === i)
+  const largest = Math.max(...rows.map((r) => r.value))
+  const best = rows[0]?.value ?? 0
+  const seconds = rows.map((r) => (ranking.unit === "seconds" ? r.value : r.value / 1000))
   const unit = timeUnit(seconds)
   // A bar is two rows of squares, as long as its value against the largest.
   const columns = (value: number) => Math.max(1, Math.round((value / largest) * SCALE))
@@ -30,7 +25,7 @@ function RankingCard({ run, ranking }: { run: Run; ranking: Ranking }) {
         <p className="text-xs text-muted-foreground">{ranking.note}</p>
       </div>
       <ol className="flex flex-col gap-2.5">
-        {ranking.rows.map((r, i) => {
+        {rows.map((r, i) => {
           const ratio = best > 0 ? r.value / best : 1
           return (
             <li
@@ -51,7 +46,7 @@ function RankingCard({ run, ranking }: { run: Run; ranking: Ranking }) {
               <span className="col-span-2 flex items-center gap-2 sm:col-span-1">
                 <DotGrid
                   perRow={columns(r.value)}
-                  segments={[{ count: columns(r.value) * 2, ...rowStyle(run, r.key) }]}
+                  segments={[{ count: columns(r.value) * 2, color: SYSTEM_COLORS[r.system] ?? "var(--chart-2)" }]}
                   label={`${r.label}: ${formatTime(seconds[i] ?? 0, unit)}`}
                 />
                 {ratio > SAME_AS_FASTEST ? (
@@ -97,7 +92,7 @@ export function BenchCards({ run }: { run: Run }) {
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       {rankings(run).map((r) => (
-        <RankingCard key={r.title} run={run} ranking={r} />
+        <RankingCard key={r.title} ranking={r} />
       ))}
       {racers.length > 1 ? (
         <Race
