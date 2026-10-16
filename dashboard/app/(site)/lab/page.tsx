@@ -127,6 +127,19 @@ export default function Lab() {
       </Idea>
 
       <Idea
+        n="1c"
+        title="Dot grid, darker and slow"
+        note="Idea 1b with the background squares close to black and the trace moving one column a second, so it reads as still until you look for it."
+      >
+        <div className="cells">
+          <DotStripChart tick={1000} paperAlpha={0.35}>
+            <HeroPanel />
+            <Chip>Open source · Apache 2.0 · Iceberg compatible</Chip>
+          </DotStripChart>
+        </div>
+      </Idea>
+
+      <Idea
         n={2}
         title="The recorder, drawing real data read in your browser"
         note="The same recorder, but the trace is a week of a sensor's 10-minute averages read from a real Timelake table in this browser with @timelake/client. The readout in the corner says what the read took. The table is in public/lab-lake (written with the CLI); on the live site it would sit in a public bucket. For later, once a table is streaming new data."

@@ -8,8 +8,6 @@ import { generated, looped } from "@/components/lab/strip-chart"
 const DOT = 3
 const GAP = 1
 const CELL = DOT + GAP
-/** Milliseconds per new column. */
-const TICK = 70
 /** Columns between the pen and the right edge. */
 const MARGIN = 10
 
@@ -17,7 +15,19 @@ const MARGIN = 10
  * The strip-chart recorder on a dot grid: the paper is dim squares, the trace lights the squares it passes through, and
  * the area under it glows faintly. Without `data` the pen draws generated waves; with it, it plays the values in a loop.
  */
-export function DotStripChart({ data, children }: { data?: number[] | null; children?: React.ReactNode }) {
+export function DotStripChart({
+  data,
+  children,
+  tick = 70,
+  paperAlpha = 1,
+}: {
+  data?: number[] | null
+  children?: React.ReactNode
+  /** Milliseconds per new column. */
+  tick?: number
+  /** How bright the background squares are, from 0 (none) to 1. */
+  paperAlpha?: number
+}) {
   const canvas = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => {
@@ -62,7 +72,7 @@ export function DotStripChart({ data, children }: { data?: number[] | null; chil
           y === null ? [rows, rows] : prev === null ? [y, y] : [Math.min(prev, y), Math.max(prev, y)]
         for (let r = 0; r < rows; r++) {
           const onLine = y !== null && r >= top && r <= bottom
-          ctx.globalAlpha = onLine ? 1 : y !== null && r > bottom ? 0.22 : 1
+          ctx.globalAlpha = onLine ? 1 : y !== null && r > bottom ? 0.22 : paperAlpha
           ctx.fillStyle = onLine ? pen : y !== null && r > bottom ? under : paper
           ctx.fillRect(x * CELL, r * CELL, DOT, DOT)
         }
@@ -81,12 +91,12 @@ export function DotStripChart({ data, children }: { data?: number[] | null; chil
     const timer = setInterval(() => {
       trace = [...trace.slice(-(cols - MARGIN) + 1), source.next().value as number]
       draw()
-    }, TICK)
+    }, tick)
     return () => {
       clearInterval(timer)
       ro.disconnect()
     }
-  }, [data])
+  }, [data, tick, paperAlpha])
 
   return (
     <div className="relative h-[234px] overflow-hidden">
