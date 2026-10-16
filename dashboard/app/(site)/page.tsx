@@ -117,8 +117,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="flex flex-col gap-6">
-        <SectionHead label="Why Timelake?" />
+      <section>
         <BenefitCards />
       </section>
 
