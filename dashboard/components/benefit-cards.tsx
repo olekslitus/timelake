@@ -14,7 +14,7 @@ type Card = {
   body: string
   link: { label: string; href: string }
   wide?: boolean
-  /** A chart shown after the title and text, instead of the picture above them. */
+  /** A chart shown instead of the picture. */
   figure?: ReactNode
 }
 
@@ -121,22 +121,19 @@ export async function BenefitCards() {
             data-use-case
             className={cn("flex flex-col gap-2 rounded-lg border bg-card p-6", c.wide && "md:col-span-2")}
           >
-            {!c.figure && (
-              <div className="mb-3">
-                <UseCaseArt kind={c.art} cols={c.wide ? WIDE_COLS : undefined} />
-              </div>
-            )}
             <h3 className="flex items-center gap-2.5 text-lg font-normal">
               <Icon className="size-4.5 text-muted-foreground" aria-hidden />
               {c.title}
             </h3>
             <p className="text-sm leading-relaxed text-muted-foreground">{c.body}</p>
-            {/* A chart reads after its title and text. */}
-            {c.figure && <div className="mt-4">{c.figure}</div>}
+            {/* Pinned to the bottom, so pictures line up across a row. */}
+            <div className="mt-auto pt-4">
+              {c.figure ?? <UseCaseArt kind={c.art} cols={c.wide ? WIDE_COLS : undefined} />}
+            </div>
             <Link
               href={c.link.href}
               {...(c.link.href.startsWith("http") ? { target: "_blank", rel: "noreferrer" } : {})}
-              className="mt-auto flex w-fit items-center gap-1.5 pt-2 text-sm hover:underline"
+              className="flex w-fit items-center gap-1.5 pt-2 text-sm hover:underline"
             >
               {c.link.label} <ArrowRight className="size-3.5" />
             </Link>
