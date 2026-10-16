@@ -9,15 +9,18 @@ import { Suspense } from "react"
 
 import { GithubIcon } from "@/components/github-icon"
 import { AgentTerminal } from "@/components/lab/agent-terminal"
+import { BucketObjects, EngineLegend, PerQuery, QueryMatrix } from "@/components/lab/bench-dots"
 import { BucketAnimation } from "@/components/lab/bucket-animation"
+import { dotPaper } from "@/components/lab/dot-paper"
 import { DotStripChart } from "@/components/lab/dot-strip-chart"
+import { DotStats, DotRule, type LoggedRun, RoadmapDots, RunLog, type Stat, Waffle } from "@/components/lab/kit"
 import { LiveStripChart } from "@/components/lab/live-strip-chart"
 import { Race, type Racer } from "@/components/lab/race"
 import { SeriesField } from "@/components/lab/series-field"
 import { StripChart } from "@/components/lab/strip-chart"
 import { type Snapshot, TimeTravel } from "@/components/lab/time-travel"
 import { Button } from "@/components/ui/button"
-import { SYSTEMS, engineLabel, latestByTarget, loadRuns } from "@/lib/benchmarks"
+import { SYSTEMS, SYSTEM_COLORS, engineLabel, latestByTarget, loadRuns, rankings, targetLabel } from "@/lib/benchmarks"
 import { REPO_URL } from "@/lib/site"
 
 /** Visual ideas for the home page, side by side. Not linked from the site. */
@@ -186,21 +189,211 @@ export default function Lab() {
       <Suspense fallback={null}>
         <Travel />
       </Suspense>
+
+      <Suspense fallback={null}>
+        <StaticCharts />
+      </Suspense>
+
+      <Suspense fallback={null}>
+        <Kit />
+      </Suspense>
     </div>
+  )
+}
+
+/** The newest weekly run of TSBS IoT on AWS S3. */
+async function latestS3() {
+  return latestByTarget(await loadRuns(), "tsbs-iot").find((r) => r.header.target === "aws-s3" && !r.header.variant)
+}
+
+/** The same run as still pictures: objects in the bucket, every query, and requests and bytes per query. */
+async function StaticCharts() {
+  const run = await latestS3()
+  if (!run) return null
+  return (
+    <>
+      <Idea
+        n={8}
+        title="Every object in the bucket"
+        note="Static, in each system's color: one square per object after streaming, data files in full color and metadata dimmed. Real numbers from the weekly run."
+      >
+        <BucketObjects run={run} />
+      </Idea>
+
+      <Idea
+        n={9}
+        title="Every query, every engine"
+        note="All 17 queries against every engine as one picture: a square per pair in the engine's color, as bright as it is fast (the fastest on each query is full strength). Hover a square for its time. A system read through another engine is drawn at half strength."
+      >
+        <div className="flex flex-col gap-6 rounded-md border bg-card p-6">
+          <EngineLegend run={run} />
+          <div className="grid gap-10 lg:grid-cols-2">
+            <QueryMatrix run={run} checkpoint="ingested" title="Right after ingest" />
+            <QueryMatrix run={run} checkpoint="maintained" title="After maintenance" />
+          </div>
+        </div>
+      </Idea>
+
+      <Idea
+        n={10}
+        title="Requests and data read, per query"
+        note="Every query on each system's own reader, right after ingest: one lane per system, a square per 25 requests and per 3 MB read. Hover a lane for its number."
+      >
+        <div className="flex flex-col gap-4">
+          <EngineLegend run={run} />
+          <PerQuery run={run} checkpoint="ingested" />
+        </div>
+      </Idea>
+    </>
+  )
+}
+
+/** Where each benchmark target's runs show in the run log. */
+const TARGET_COLORS: Record<string, string> = {
+  "aws-s3": "var(--primary)",
+  "aws-s3x": "var(--chart-5)",
+  local: "var(--chart-2)",
+  s3: "var(--chart-3)",
+  "tiger-cloud": "var(--chart-4)",
+}
+
+/** Smaller elements in the same dot style, for anywhere on the site. */
+async function Kit() {
+  const runs = await loadRuns()
+  const run = await latestS3()
+  const ranked = run ? rankings(run) : []
+  const own = (prefix: string) => ranked.find((r) => r.title.startsWith(prefix))?.rows.find((r) => r.timelake)
+  const fresh = ranked.find((r) => r.title.startsWith("Queries, right"))?.rows ?? []
+  const freshOwn = fresh.find((r) => r.timelake)?.value
+  const others = fresh.filter((r) => r.system !== "timelake").map((r) => r.value)
+  const lastLoc = (engine: string) =>
+    run?.queries.find(
+      (q) => `${q.system}+${q.reader}` === engine && q.query === "last-loc" && q.checkpoint === "ingested",
+    )
+  const mine = lastLoc("timelake+timelake")
+  const iceberg = lastLoc("iceberg+duckdb")
+  const maintained = own("Queries, after")?.value
+  const commit = own("Commit")?.value
+  const stats: Stat[] = [
+    maintained && {
+      value: `${Math.round(maintained * 1000)} ms`,
+      label: "Per query, after maintenance",
+      note: "Geometric mean of 17 TSBS IoT queries on S3.",
+    },
+    freshOwn &&
+      others.length > 0 && {
+        value: `${Math.round(Math.min(...others) / freshOwn)}–${Math.round(Math.max(...others) / freshOwn)}×`,
+        label: "Faster on fresh data",
+        note: "Than Iceberg, Lance and Parquet files, right after ingest.",
+      },
+    mine?.requests && {
+      value: `${mine.requests[0]} req`,
+      label: `Latest position of ${mine.rows?.toLocaleString("en")} trucks`,
+      note: `Iceberg + DuckDB: ${iceberg?.requests?.[0]?.toLocaleString("en")} requests.`,
+    },
+    commit && { value: `${Math.round(commit)} ms`, label: "Median commit", note: "While streaming to S3." },
+  ].filter((s): s is Stat => !!s)
+  const tlBytes = mine?.bytes?.[0]
+  const iceBytes = iceberg?.bytes?.[0]
+  const logged: LoggedRun[] = runs
+    .map((r) => ({
+      id: r.header.id,
+      date: r.header.started.slice(0, 10),
+      target: targetLabel(r.header.target),
+      workload: r.header.workload,
+      color: TARGET_COLORS[r.header.target] ?? "var(--chart-2)",
+    }))
+    .toReversed()
+  return (
+    <>
+      <div className="flex flex-col gap-2 border-t pt-12">
+        <h2 className="text-3xl font-light tracking-tight">Style kit</h2>
+        <p className="max-w-3xl text-muted-foreground">
+          Smaller pieces in the same dot style, for the home page and the rest of the site. All static.
+        </p>
+      </div>
+
+      <Idea
+        n="K1"
+        title="Dot paper"
+        note="A still background of dim squares, the races' grid without the motion. Here behind the hero, with the licence line as a readout."
+      >
+        <div className="cells">
+          <div className="relative h-[234px]" style={dotPaper()}>
+            <HeroPanel />
+            <Chip>Open source · Apache 2.0 · Iceberg compatible</Chip>
+          </div>
+        </div>
+      </Idea>
+
+      <Idea
+        n="K2"
+        title="Dot-matrix numbers"
+        note="Key numbers in a 5×7 dot font, from the newest weekly run, for stat cards or the benefit cards."
+      >
+        <DotStats stats={stats} />
+      </Idea>
+
+      {tlBytes && iceBytes ? (
+        <Idea
+          n="K3"
+          title="Waffle"
+          note="One amount as a block of squares and a smaller one lit inside it. Data read for the latest position of every truck, right after ingest."
+        >
+          <Waffle
+            lit={Math.max(1, Math.round((tlBytes / iceBytes) * 1000))}
+            total={1000}
+            perRow={50}
+            litColor="var(--primary)"
+            restColor={SYSTEM_COLORS.iceberg ?? "var(--chart-3)"}
+          >
+            <p>
+              The block is the {(iceBytes / 1e6).toFixed(0)} MB that Iceberg + DuckDB read; each square is a thousandth
+              of it.
+            </p>
+            <p>
+              The lit square is Timelake: <span className="text-foreground">{(tlBytes / 1e6).toFixed(2)} MB</span>, read
+              from its last-value index.
+            </p>
+          </Waffle>
+        </Idea>
+      ) : null}
+
+      <Idea
+        n="K4"
+        title="Roadmap in squares"
+        note="Each roadmap item as a square, filled as far as it has come: done, next, coming up, exploring. Hover for the description."
+      >
+        <RoadmapDots />
+      </Idea>
+
+      <Idea
+        n="K5"
+        title="Run log"
+        note="Every benchmark run as a square, colored by where it ran, newest first. Grows every week."
+      >
+        <RunLog runs={logged} />
+      </Idea>
+
+      <Idea n="K6" title="Divider" note="A thin band of dot paper that fades at both ends, between sections.">
+        <DotRule />
+      </Idea>
+    </>
   )
 }
 
 /** Each system's own reader, then the others reading through DuckDB. */
 const ENGINES = ["timelake+timelake", "lance+duckdb", "iceberg+duckdb", "parquet+duckdb"]
 const SYSTEM_ORDER = ["timelake", "lance", "iceberg", "parquet"]
+/** A system's chart color, from "system" or "system+reader". */
+const colorOf = (engine: string) => SYSTEM_COLORS[engine.split("+")[0] ?? ""] ?? "var(--chart-2)"
+
 /** Seconds of streaming that the commit race counts commits in. */
 const COMMIT_WINDOW = 10
 
 /** Races from the newest weekly S3 run: one query's requests and bytes, then files and commits while streaming. */
 async function Races() {
-  const run = latestByTarget(await loadRuns(), "tsbs-iot").find(
-    (r) => r.header.target === "aws-s3" && !r.header.variant,
-  )
+  const run = await latestS3()
   if (!run) return null
   const lastLoc = ENGINES.flatMap((e) => {
     const q = run.queries.find(
@@ -213,7 +406,16 @@ async function Races() {
     const n = q.requests?.[0]
     return n === undefined
       ? []
-      : [{ label: engineLabel(e), value: n, dots: n, seconds: q.times[0], timelake: e === "timelake+timelake" }]
+      : [
+          {
+            label: engineLabel(e),
+            value: n,
+            dots: n,
+            seconds: q.times[0],
+            timelake: e === "timelake+timelake",
+            color: colorOf(e),
+          },
+        ]
   })
   // A dot is 100 KB read.
   const bytes: Racer[] = lastLoc.flatMap(({ e, q }) => {
@@ -227,6 +429,7 @@ async function Races() {
             dots: Math.max(1, Math.round(b / 1e5)),
             seconds: q.times[0],
             timelake: e === "timelake+timelake",
+            color: colorOf(e),
           },
         ]
   })
@@ -244,13 +447,23 @@ async function Races() {
             dots: p.data_files,
             seconds: p.seconds,
             timelake: s === "timelake",
+            color: colorOf(s),
           },
         ],
   )
   const commits: Racer[] = ingest.flatMap(({ s, p }) => {
     if (!p.commit_ms_p50) return []
     const n = Math.floor((COMMIT_WINDOW * 1000) / p.commit_ms_p50)
-    return [{ label: SYSTEMS[s] ?? s, value: n, dots: n, seconds: COMMIT_WINDOW, timelake: s === "timelake" }]
+    return [
+      {
+        label: SYSTEMS[s] ?? s,
+        value: n,
+        dots: n,
+        seconds: COMMIT_WINDOW,
+        timelake: s === "timelake",
+        color: colorOf(s),
+      },
+    ]
   })
   const trucks = lastLoc[0]?.q.rows?.toLocaleString("en") ?? "every"
   const date = run.header.started.slice(0, 10)

@@ -10,6 +10,8 @@ export type Racer = {
   dots: number
   seconds: number
   timelake: boolean
+  /** The system's chart color, e.g. "var(--chart-3)". */
+  color: string
 }
 
 /** The slowest racer finishes after this many milliseconds of animation; the others keep their proportions. */
@@ -94,7 +96,7 @@ function Lane({ racer, elapsed, unit, decimals }: { racer: Racer; elapsed: numbe
     if (!ctx) return
     ctx.scale(dpr, dpr)
     const css = getComputedStyle(c)
-    const on = css.getPropertyValue(racer.timelake ? "--primary" : "--muted-foreground").trim()
+    const on = css.getPropertyValue(/^var\((--[\w-]+)\)$/.exec(racer.color)?.[1] ?? "--muted-foreground").trim()
     const off = css.getPropertyValue("--border").trim()
     for (let i = 0; i < racer.dots; i++) {
       ctx.fillStyle = i < shown ? on : off
@@ -107,7 +109,7 @@ function Lane({ racer, elapsed, unit, decimals }: { racer: Racer; elapsed: numbe
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 text-sm">
         <span className={racer.timelake ? "font-medium" : "text-muted-foreground"}>{racer.label}</span>
         <span className="font-mono text-xs text-muted-foreground tabular-nums">
-          <span className={racer.timelake ? "text-primary" : "text-foreground"}>{fmt(racer.value * frac)}</span>
+          <span className="text-foreground">{fmt(racer.value * frac)}</span>
           {` / ${fmt(racer.value)} ${unit} · `}
           {(done ? racer.seconds : elapsed).toFixed(2)} s{done ? " ✓" : ""}
         </span>
