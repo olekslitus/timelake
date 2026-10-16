@@ -56,7 +56,7 @@ function line(values: number[], color: string, alpha = 1): Cell[] {
   return cells
 }
 
-const PICTURES: Record<ArtKind, (cols: number) => Cell[]> = {
+const PICTURES: Record<ArtKind, (cols: number, rows: number) => Cell[]> = {
   sensors: (cols) => {
     const rnd = seeded(1)
     return [0, 1, 2].flatMap((k) =>
@@ -221,17 +221,19 @@ const PICTURES: Record<ArtKind, (cols: number) => Cell[]> = {
       ).flat(),
     )
   },
-  cheap: (cols) => {
+  cheap: (cols, rows) => {
     // A bill over time: a server's hours fill every column; a bucket's storage is a thin line, and its requests show
-    // only when something reads or writes, in green for what you save.
+    // only when something reads or writes, in green for what you save. Both scale with the picture's height.
     const rnd = seeded(12)
     const cells: Cell[] = []
+    const band = Math.max(3, Math.round(rows / 5))
+    const tallest = Math.max(4, rows - band - 6)
     for (let x = 0; x < cols; x++) {
-      for (const y of [1, 2, 3]) cells.push({ x, y, color: "var(--muted-foreground)", alpha: 0.55 })
-      cells.push({ x, y: ROWS - 2, color: "var(--chart-3)", alpha: 0.4 })
+      for (let y = 1; y <= band; y++) cells.push({ x, y, color: "var(--muted-foreground)", alpha: 0.55 })
+      cells.push({ x, y: rows - 2, color: "var(--chart-3)", alpha: 0.4 })
       if (rnd() < 0.15) {
-        const height = 1 + Math.floor(rnd() * 4)
-        for (let k = 0; k < height; k++) cells.push({ x, y: ROWS - 4 - k, color: "var(--chart-3)", alpha: 0.9 })
+        const height = 1 + Math.floor(rnd() * rnd() * tallest)
+        for (let k = 0; k < height; k++) cells.push({ x, y: rows - 4 - k, color: "var(--chart-3)", alpha: 0.9 })
       }
     }
     return cells
@@ -255,15 +257,15 @@ const PICTURES: Record<ArtKind, (cols: number) => Cell[]> = {
     }
     return cells
   },
-  formats: (cols) => {
-    // Iceberg metadata along the top, pointing down to rows of Parquet files.
+  formats: (cols, rows) => {
+    // Iceberg metadata along the top, pointing down to rows of Parquet files, as many as fit.
     const cells: Cell[] = []
     for (let x = 1; x < cols - 4; x += 10) {
       for (const dx of [0, 1, 2])
         for (const y of [0, 1]) cells.push({ x: x + dx, y, color: "var(--primary)", alpha: 1 })
       for (let y = 3; y < 5; y++) cells.push({ x: x + 1, y, color: "var(--primary)", alpha: 0.45 })
     }
-    for (let top = 6; top < ROWS - 1; top += 4)
+    for (let top = 6; top < rows - 2; top += 4)
       for (let x = 0; x < cols - 5; x += 7)
         for (let dx = 0; dx < 6; dx++)
           for (const dy of [0, 1, 2])
@@ -282,7 +284,7 @@ function resolve(el: Element, color: string): string {
  * A use case's picture in squares on a dim grid. It draws itself in once, left to right, when it comes into view,
  * and again when the card is hovered; otherwise it stays still.
  */
-export function UseCaseArt({ kind, cols = COLS }: { kind: ArtKind; cols?: number }) {
+export function UseCaseArt({ kind, cols = COLS, rows = ROWS }: { kind: ArtKind; cols?: number; rows?: number }) {
   const canvas = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => {
@@ -291,9 +293,9 @@ export function UseCaseArt({ kind, cols = COLS }: { kind: ArtKind; cols?: number
     if (!c || !ctx) return
     const dpr = window.devicePixelRatio || 1
     c.width = cols * CELL * dpr
-    c.height = ROWS * CELL * dpr
+    c.height = rows * CELL * dpr
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    const cells = PICTURES[kind](cols).filter((p) => p.x >= 0 && p.x < cols && p.y >= 0 && p.y < ROWS)
+    const cells = PICTURES[kind](cols, rows).filter((p) => p.x >= 0 && p.x < cols && p.y >= 0 && p.y < rows)
     // How far the picture is drawn, so a theme change can redraw it as it was.
     let drawn = -1
 
@@ -301,10 +303,10 @@ export function UseCaseArt({ kind, cols = COLS }: { kind: ArtKind; cols?: number
       drawn = upTo
       const colors = new Map(cells.map((p) => [p.color, resolve(c, p.color)]))
       const paper = resolve(c, "var(--border)")
-      ctx.clearRect(0, 0, cols * CELL, ROWS * CELL)
+      ctx.clearRect(0, 0, cols * CELL, rows * CELL)
       ctx.globalAlpha = 0.6
       ctx.fillStyle = paper
-      for (let x = 0; x < cols; x++) for (let y = 0; y < ROWS; y++) ctx.fillRect(x * CELL, y * CELL, DOT, DOT)
+      for (let x = 0; x < cols; x++) for (let y = 0; y < rows; y++) ctx.fillRect(x * CELL, y * CELL, DOT, DOT)
       for (const p of cells) {
         if (p.x > upTo) continue
         ctx.globalAlpha = p.alpha
@@ -343,7 +345,7 @@ export function UseCaseArt({ kind, cols = COLS }: { kind: ArtKind; cols?: number
       seen.disconnect()
       card?.removeEventListener("pointerenter", play)
     }
-  }, [kind, cols])
+  }, [kind, cols, rows])
 
   return <canvas ref={canvas} aria-hidden className="block h-auto w-full" style={{ maxWidth: cols * CELL }} />
 }

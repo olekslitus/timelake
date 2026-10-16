@@ -14,6 +14,8 @@ type Card = {
   body: string
   link: { label: string; href: string }
   wide?: boolean
+  /** Rows in the picture, for a card next to a taller one. */
+  rows?: number
   /** A chart shown instead of the picture. */
   figure?: ReactNode
 }
@@ -60,6 +62,8 @@ async function speed(): Promise<{ body: string; latency: Latency[] | null }> {
 
 /** Columns in a wide card's picture, twice a narrow one's. */
 const WIDE_COLS = 128
+/** Rows in the pictures next to the Fast chart, about as tall as it. */
+const TALL_ROWS = 30
 
 export async function BenefitCards() {
   const fast = await speed()
@@ -80,6 +84,7 @@ export async function BenefitCards() {
       title: "Cheap",
       body: "You pay only for storage, reads, and writes. Data costs about 6× less to keep than in TimescaleDB.",
       link: { label: "Cost", href: "/docs/storage#requests-and-cost" },
+      rows: TALL_ROWS,
     },
     {
       icon: Layers,
@@ -87,6 +92,7 @@ export async function BenefitCards() {
       title: "Open",
       body: "Tables are standard Iceberg and Parquet in your own bucket, so you’re not locked in: DuckDB and Spark read them too.",
       link: { label: "Querying", href: "/docs/querying" },
+      rows: TALL_ROWS,
     },
     {
       icon: Activity,
@@ -128,7 +134,7 @@ export async function BenefitCards() {
             <p className="text-sm leading-relaxed text-muted-foreground">{c.body}</p>
             {/* Pinned to the bottom, so pictures line up across a row. */}
             <div className="mt-auto pt-4">
-              {c.figure ?? <UseCaseArt kind={c.art} cols={c.wide ? WIDE_COLS : undefined} />}
+              {c.figure ?? <UseCaseArt kind={c.art} cols={c.wide ? WIDE_COLS : undefined} rows={c.rows} />}
             </div>
             <Link
               href={c.link.href}
