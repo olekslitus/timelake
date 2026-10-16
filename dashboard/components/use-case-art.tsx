@@ -197,14 +197,22 @@ const PICTURES: Record<ArtKind, (cols: number) => Cell[]> = {
     return cells
   },
   layout: (cols) => {
-    // Day partitions, each sorted by series (a band per series) and then time.
-    const colors = ["var(--primary)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)"]
+    // Day partitions across, a band per series down each: a query for one series over the last two days reads only
+    // that block (lit); the rest stays dim, never read.
     const cells: Cell[] = []
-    for (let start = 0; start < cols; start += 16)
-      for (let x = start; x < Math.min(start + 14, cols); x++)
-        colors.forEach((color, k) => {
-          for (const dy of [0, 1]) cells.push({ x, y: 1 + k * 3 + dy, color, alpha: 0.85 })
-        })
+    const days = Math.ceil(cols / 16)
+    for (let day = 0; day < days; day++)
+      for (let x = day * 16; x < Math.min(day * 16 + 14, cols); x++)
+        for (let series = 0; series < 4; series++) {
+          const read = series === 1 && day >= days - 2
+          for (const dy of [0, 1])
+            cells.push({
+              x,
+              y: 1 + series * 3 + dy,
+              color: read ? "var(--primary)" : "var(--muted-foreground)",
+              alpha: read ? 1 : 0.3,
+            })
+        }
     return cells
   },
   fast: (cols) => {
