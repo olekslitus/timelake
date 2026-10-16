@@ -18,6 +18,7 @@ import { BenchCards } from "@/components/bench-cards"
 import { BenefitCards } from "@/components/benefit-cards"
 import { GithubIcon } from "@/components/github-icon"
 import { HeroDots } from "@/components/hero-dots"
+import { HeroFlow } from "@/components/hero-flow"
 import { StackDiagram } from "@/components/stack-diagram"
 import { Button } from "@/components/ui/button"
 import { type ArtKind, UseCaseArt } from "@/components/use-case-art"
@@ -163,16 +164,22 @@ export default function Home() {
             </div>
           </div>
           {/* Two variants to compare; the one not chosen goes before merging. */}
-          {(["readers", "lake"] as const).map((variant) => (
-            <div key={variant} className="flex flex-col gap-2">
-              <span className="label-mono">Variant: {variant === "readers" ? "readers and bucket" : "lake"}</span>
-              <div className="cells">
-                <div className="relative h-[160px] overflow-hidden sm:h-[176px]">
-                  <HeroDots variant={variant} />
-                </div>
+          <div className="flex flex-col gap-2">
+            <span className="label-mono">Variant: readers and bucket</span>
+            <div className="cells">
+              <div className="relative h-[160px] overflow-hidden sm:h-[176px]">
+                <HeroDots variant="readers" />
               </div>
             </div>
-          ))}
+          </div>
+          <div className="flex flex-col gap-2">
+            <span className="label-mono">Variant: publish, store, read</span>
+            <div className="cells">
+              <div className="relative h-[160px] overflow-hidden sm:h-[176px]">
+                <HeroFlow />
+              </div>
+            </div>
+          </div>
         </section>
         <BenefitCards />
       </div>
