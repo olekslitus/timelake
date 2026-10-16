@@ -97,6 +97,8 @@ export type QueryRecord = {
   times: Times
   rows?: number
   requests?: Times
+  /** Bytes read from storage, per run. */
+  bytes?: Times
   server_ms?: Times
   /** The first run's requests at the store's list prices. */
   usd?: number

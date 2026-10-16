@@ -8,15 +8,15 @@ import Link from "next/link"
 import { Suspense } from "react"
 
 import { GithubIcon } from "@/components/github-icon"
+import { AgentTerminal } from "@/components/lab/agent-terminal"
 import { BucketAnimation } from "@/components/lab/bucket-animation"
 import { LiveStripChart } from "@/components/lab/live-strip-chart"
-import { type Racer, RequestRace } from "@/components/lab/request-race"
+import { Race, type Racer } from "@/components/lab/race"
 import { SeriesField } from "@/components/lab/series-field"
 import { StripChart } from "@/components/lab/strip-chart"
 import { type Snapshot, TimeTravel } from "@/components/lab/time-travel"
-import { TypedTerminal } from "@/components/lab/typed-terminal"
 import { Button } from "@/components/ui/button"
-import { engineLabel, latestByTarget, loadRuns } from "@/lib/benchmarks"
+import { SYSTEMS, engineLabel, latestByTarget, loadRuns } from "@/lib/benchmarks"
 import { REPO_URL } from "@/lib/site"
 
 /** Visual ideas for the home page, side by side. Not linked from the site. */
@@ -56,6 +56,15 @@ function HeroPanel() {
   )
 }
 
+/** A small readout in the bottom-right corner of a hero background. */
+function Chip({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="absolute right-3 bottom-2 rounded-sm border bg-background/90 px-2 py-1 font-mono text-[10.5px] tracking-[0.08em] text-muted-foreground uppercase">
+      {children}
+    </div>
+  )
+}
+
 function Idea({ n, title, children, note }: { n: number; title: string; note: string; children: React.ReactNode }) {
   return (
     <section className="flex flex-col gap-4">
@@ -83,11 +92,12 @@ export default function Lab() {
       <Idea
         n={1}
         title="Strip-chart recorder"
-        note="Chart paper with a pen trace that the paper carries to the left, like the instruments that recorded time series before screens. Generated data."
+        note="Chart paper with a pen trace that the paper carries to the left, like the instruments that recorded time series before screens. Generated data. The readout in the corner carries the licence line."
       >
         <div className="cells">
           <StripChart>
             <HeroPanel />
+            <Chip>Open source · Apache 2.0 · Iceberg compatible</Chip>
           </StripChart>
         </div>
       </Idea>
@@ -95,7 +105,7 @@ export default function Lab() {
       <Idea
         n={2}
         title="The recorder, drawing real data read in your browser"
-        note="The same recorder, but the trace is a week of a sensor's 10-minute averages read from a real Timelake table in this browser with @timelake/client. The readout in the corner says what the read took. The table is in public/lab-lake (written with the CLI); on the live site it would sit in a public bucket."
+        note="The same recorder, but the trace is a week of a sensor's 10-minute averages read from a real Timelake table in this browser with @timelake/client. The readout in the corner says what the read took. The table is in public/lab-lake (written with the CLI); on the live site it would sit in a public bucket. For later, once a table is streaming new data."
       >
         <div className="cells">
           <LiveStripChart>
@@ -118,22 +128,22 @@ export default function Lab() {
 
       <Idea
         n={4}
-        title="Typed terminal"
-        note="The quick start typed out, one command at a time, with the CLI's real output. Could sit next to the heading in the hero."
+        title="Agents query it with the CLI"
+        note="An agent answers a question by running timelake commands; the commands ran on the demo table and the output is theirs. Next to it, two thousand agents doing the same, with no database between them and the data."
       >
-        <TypedTerminal />
+        <AgentTerminal />
       </Idea>
 
       <Idea
         n={5}
         title="A bucket that maintains itself"
-        note="For “How does it work?”: appends add small files, the writer merges them, retention drops the oldest day, and each commit writes new metadata and a new head. Illustrative names and sizes."
+        note="For the docs (How it works): appends add small files, the writer merges them, retention drops the oldest day, and each commit writes new metadata and a new head. Illustrative names and sizes."
       >
         <BucketAnimation />
       </Idea>
 
       <Suspense fallback={null}>
-        <Race />
+        <Races />
       </Suspense>
 
       <Suspense fallback={null}>
@@ -143,34 +153,100 @@ export default function Lab() {
   )
 }
 
-/** "Latest position of every truck", right after ingest, in the newest weekly S3 run. */
-async function Race() {
+/** Each system's own reader, then the others reading through DuckDB. */
+const ENGINES = ["timelake+timelake", "lance+duckdb", "iceberg+duckdb", "parquet+duckdb"]
+const SYSTEM_ORDER = ["timelake", "lance", "iceberg", "parquet"]
+/** Seconds of streaming that the commit race counts commits in. */
+const COMMIT_WINDOW = 10
+
+/** Races from the newest weekly S3 run: one query's requests and bytes, then files and commits while streaming. */
+async function Races() {
   const run = latestByTarget(await loadRuns(), "tsbs-iot").find(
     (r) => r.header.target === "aws-s3" && !r.header.variant,
   )
   if (!run) return null
-  const engines = ["timelake+timelake", "lance+duckdb", "iceberg+duckdb", "parquet+duckdb"]
-  const racers: Racer[] = engines.flatMap((e) => {
+  const lastLoc = ENGINES.flatMap((e) => {
     const q = run.queries.find(
       (x) =>
         `${x.system}+${x.reader}` === e && x.query === "last-loc" && x.checkpoint === "ingested" && x.status === "ok",
     )
-    const requests = q?.requests?.[0]
-    return q && requests !== undefined
-      ? [{ label: engineLabel(e), requests, seconds: q.times[0], timelake: e === "timelake+timelake" }]
-      : []
+    return q ? [{ e, q }] : []
   })
-  const trucks = run.queries.find((q) => q.query === "last-loc" && q.system === "timelake")?.rows
+  const requests: Racer[] = lastLoc.flatMap(({ e, q }) => {
+    const n = q.requests?.[0]
+    return n === undefined
+      ? []
+      : [{ label: engineLabel(e), value: n, dots: n, seconds: q.times[0], timelake: e === "timelake+timelake" }]
+  })
+  // A dot is 100 KB read.
+  const bytes: Racer[] = lastLoc.flatMap(({ e, q }) => {
+    const b = q.bytes?.[0]
+    return b === undefined
+      ? []
+      : [
+          {
+            label: engineLabel(e),
+            value: b / 1e6,
+            dots: Math.max(1, Math.round(b / 1e5)),
+            seconds: q.times[0],
+            timelake: e === "timelake+timelake",
+          },
+        ]
+  })
+  const ingest = SYSTEM_ORDER.flatMap((s) => {
+    const p = run.phases.find((x) => x.kind === "ingest" && x.system === s && x.status === "ok")
+    return p ? [{ s, p }] : []
+  })
+  const files: Racer[] = ingest.flatMap(({ s, p }) =>
+    p.data_files === undefined || p.seconds === undefined
+      ? []
+      : [
+          {
+            label: SYSTEMS[s] ?? s,
+            value: p.data_files,
+            dots: p.data_files,
+            seconds: p.seconds,
+            timelake: s === "timelake",
+          },
+        ],
+  )
+  const commits: Racer[] = ingest.flatMap(({ s, p }) => {
+    if (!p.commit_ms_p50) return []
+    const n = Math.floor((COMMIT_WINDOW * 1000) / p.commit_ms_p50)
+    return [{ label: SYSTEMS[s] ?? s, value: n, dots: n, seconds: COMMIT_WINDOW, timelake: s === "timelake" }]
+  })
+  const trucks = lastLoc[0]?.q.rows?.toLocaleString("en") ?? "every"
+  const date = run.header.started.slice(0, 10)
+  const timelakeIngest = ingest.find((x) => x.s === "timelake")?.p
   return (
     <Idea
       n={6}
-      title="Request race"
-      note="For “How fast is it?”: one query on every system, each request a dot, at the pace the weekly run measured (sped up). Real numbers."
+      title="Races"
+      note="For “How fast is it?”: the weekly run's numbers as races, each unit a dot, at the pace that was measured (sped up so the slowest finishes in seven seconds). All real numbers from the run below."
     >
-      <RequestRace
-        racers={racers}
-        caption={`Latest position of ${trucks?.toLocaleString("en") ?? "every"} trucks, right after ingest. TSBS IoT on AWS S3, run of ${run.header.started.slice(0, 10)}; times are the first run.`}
-      />
+      <div className="flex flex-col gap-6">
+        <Race
+          racers={requests}
+          unit="requests"
+          caption={`Requests to answer “latest position of ${trucks} trucks”, right after ingest. TSBS IoT on AWS S3, run of ${date}; the first run's times.`}
+        />
+        <Race
+          racers={bytes}
+          unit="MB"
+          decimals={1}
+          caption={`Data read from S3 for the same query. Each dot is 100 KB. Timelake reads its last-value index; the others read every data file.`}
+        />
+        <Race
+          racers={files}
+          unit="data files"
+          caption={`Data files in the bucket after streaming the same ${timelakeIngest?.commits?.toLocaleString("en") ?? ""} commits, before any maintenance job. Timelake merges small files as it writes; the others leave one file per commit. Times are how long each took to take in the stream.`}
+        />
+        <Race
+          racers={commits}
+          unit="commits"
+          caption={`Commits in ${COMMIT_WINDOW} seconds of streaming, at each system's median commit time in the run.`}
+        />
+      </div>
     </Idea>
   )
 }
