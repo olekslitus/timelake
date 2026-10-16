@@ -7,7 +7,6 @@ import { Suspense } from "react"
 
 import { TimelakeLockup } from "@/components/brand/timelake-mark"
 import { GithubIcon } from "@/components/github-icon"
-import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { DOCS_NAV } from "@/lib/docs-nav"
@@ -65,7 +64,6 @@ export function SiteHeader() {
         >
           <GithubIcon className="size-4" />
         </Button>
-        <ThemeToggle />
         <Sheet>
           <SheetTrigger render={<Button variant="ghost" size="icon" className="md:hidden" aria-label="Open menu" />}>
             <Menu className="size-4" />
