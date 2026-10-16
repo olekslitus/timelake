@@ -8,7 +8,7 @@ import { TimelakeMark } from "@/components/brand/timelake-mark"
 import { GithubIcon } from "@/components/github-icon"
 import { StackDiagram } from "@/components/stack-diagram"
 import { Button } from "@/components/ui/button"
-import { SYSTEMS, latestByTarget, loadRuns, rankings } from "@/lib/benchmarks"
+import { latestByTarget, loadRuns, rankings } from "@/lib/benchmarks"
 import { REPO_URL } from "@/lib/site"
 
 const BTN = "font-mono text-xs uppercase tracking-[0.06em]"
@@ -65,13 +65,8 @@ function HeroLockup() {
   )
 }
 
-function SectionHead({ label, children }: { label: string; children?: React.ReactNode }) {
-  return (
-    <div className="flex max-w-3xl flex-col gap-3">
-      <h2 className="text-2xl leading-tight font-light tracking-tight">{label}</h2>
-      {children ? <p className="text-muted-foreground">{children}</p> : null}
-    </div>
-  )
+function SectionHead({ label }: { label: string }) {
+  return <h2 className="text-2xl leading-tight font-light tracking-tight">{label}</h2>
 }
 
 function MoreLink({ href, children }: { href: string; children: React.ReactNode }) {
@@ -151,15 +146,9 @@ async function Measurements() {
     (r) => r.header.target === "aws-s3" && !r.header.variant,
   )
   if (!run) return null
-  const systems = Object.keys(run.header.readers).map((s) => SYSTEMS[s] ?? s)
   return (
     <section className="flex flex-col gap-6">
-      <SectionHead label="How fast is it?">
-        Every Monday, timebench, our benchmark tool, streams the same data into {systems.join(", ")} on one AWS instance
-        in us-east-2 and times every query from a fresh process. Below: TSBS IoT on S3, run of{" "}
-        {run.header.started.slice(0, 10)}. It uses TSBS&apos;s data and queries with our own method, so the numbers
-        don&apos;t compare with published TSBS results. Lower is better; Timelake is in blue.
-      </SectionHead>
+      <SectionHead label="How fast is it?" />
       <div className="grid gap-x-10 gap-y-6 lg:grid-cols-2">
         {rankings(run).map((r) => (
           <BenchRanking key={r.title} ranking={r} />
