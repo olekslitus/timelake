@@ -46,12 +46,12 @@ Instrument-panel look: dark grey panels with hairline borders, mono labels, ASCI
 
 | Token | Dark | Light |
 |---|---|---|
-| background | `#15191B` | `#F4F5F5` |
-| panel | `#1B2023` | `#FFFFFF` |
-| line (hairlines) | `#30383C` | `#D9DEE0` |
-| dim (ASCII fields) | `#434C51` | `#C3CACD` |
+| background | `#101315` | `#F4F5F5` |
+| panel | `#161A1D` | `#FFFFFF` |
+| line (hairlines) | `#2A3134` | `#D9DEE0` |
+| dim (ASCII fields) | `#3C454A` | `#C3CACD` |
 | foreground | `#E6EBED` | `#0D1113` |
-| muted | `#949FA4` | `#59656A` |
+| muted | `#909BA0` | `#59656A` |
 | **accent: Ice** (Timelake) | `#67D4F0` | `#0B7FA6` |
 
 **Reserved accents** for future Polythings projects or spin-offs (not used by Timelake):
