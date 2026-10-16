@@ -56,9 +56,11 @@ export default function Home() {
             <pre aria-hidden className="ascii absolute inset-0 overflow-hidden text-xs leading-[18px]">
               {FIELD}
             </pre>
-            <div className="relative flex h-[198px] flex-col justify-center gap-5 bg-card px-6 sm:h-[126px] sm:flex-row sm:items-center sm:justify-between sm:px-8">
+            <div className="relative flex h-[198px] flex-col justify-center gap-5 bg-card px-6 sm:h-[162px] sm:flex-row sm:items-center sm:justify-between sm:px-8">
               <h1 className="font-sans text-4xl leading-[1.05] font-light tracking-tight sm:text-5xl">
-                Your time&#8209;series lakehouse
+                Your time&#8209;series
+                <br />
+                lakehouse
               </h1>
               <div className="flex shrink-0 flex-wrap gap-2.5">
                 <Button size="lg" className={BTN} nativeButton={false} render={<Link href="/docs/quick-start" />}>
