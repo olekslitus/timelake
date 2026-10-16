@@ -100,7 +100,6 @@ export default function Home() {
               <br />
               lakehouse
             </h1>
-            <div className="label-mono">Open source · Apache 2.0 · Iceberg compatible</div>
             <div className="flex flex-wrap gap-2.5">
               <Button size="lg" className={BTN} nativeButton={false} render={<Link href="/docs/quick-start" />}>
                 Quick start <ArrowRight />
