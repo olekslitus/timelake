@@ -128,9 +128,8 @@ export default function Home() {
           </h1>
           <div className="label-mono">Open source · Apache 2.0 · v0</div>
           <p className="text-muted-foreground">
-            Timelake writes time series to your own S3 bucket or local disk as Apache Iceberg tables, keeps them
-            compacted and within retention, and queries them with SQL from the command line, Python, Rust or the
-            browser. It runs inside your own processes, with no database server and no maintenance jobs to schedule.
+            Timelake stores time series in your own S3 bucket and queries them with SQL. There&apos;s no database server
+            to run and no maintenance to schedule.
           </p>
           <div className="flex flex-wrap gap-2.5">
             <Button size="lg" className={BTN} nativeButton={false} render={<Link href="/docs/quick-start" />}>
