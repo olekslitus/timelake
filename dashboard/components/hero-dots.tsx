@@ -23,7 +23,7 @@ const TIER = 4
 /** Commits in a day; then the day's files become one sorted file. */
 const DAY = 32
 /** Days kept; older ones are dropped by retention. */
-const DAYS = ["today", "yesterday", "2 days ago"]
+const DAYS = ["today", "yesterday", "2 days"]
 
 /** A file's size, in commits' worth of points; a day's single sorted file is `sorted`. */
 type File = { size: number; sorted?: boolean }
@@ -106,7 +106,7 @@ export function HeroDots() {
     const label = (text: string, x: number, y: number, fill = muted) => {
       ctx.globalAlpha = 0.9
       ctx.fillStyle = fill
-      ctx.font = `10px ${font}`
+      ctx.font = `9px ${font}`
       ctx.fillText(text, x * CELL, y * CELL)
     }
 
@@ -131,7 +131,7 @@ export function HeroDots() {
 
       // The writer: the batch in memory, the last commit, then each day's files.
       const top = Math.max(4, Math.floor((rows - 40) / 2))
-      label(`in memory ${buffered}/${BATCH}`, 1, top)
+      label(`memory ${buffered}/${BATCH}`, 1, top)
       for (let i = 0; i < BATCH; i++)
         for (const [dx, dy] of [
           [0, 1],
@@ -140,7 +140,7 @@ export function HeroDots() {
           [1, 2],
         ] as const)
           square(1 + i * 3 + dx, top + dy, pen, i < buffered ? 1 : 0.15)
-      label(`v${version} · ${event}`, 1, top + 8, pen)
+      label(`v${version} ${event}`, 1, top + 8, pen)
       days.forEach((files, d) => {
         const y = top + 14 + d * 9
         label(DAYS[d] ?? "", 1, y)
@@ -187,13 +187,13 @@ export function HeroDots() {
       const today = [...(days[0] ?? []), fresh]
       const { files, merged } = compact(today)
       if (merged) fresh = files.find((f) => !today.includes(f)) ?? null
-      event = merged ? `merge ${TIER} → 1` : "commit"
+      event = merged ? "merge" : "commit"
       days = [files, ...days.slice(1)]
       if (++commitsToday === DAY) {
         // The day is over: its files become one sorted file, a new day starts, and the oldest is dropped.
         commitsToday = 0
         version++
-        event = "day sorted, oldest dropped"
+        event = "sorted"
         fresh = { size: DAY, sorted: true }
         days = [[], [fresh], ...days.slice(1)].slice(0, DAYS.length)
       }
