@@ -81,45 +81,44 @@ function MoreLink({ href, children }: { href: string; children: React.ReactNode 
 export default function Home() {
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-24 px-4 pt-10 pb-24 sm:pt-16">
-      <section className="cells md:grid-cols-2">
-        <div className="@container relative grid place-items-center overflow-hidden px-4 py-[10%]">
-          <pre
-            aria-hidden
-            className="ascii absolute inset-0 grid place-content-center overflow-hidden text-xs leading-normal"
-          >
-            {FIELD}
-          </pre>
-          <HeroLockup />
-        </div>
-        <div className="flex flex-col justify-center gap-6 p-7 sm:p-10">
-          <h1 className="text-4xl leading-[1.05] font-light tracking-tight text-balance sm:text-5xl">
-            The serverless
-            <br />
-            time&#8209;series
-            <br />
-            lakehouse
-          </h1>
-          <div className="label-mono">Open source · Apache 2.0 · Iceberg compatible</div>
-          <div className="flex flex-wrap gap-2.5">
-            <Button size="lg" className={BTN} nativeButton={false} render={<Link href="/docs/quick-start" />}>
-              Quick start <ArrowRight />
-            </Button>
-            <Button
-              size="lg"
-              variant="outline"
-              className={BTN}
-              nativeButton={false}
-              render={<a href={REPO_URL} target="_blank" rel="noreferrer" />}
+      <div className="flex flex-col gap-4">
+        <section className="cells md:grid-cols-2">
+          <div className="@container relative grid place-items-center overflow-hidden px-4 py-[10%]">
+            <pre
+              aria-hidden
+              className="ascii absolute inset-0 grid place-content-center overflow-hidden text-xs leading-normal"
             >
-              <GithubIcon /> GitHub
-            </Button>
+              {FIELD}
+            </pre>
+            <HeroLockup />
           </div>
-        </div>
-      </section>
-
-      <section>
+          <div className="flex flex-col justify-center gap-6 p-7 sm:p-10">
+            <h1 className="text-4xl leading-[1.05] font-light tracking-tight text-balance sm:text-5xl">
+              The serverless
+              <br />
+              time&#8209;series
+              <br />
+              lakehouse
+            </h1>
+            <div className="label-mono">Open source · Apache 2.0 · Iceberg compatible</div>
+            <div className="flex flex-wrap gap-2.5">
+              <Button size="lg" className={BTN} nativeButton={false} render={<Link href="/docs/quick-start" />}>
+                Quick start <ArrowRight />
+              </Button>
+              <Button
+                size="lg"
+                variant="outline"
+                className={BTN}
+                nativeButton={false}
+                render={<a href={REPO_URL} target="_blank" rel="noreferrer" />}
+              >
+                <GithubIcon /> GitHub
+              </Button>
+            </div>
+          </div>
+        </section>
         <BenefitCards />
-      </section>
+      </div>
 
       <section className="flex flex-col gap-6">
         <SectionHead label="How does it work?" />

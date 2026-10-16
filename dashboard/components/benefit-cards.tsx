@@ -38,7 +38,7 @@ const CARDS: Card[] = [
   {
     icon: ServerOff,
     title: "Serverless",
-    body: "No database, catalog service or Spark jobs. Writers and readers are libraries in your own processes, and everything they share is files in your bucket, so there is no compute to pay for between queries.",
+    body: "No database, catalog service or Spark jobs. Your data is files in your own bucket.",
     link: { label: "How it works", href: "/docs/how-it-works" },
     wide: true,
     art: PROCESSES,
@@ -46,25 +46,25 @@ const CARDS: Card[] = [
   {
     icon: Activity,
     title: "Built for time series",
-    body: "Data is partitioned by time and sorted by series, and the latest value of every series comes from an index. Queries read only the files they need.",
+    body: "Partitioned by time, sorted by series, with an index of latest values.",
     link: { label: "Performance", href: "/docs/performance" },
   },
   {
     icon: RefreshCw,
     title: "Maintains itself",
-    body: "Compaction, deduplication, retention and snapshot cleanup run inside the writer, or as one command from cron.",
+    body: "Compaction, deduplication and retention run inside the writer.",
     link: { label: "Architecture", href: "/docs/architecture" },
   },
   {
     icon: Code,
     title: "Your languages",
-    body: "A CLI, Python and Rust libraries, and a TypeScript client that queries tables from the browser.",
+    body: "CLI, Python and Rust, and TypeScript in the browser.",
     link: { label: "Quick start", href: "/docs/quick-start" },
   },
   {
     icon: Layers,
     title: "Open formats",
-    body: "Tables are Apache Iceberg metadata over Parquet files. DuckDB reads them with no catalog and no Timelake installed, and your data is never tied to Timelake.",
+    body: "Iceberg tables of Parquet files. DuckDB reads them without Timelake.",
     link: { label: "Storage", href: "/docs/storage" },
     wide: true,
     art: FORMATS,
@@ -72,7 +72,7 @@ const CARDS: Card[] = [
   {
     icon: Scale,
     title: "Free and open source",
-    body: "Apache 2.0. Built on Apache Arrow, Apache DataFusion, Apache Parquet and Apache Iceberg.",
+    body: "Apache 2.0, built on Apache Arrow and DataFusion.",
     link: { label: "GitHub", href: REPO_URL },
   },
 ]
@@ -87,7 +87,7 @@ export function BenefitCards() {
           <div
             key={c.title}
             className={cn(
-              "relative flex min-h-56 flex-col gap-3 overflow-hidden rounded-lg border bg-card p-7",
+              "relative flex flex-col gap-2 overflow-hidden rounded-lg border bg-card p-6",
               c.wide && "md:col-span-2",
             )}
           >
@@ -99,7 +99,7 @@ export function BenefitCards() {
             <Link
               href={c.link.href}
               {...(external ? { target: "_blank", rel: "noreferrer" } : {})}
-              className="mt-auto flex w-fit items-center gap-1.5 pt-3 text-sm hover:underline"
+              className="mt-auto flex w-fit items-center gap-1.5 pt-2 text-sm hover:underline"
             >
               {c.link.label} <ArrowRight className="size-3.5" />
             </Link>
