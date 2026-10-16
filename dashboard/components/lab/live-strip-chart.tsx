@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 
 import { StripChart } from "@/components/lab/strip-chart"
 
-/** The demo table, written with the CLI into public/lab-lake; its metadata holds the file:// paths it was written to. */
+/** The demo table, written with the CLI into dashboard/lab-lake and served by app/lab-lake in local development only; its metadata holds the file:// paths it was written to. */
 const TABLE = "demo.readings"
 
 type Readout = { loadMs: number; queryMs: number; requests: number; points: number }

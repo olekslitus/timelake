@@ -5,6 +5,7 @@ import { ArrowRight } from "lucide-react"
 import type { Metadata } from "next"
 import { cacheLife } from "next/cache"
 import Link from "next/link"
+import { notFound } from "next/navigation"
 import { Suspense } from "react"
 
 import { GithubIcon } from "@/components/github-icon"
@@ -23,13 +24,13 @@ import { Button } from "@/components/ui/button"
 import { SYSTEMS, SYSTEM_COLORS, engineLabel, latestByTarget, loadRuns, rankings, targetLabel } from "@/lib/benchmarks"
 import { REPO_URL } from "@/lib/site"
 
-/** Visual ideas for the home page, side by side. Not linked from the site. */
+/** Visual ideas for the home page, side by side: not linked, not indexed, and 404 outside local development. */
 export const metadata: Metadata = { title: "Lab", robots: { index: false } }
 
 const BTN = "font-mono text-xs uppercase tracking-[0.06em]"
 
 /** The demo table that the live chart and the time-travel slider read (written with the CLI). */
-const DEMO = path.resolve(/*turbopackIgnore: true*/ process.cwd(), "public/lab-lake/demo/readings/metadata")
+const DEMO = path.resolve(/*turbopackIgnore: true*/ process.cwd(), "lab-lake/demo/readings/metadata")
 
 /** The hero's heading and buttons, on a panel over a moving background. */
 function HeroPanel() {
@@ -37,7 +38,7 @@ function HeroPanel() {
     <div className="absolute inset-y-0 left-0 flex items-center p-6 sm:p-8">
       <div className="flex flex-col gap-5 rounded-md border bg-card/90 p-6 backdrop-blur-sm">
         <h1 className="text-4xl leading-[1.05] font-light tracking-tight sm:text-5xl">
-          Your time&#8209;series
+          The open time&#8209;series
           <br />
           lakehouse
         </h1>
@@ -93,6 +94,8 @@ function Idea({
 }
 
 export default function Lab() {
+  // Ideas kept for later, visible only in local development.
+  if (process.env.NODE_ENV === "production") notFound()
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-20 px-4 pt-10 pb-24 sm:pt-16">
       <div className="flex flex-col gap-2">
@@ -145,7 +148,7 @@ export default function Lab() {
       <Idea
         n={2}
         title="The recorder, drawing real data read in your browser"
-        note="The same recorder, but the trace is a week of a sensor's 10-minute averages read from a real Timelake table in this browser with @timelake/client. The readout in the corner says what the read took. The table is in public/lab-lake (written with the CLI); on the live site it would sit in a public bucket. For later, once a table is streaming new data."
+        note="The same recorder, but the trace is a week of a sensor's 10-minute averages read from a real Timelake table in this browser with @timelake/client. The readout in the corner says what the read took. The table is in dashboard/lab-lake (written with the CLI); on the live site it would sit in a public bucket. For later, once a table is streaming new data."
       >
         <div className="cells">
           <LiveStripChart>
