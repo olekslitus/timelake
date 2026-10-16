@@ -1,4 +1,15 @@
-import { ArrowRight, Bot, BrainCircuit, Factory, type LucideIcon, Server, Truck, Zap } from "lucide-react"
+import {
+  ArrowRight,
+  Bot,
+  BotMessageSquare,
+  BrainCircuit,
+  ChartCandlestick,
+  Factory,
+  type LucideIcon,
+  Server,
+  Truck,
+  Zap,
+} from "lucide-react"
 import Link from "next/link"
 import { Suspense } from "react"
 
@@ -7,6 +18,7 @@ import { BenefitCards } from "@/components/benefit-cards"
 import { GithubIcon } from "@/components/github-icon"
 import { StackDiagram } from "@/components/stack-diagram"
 import { Button } from "@/components/ui/button"
+import { type ArtKind, UseCaseArt } from "@/components/use-case-art"
 import { latestByTarget, loadRuns } from "@/lib/benchmarks"
 import { REPO_URL } from "@/lib/site"
 
@@ -15,35 +27,53 @@ const BTN = "font-mono text-xs uppercase tracking-[0.06em]"
 /** The dim /\/\ field behind the hero heading: larger than any viewport, centred on it and clipped by its block. */
 const FIELD = Array.from({ length: 40 }, (_, r) => (r % 2 ? "\\/" : "/\\").repeat(120)).join("\n")
 
-/** What Timelake is for. */
-const USE_CASES: { icon: LucideIcon; title: string; body: string }[] = [
+/** What Timelake is for, each with a picture drawn in squares. */
+const USE_CASES: { icon: LucideIcon; art: ArtKind; title: string; body: string }[] = [
   {
     icon: Factory,
+    art: "sensors",
     title: "Industrial sensors",
     body: "Thousands of tags sampled every second to every minute, from gateways that send their backlog after going offline.",
   },
   {
     icon: Truck,
+    art: "fleet",
     title: "Vehicle fleets",
     body: "Position and diagnostics from thousands of vehicles and devices, every few seconds.",
   },
   {
+    icon: Bot,
+    art: "robot",
+    title: "Robotics",
+    body: "Joint positions, torques and sensor readings from robots, recorded at high rates and replayed by time range.",
+  },
+  {
+    icon: ChartCandlestick,
+    art: "market",
+    title: "Financial data",
+    body: "Prices and trades for thousands of instruments, read as time ranges, bars and the latest price.",
+  },
+  {
     icon: Server,
+    art: "metrics",
     title: "Server metrics",
     body: "CPU, memory and disk metrics from thousands of hosts.",
   },
   {
     icon: BrainCircuit,
+    art: "ml",
     title: "Data science and ML",
     body: "Time series pulled into notebooks as Arrow tables, for pandas, polars and model training, straight from the bucket.",
   },
   {
     icon: Zap,
+    art: "functions",
     title: "Serverless functions",
     body: "Lambda functions and short jobs that start, append or query, and exit. There are no connections to pool and no database to size.",
   },
   {
-    icon: Bot,
+    icon: BotMessageSquare,
+    art: "agents",
     title: "AI agents",
     body: "Agents can query as often as they like: reads go to object storage, so there is no database for them to overload.",
   },
@@ -106,11 +136,14 @@ export default function Home() {
         <SectionHead label="What is it for?">
           Many series written all the time, and read by more than one tool.
         </SectionHead>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {USE_CASES.map((u) => {
             const Icon = u.icon
             return (
-              <div key={u.title} className="flex flex-col gap-2 rounded-lg border bg-card p-6">
+              <div key={u.title} data-use-case className="flex flex-col gap-2 rounded-lg border bg-card p-6">
+                <div className="mb-3">
+                  <UseCaseArt kind={u.art} />
+                </div>
                 <h3 className="flex items-center gap-2.5 text-lg font-normal">
                   <Icon className="size-4.5 shrink-0 text-muted-foreground" aria-hidden />
                   {u.title}
