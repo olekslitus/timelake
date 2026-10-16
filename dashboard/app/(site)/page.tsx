@@ -49,7 +49,7 @@ function MoreLink({ href, children }: { href: string; children: React.ReactNode 
 export default function Home() {
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-24 px-4 pt-10 pb-24 sm:pt-16">
-      <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-8">
         <section className="cells">
           {/* Whole rows (18px) and characters (ch) of the field around the band, so its edges fall between them. */}
           <div className="relative overflow-hidden px-[2ch] py-[36px] font-mono text-xs sm:px-[4ch]">
