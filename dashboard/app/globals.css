@@ -86,38 +86,38 @@
 }
 
 .dark {
-  /* Dark (default): near-black instrument panels, hairline borders, Ice accent. */
-  --background: #0B0D0E;
+  /* Dark (default): dark grey instrument panels, hairline borders, Ice accent. */
+  --background: #15191B;
   --foreground: #E6EBED;
-  --card: #101315;
+  --card: #1B2023;
   --card-foreground: #E6EBED;
-  --popover: #101315;
+  --popover: #1B2023;
   --popover-foreground: #E6EBED;
   --primary: #67D4F0;
   --primary-foreground: #0B0D0E;
-  --secondary: #161A1C;
+  --secondary: #22282B;
   --secondary-foreground: #E6EBED;
-  --muted: #161A1C;
-  --muted-foreground: #8B969B;
-  --accent: #1A1F22;
+  --muted: #22282B;
+  --muted-foreground: #949FA4;
+  --accent: #272E31;
   --accent-foreground: #E6EBED;
   --destructive: #F07A62;
-  --border: #23292C;
-  --input: #2B3236;
+  --border: #30383C;
+  --input: #394145;
   --ring: #67D4F0;
-  --ascii: #343C40;
+  --ascii: #434C51;
   --chart-1: #67D4F0;
   --chart-2: #5C676C;
   --chart-3: #3DBF8E;
   --chart-4: #D9A23A;
   --chart-5: #E07AA2;
-  --sidebar: #0E1112;
+  --sidebar: #181C1E;
   --sidebar-foreground: #E6EBED;
   --sidebar-primary: #67D4F0;
   --sidebar-primary-foreground: #0B0D0E;
-  --sidebar-accent: #161A1C;
+  --sidebar-accent: #22282B;
   --sidebar-accent-foreground: #E6EBED;
-  --sidebar-border: #23292C;
+  --sidebar-border: #30383C;
   --sidebar-ring: #67D4F0;
 }
 
