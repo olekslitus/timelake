@@ -29,7 +29,7 @@ DEFAULT_URL = "http://default:bench@localhost:58123"
 
 
 def connect(database: str | None = None) -> Client:
-    """A client of the benchmark server."""
+    """A client of the benchmark server (an hour per request: maintenance merges a whole table in one)."""
     import clickhouse_connect
 
     url = urllib.parse.urlsplit(os.environ.get(URL_ENV, DEFAULT_URL))
@@ -39,6 +39,7 @@ def connect(database: str | None = None) -> Client:
         username=url.username or "default",
         password=url.password or "",
         database=database or "default",
+        send_receive_timeout=3600,
     )
 
 

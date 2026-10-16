@@ -207,9 +207,14 @@ async function readRun(file: string): Promise<Run> {
   const end = records.find((r) => r.kind === "end")
   const header = records[0] as unknown as RunHeader
   const readers = Object.fromEntries(Object.entries(header.readers).filter(([system]) => system !== REFERENCE))
+  // Database servers started only for their system record their versions once up.
+  const versions = Object.assign(
+    { ...header.versions },
+    ...records.filter((r) => r.kind === "versions").map((r) => r.versions as Record<string, string>),
+  ) as Record<string, string>
   const ranked = records.filter((r) => r.system !== REFERENCE)
   return {
-    header: { ...header, readers },
+    header: { ...header, readers, versions },
     phases: ranked.filter((r) => r.kind === "ingest" || r.kind === "maintain") as unknown as PhaseRecord[],
     queries: ranked.filter((r) => r.kind === "query") as unknown as QueryRecord[],
     live: ranked.filter((r) => r.kind === "live") as unknown as LiveRecord[],

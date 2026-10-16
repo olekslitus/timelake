@@ -51,10 +51,10 @@ A second, long-lived stack (`timelake-bench-weekly`) holds one fixed instance, s
 GitHub Actions on `main` can assume to start it, run commands on it and read its results, and nothing else.
 `.github/workflows/bench-weekly.yml` runs `weekly.sh` in two parts, so a run can take longer than a GitHub job may:
 1. **start** (Mondays 06:00 UTC): start the instance, mount its NVMe SSD (stopping wipes it), check out the commit and
-   start `remote.sh weekly` in the background: build, start the database servers in containers (`servers.sh`), then
-   `timebench profile weekly` on the local disk and on S3. Each target's run files go to the bucket as soon as they're
-   done, and the instance stops itself at the end (or after 24 hours). `weekly.sh start <commit> <profile>` runs
-   another profile the same way, e.g. `iiot` alone.
+   start `remote.sh weekly` in the background: build, then `timebench profile weekly` on the local disk and on S3.
+   Each database server runs in a container (`servers.sh`) only during its own system's turn. Each target's run files
+   go to the bucket as soon as they're done, and the instance stops itself at the end (or after 24 hours).
+   `weekly.sh start <commit> <profile>` runs another profile the same way, e.g. `iiot` alone.
 2. **collect** (hourly, Monday to Wednesday): copy the finished run files from the bucket into `bench/results/runs`
    and commit them to `main` with the website's copy.
 

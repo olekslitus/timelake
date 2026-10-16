@@ -120,9 +120,10 @@ bench() {
 }
 
 # The database servers (TimescaleDB, ClickHouse, QuestDB, InfluxDB 3 Core) in containers on this instance, their data
-# on the instance's disk, at the versions servers.sh pins.
+# on the instance's disk, at the versions servers.sh pins. timebench starts each one only while its system runs, so a
+# database has the machine to itself (BENCH_SERVERS).
 servers() {
-  BENCH_SERVERS_DIR=/mnt/bench/servers infra/servers.sh "$1"
+  export BENCH_SERVERS_DIR=/mnt/bench/servers BENCH_SERVERS=$PWD/infra/servers.sh
   eval "$(infra/servers.sh env)"
 }
 
@@ -130,14 +131,14 @@ servers() {
 run_profile() {
   sudo shutdown -h +1440  # a safety net; the instance stops itself when the run is done (below)
   build_timebench
-  servers up
+  servers
   uv run timebench profile "$1" --target local
   sync_out  # each target's run files reach the bucket as soon as they are done
   if grep -q '^target = "aws-s3"' "profiles/$1.toml"; then
     target s3
     uv run timebench profile "$1" --target aws-s3
   fi
-  servers down
+  infra/servers.sh down
 }
 
 weekly() { run_profile weekly; }

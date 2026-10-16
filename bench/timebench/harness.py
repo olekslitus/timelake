@@ -9,9 +9,11 @@ system, first, every answer is checked against its answer. The run writes ``resu
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import json
 import math
+import os
 import statistics
 import subprocess
 import time
@@ -43,7 +45,7 @@ from timebench.targets import Place
 from timebench.worker import command, request_kinds
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Generator
     from pathlib import Path
 
     import pyarrow as pa
@@ -51,6 +53,8 @@ if TYPE_CHECKING:
     from timebench.targets import Target
     from timebench.workloads import Batch, Query, Stage, Workload
 
+SERVERS_ENV = "BENCH_SERVERS"
+"""Path of ``infra/servers.sh``: when set, each database server runs only while its system does."""
 REFERENCE = "reference"
 """The system whose answers the others' are checked against (``systems/reference.py``)."""
 
@@ -134,25 +138,14 @@ def run(spec: RunSpec) -> Path:
     results: list[QueryRecord] = []
     now = spec.workload.stages()[-1].now  # the data's present once everything arrived
     if spec.reuse:
-        live = list(spec.systems)
         for checkpoint in spec.checkpoints or (*spec.workload.checkpoints(), "maintained"):
-            results += query_pass(spec, path, live, At(checkpoint, now))
+            results += query_pass(spec, path, list(spec.systems), At(checkpoint, now))
     else:
-        live = [s for s in spec.systems if ingest_and_query(spec, path, s, results)]
-        if spec.wants("maintained"):
-            live = [s for s in live if record(path, maintain(spec.system(s)))]
-            results += query_pass(spec, path, live, At("maintained", now))
-    last = spec.last_checkpoint()
-    if spec.concurrency and spec.workload.dashboard_queries() and last:
-        for s in live:
-            if s == REFERENCE:
-                continue
-            reader = systems()[s].readers[0]
-            queries = [{"name": q.name, "sql": q.sql_for(reader, now)} for q in spec.workload.dashboard_queries()]
-            for clients in spec.concurrency:
-                c = dashboards(spec.system(s), queries, last, clients, spec.concurrency_seconds)
-                append_jsonl(path, c)
-                print(concurrency_line(c), flush=True)
+        # One system at a time, start to finish, so a database server has the machine to itself (``server``).
+        for s in spec.systems:
+            with server(s, path) as up:
+                if up:
+                    results += run_system(spec, path, s, now, results)
 
     finished = dt.datetime.now(dt.timezone.utc)
     end: EndRecord = {
@@ -171,12 +164,56 @@ def run(spec: RunSpec) -> Path:
     return path
 
 
+def run_system(spec: RunSpec, path: Path, name: str, now: int | None, earlier: list[QueryRecord]) -> list[QueryRecord]:
+    """One system start to finish: ingest with its checkpoints, maintenance and its queries, concurrent dashboards."""
+    results: list[QueryRecord] = []
+    if not ingest_and_query(spec, path, name, results, earlier):
+        return results
+    if spec.wants("maintained"):
+        if not record(path, maintain(spec.system(name))):
+            return results
+        results += query_pass(spec, path, [name], At("maintained", now), [*earlier, *results])
+    last = spec.last_checkpoint()
+    if spec.concurrency and spec.workload.dashboard_queries() and last and name != REFERENCE:
+        reader = systems()[name].readers[0]
+        queries = [{"name": q.name, "sql": q.sql_for(reader, now)} for q in spec.workload.dashboard_queries()]
+        for clients in spec.concurrency:
+            c = dashboards(spec.system(name), queries, last, clients, spec.concurrency_seconds)
+            append_jsonl(path, c)
+            print(concurrency_line(c), flush=True)
+    return results
+
+
+@contextlib.contextmanager
+def server(name: str, path: Path) -> Generator[bool]:
+    """Starts a database system's server before it runs and stops it after; yields whether the system can run.
+
+    Only when ``BENCH_SERVERS`` names ``infra/servers.sh``. The server's versions are recorded once it's up.
+    """
+    script = os.environ.get(SERVERS_ENV)
+    managed = bool(script) and systems()[name].server and name != REFERENCE
+    if managed:
+        up = subprocess.run([str(script), "up", name], capture_output=True, text=True, check=False)
+        if up.returncode != 0:
+            error = (up.stderr.strip().splitlines() or ["?"])[-1]
+            record(path, {"kind": "ingest", "system": name, "status": "error", "error": f"server: {error}"[:300]})
+            yield False
+            return
+        append_jsonl(path, {"kind": "versions", "system": name, "versions": systems()[name].version()})
+    try:
+        yield True
+    finally:
+        if managed:
+            subprocess.run([str(script), "down", name], capture_output=True, check=False)
+
+
 def run_header(spec: RunSpec, started: dt.datetime) -> RunRecord:
     """The first record of a run: what runs, where, and on which commit."""
     workload, target = spec.workload, spec.target
     versions: dict[str, str] = {}
     for name in spec.systems:
-        versions.update(systems()[name].version())
+        if not (os.environ.get(SERVERS_ENV) and systems()[name].server and name != REFERENCE):  # recorded once up
+            versions.update(systems()[name].version())
     header: RunRecord = {
         "kind": "run",
         "id": f"{started:%Y%m%dT%H%M%SZ}-{workload.dataset}-{target.name}"
@@ -208,13 +245,18 @@ def run_header(spec: RunSpec, started: dt.datetime) -> RunRecord:
     return header
 
 
-def ingest_and_query(spec: RunSpec, path: Path, name: str, results: list[QueryRecord]) -> bool:
-    """Streams the workload into one system, querying it at each stage's checkpoint; whether it succeeded."""
+def ingest_and_query(
+    spec: RunSpec, path: Path, name: str, results: list[QueryRecord], earlier: list[QueryRecord]
+) -> bool:
+    """Streams the workload into one system, querying it at each stage's checkpoint; whether it succeeded.
+
+    ``earlier`` holds the systems that ran before, the reference's answers among them.
+    """
     system = spec.system(name)
 
     def checkpoint(stage: Stage) -> None:
         if stage.checkpoint and spec.wants(stage.checkpoint):
-            results.extend(query_pass(spec, path, [name], At(stage.checkpoint, stage.now), results))
+            results.extend(query_pass(spec, path, [name], At(stage.checkpoint, stage.now), [*earlier, *results]))
 
     done, probes = ingest(spec, system, checkpoint)
     ok = record(path, done)

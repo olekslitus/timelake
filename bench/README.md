@@ -68,7 +68,9 @@ uv run timebench history --workload tsbs-iot                  # one line per run
   `data/servers/`, ports 55432, 58123, 59900/58812, 58181, 58182), and `eval "$(infra/servers.sh env)"` sets the
   variables the adapters read (`BENCH_TIMESCALEDB_DSN`, `BENCH_CLICKHOUSE_URL`, ...). Each dataset gets its own
   schema or database that runs drop; QuestDB holds one dataset at a time. `influxdb3` runs with
-  `--query-file-limit` raised, `influxdb3-defaults` as shipped (a query reads at most 432 files).
+  `--query-file-limit` raised, `influxdb3-defaults` as shipped (a query reads at most 432 files). With
+  `BENCH_SERVERS` set to `infra/servers.sh`, a run starts each system's server just before that system's turn and
+  stops it after, so one server uses the machine at a time; the run file records each server's version.
 - **Targets** (`--target`): `local` (tables under `data/lakes/`), or S3 through `tools/s3proxy` on `localhost:59100`:
   `s3` for a local RustFS, `aws-s3` / `aws-s3x` for real buckets (`infra/`). TimescaleDB ignores the target.
 - **Adding a workload or system:** subclass `Workload` or `System` and register it in its package's `__init__.py`.
