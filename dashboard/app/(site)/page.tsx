@@ -34,8 +34,13 @@ const USE_CASES = [
   },
 ]
 
-function SectionHead({ label }: { label: string }) {
-  return <h2 className="text-2xl leading-tight font-light tracking-tight">{label}</h2>
+function SectionHead({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <h2 className="text-2xl leading-tight font-light tracking-tight">{label}</h2>
+      <p className="text-sm text-muted-foreground">{children}</p>
+    </div>
+  )
 }
 
 function MoreLink({ href, children }: { href: string; children: React.ReactNode }) {
@@ -48,7 +53,7 @@ function MoreLink({ href, children }: { href: string; children: React.ReactNode 
 
 export default function Home() {
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-24 px-4 pt-10 pb-24 sm:pt-16">
+    <div className="mx-auto flex max-w-6xl flex-col gap-24 px-4 pt-8 pb-24">
       <div className="flex flex-col gap-8">
         <section className="cells">
           {/* Whole rows (18px) and characters (ch) of the field around the band, so its edges fall between them. */}
@@ -83,12 +88,16 @@ export default function Home() {
       </div>
 
       <section className="flex flex-col gap-6">
-        <SectionHead label="How does it work?" />
+        <SectionHead label="How does it work?">
+          From the sources that send data to the tools that read it, with only your bucket in between.
+        </SectionHead>
         <StackDiagram />
       </section>
 
       <section className="flex flex-col gap-6">
-        <SectionHead label="What is it for?" />
+        <SectionHead label="What is it for?">
+          Many series written all the time, and read by more than one tool.
+        </SectionHead>
         <div className="cells sm:grid-cols-2">
           {USE_CASES.map((u) => (
             <div key={u.title} className="flex flex-col gap-2 p-6">
@@ -114,16 +123,20 @@ async function Measurements() {
   if (!run) return null
   return (
     <section className="flex flex-col gap-6">
-      <SectionHead label="Benchmarks" />
+      <div className="flex flex-col gap-3">
+        <SectionHead label="Benchmarks">
+          Measured every week on AWS S3, against other lakes with the same data and queries. Lower is better.
+        </SectionHead>
+        <nav className="flex flex-wrap gap-x-5 gap-y-1">
+          <MoreLink href="/benchmarks">All benchmarks</MoreLink>
+          <MoreLink href="/benchmarks/timebench">How we measure</MoreLink>
+        </nav>
+      </div>
       <div className="grid gap-x-10 gap-y-6 lg:grid-cols-2">
         {rankings(run).map((r) => (
           <BenchRanking key={r.title} ranking={r} />
         ))}
       </div>
-      <nav className="flex flex-wrap gap-x-5 gap-y-1">
-        <MoreLink href="/benchmarks">All benchmarks</MoreLink>
-        <MoreLink href="/benchmarks/timebench">How we measure</MoreLink>
-      </nav>
     </section>
   )
 }
