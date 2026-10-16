@@ -65,7 +65,7 @@ const LIMITATIONS = [
 /** Mark + "timelake" across most of the hero's width, on a card-coloured pill that masks the field. */
 function HeroLockup() {
   // The mark's height, from the container's width; the rest follows the brand proportions (brand/marks.mjs).
-  const m = "19.5cqw"
+  const m = "12cqw"
   const of = (k: number) => `calc(${m} * ${k})`
   return (
     <div
@@ -113,7 +113,7 @@ export default function Home() {
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-24 px-4 pt-10 pb-24 sm:pt-16">
       <section className="cells">
-        <div className="@container relative grid place-items-center overflow-hidden px-4 py-[8cqw]">
+        <div className="@container relative grid place-items-center overflow-hidden px-4 py-[6cqw]">
           <pre aria-hidden className="ascii absolute inset-0 overflow-hidden p-3 text-xs leading-normal">
             {FIELD}
           </pre>
