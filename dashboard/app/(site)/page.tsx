@@ -15,49 +15,37 @@ const BTN = "font-mono text-xs uppercase tracking-[0.06em]"
 /** The dim /\/\ field behind the hero heading: larger than any viewport, centred on it and clipped by its block. */
 const FIELD = Array.from({ length: 40 }, (_, r) => (r % 2 ? "\\/" : "/\\").repeat(120)).join("\n")
 
-/** What Timelake is for; `note` says how each is measured, and `measured` whether results exist yet. */
-const USE_CASES: { icon: LucideIcon; title: string; body: string; note: string; measured: boolean }[] = [
+/** What Timelake is for. */
+const USE_CASES: { icon: LucideIcon; title: string; body: string }[] = [
   {
     icon: Factory,
     title: "Industrial sensors",
     body: "Thousands of tags sampled every second to every minute, from gateways that send their backlog after going offline.",
-    note: "Industrial IoT · in progress",
-    measured: false,
   },
   {
     icon: Truck,
     title: "Vehicle fleets",
     body: "Position and diagnostics from thousands of vehicles and devices, every few seconds.",
-    note: "TSBS IoT · weekly",
-    measured: true,
   },
   {
     icon: Server,
     title: "Server metrics",
     body: "CPU, memory and disk metrics from thousands of hosts.",
-    note: "TSBS DevOps · pending",
-    measured: false,
   },
   {
     icon: BrainCircuit,
     title: "Data science and ML",
     body: "Time series pulled into notebooks as Arrow tables, for pandas, polars and model training, straight from the bucket.",
-    note: "Python · Arrow",
-    measured: true,
   },
   {
     icon: Zap,
     title: "Serverless functions",
     body: "Lambda functions and short jobs that start, append or query, and exit. There are no connections to pool and no database to size.",
-    note: "Python · Rust · CLI",
-    measured: true,
   },
   {
     icon: Bot,
     title: "AI agents",
     body: "Agents can query as often as they like: reads go to object storage, so there is no database for them to overload.",
-    note: "CLI · SQL",
-    measured: true,
   },
 ]
 
@@ -128,16 +116,6 @@ export default function Home() {
                   {u.title}
                 </h3>
                 <p className="text-sm leading-relaxed text-muted-foreground">{u.body}</p>
-                <div className="mt-auto flex items-center gap-2 border-t pt-3 font-mono text-[11px] text-muted-foreground">
-                  <span
-                    className={
-                      u.measured
-                        ? "size-1.5 shrink-0 bg-primary"
-                        : "size-1.5 shrink-0 border border-muted-foreground/60"
-                    }
-                  />
-                  {u.note}
-                </div>
               </div>
             )
           })}
