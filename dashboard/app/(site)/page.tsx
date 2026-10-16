@@ -155,7 +155,7 @@ export default function Home() {
                 <GithubIcon /> GitHub
               </Button>
             </div>
-            <p className="text-xs text-muted-foreground">Apache 2.0 licensed · v0: minor releases may break things</p>
+            <p className="text-xs text-muted-foreground">Apache 2.0 · v0</p>
           </div>
         </div>
         {/* Publish on the left by hovering the chart; the store in the middle; readers as tabs on the right. */}
