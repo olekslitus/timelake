@@ -128,9 +128,9 @@ export default function Home() {
           </h1>
           <div className="label-mono">Open source · Apache 2.0 · v0</div>
           <p className="text-muted-foreground">
-            A table format and query engine for time-series data in object storage. Data is written as Parquet files
-            with Apache Iceberg metadata to an S3 bucket or a local disk, and queried with SQL from the command line,
-            Python, Rust or the browser.
+            Timelake writes time series to your own S3 bucket or local disk as Apache Iceberg tables, keeps them
+            compacted and within retention, and queries them with SQL from the command line, Python, Rust or the
+            browser. It runs inside your own processes, with no database server and no maintenance jobs to schedule.
           </p>
           <div className="flex flex-wrap gap-2.5">
             <Button size="lg" className={BTN} nativeButton={false} render={<Link href="/docs/quick-start" />}>
