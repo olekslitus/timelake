@@ -125,6 +125,8 @@ export default function TimebenchPage() {
           </li>
           <li>
             <span className="text-foreground">Failures</span> are left out of the means and listed on the results page.
+            A query that runs past its time limit isn&apos;t run again at that system&apos;s later checkpoints; it is
+            listed as skipped.
           </li>
           <li>
             <span className="text-foreground">Requests and bytes.</span> On S3, every request goes through a proxy that
@@ -180,9 +182,9 @@ export default function TimebenchPage() {
             per request stands in for S3.
           </li>
           <li>
-            Every Monday, a weekly run repeats the same benchmarks on one fixed AWS machine in us-east-2 (8 Graviton
-            cores, local SSD), on the disk and on S3 in the same region. Other systems&apos; versions are pinned, so a
-            change in the history comes from Timelake.
+            Every week, the same benchmarks run on one fixed AWS machine in us-east-2 (8 Graviton cores, local SSD):
+            TSBS on Mondays, on the disk and on S3 in the same region, and industrial IoT on Thursdays. Other
+            systems&apos; versions are pinned, so a change in the history comes from Timelake.
           </li>
           <li>
             Each run is one file in the repository, which the results pages chart over time. Each results page links the
