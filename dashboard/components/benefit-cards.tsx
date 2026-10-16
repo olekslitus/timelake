@@ -3,22 +3,20 @@ import Link from "next/link"
 import type { ReactNode } from "react"
 
 import { BarChart, type BarRow } from "@/components/bar-chart"
+import { CostCalculator } from "@/components/cost-calculator"
+import { MoveOut } from "@/components/move-out"
 import { type ArtKind, UseCaseArt } from "@/components/use-case-art"
 import { latestByTarget, loadRuns, rankings, type Run } from "@/lib/benchmarks"
 import { cn } from "@/lib/utils"
 
 type Card = {
   icon: LucideIcon
-  art: ArtKind
   title: string
   body: string
   link: { label: string; href: string }
-  wide?: boolean
-  /** Rows in the picture, for a card next to a taller one. */
-  rows?: number
-  /** A chart shown instead of the picture. */
-  figure?: ReactNode
-}
+  /** Columns the card spans on a wide screen (of 4). */
+  span?: 1 | 2 | 4
+} & ({ art: ArtKind; figure?: ReactNode } | { art?: never; figure: ReactNode })
 
 /** The value at percentile `p` (0..1) of `values`, by nearest rank. */
 const percentile = (values: number[], p: number) => {
@@ -64,48 +62,17 @@ function speed(run: Run | undefined): { body: string; rows: BarRow[] | null } {
   }
 }
 
-/** Prices for keeping data a month (October 2026): S3 Standard, and Tiger Cloud's Performance plan. */
-const S3_GB_MONTH = 0.023
-const TIGER_COMPUTE_MONTH = 30
-const TIGER_GB_MONTH = 0.177
-/** Timelake's Parquet for the same data, as a share of TimescaleDB's columnstore (228 MB to 413 MB, TSBS IoT). */
-const PARQUET_SHARE = 228 / 413
-
-const usd = (v: number) => (v < 10 ? `$${v.toFixed(2)}` : `$${Math.round(v).toLocaleString("en")}`)
-
-/**
- * Keeping the same data a month, by its size in TimescaleDB: Timelake's Parquet on S3 in green, and a Tiger Cloud
- * service (its smallest compute plus storage) in grey. Reads and writes are left out.
- */
-function keepingCost(): BarRow[] {
-  return [
-    ["10 GB", 10],
-    ["100 GB", 100],
-    ["1 TB", 1000],
-  ].map(([label, gb]) => {
-    const size = Number(gb)
-    const [lake, tiger] = [size * PARQUET_SHARE * S3_GB_MONTH, TIGER_COMPUTE_MONTH + size * TIGER_GB_MONTH]
-    return {
-      label: String(label),
-      bars: [
-        { value: lake, color: "var(--chart-3)", text: usd(lake), strong: true },
-        { value: tiger, color: "var(--muted-foreground)", text: usd(tiger) },
-      ],
-    }
-  })
-}
-
 /** Columns in a wide card's picture, twice a narrow one's. */
 const WIDE_COLS = 128
-/** Rows in a picture next to the charts, about as tall as them. */
-const TALL_ROWS = 30
+/** Each span's columns: two of the grid's two on a tablet, and its own share of four on a wide screen. */
+const SPANS = { 1: "", 2: "md:col-span-2", 4: "md:col-span-2 lg:col-span-4" }
 
 export async function BenefitCards() {
   const run = latestByTarget(await loadRuns(), "tsbs-iot").find(
     (r) => r.header.target === "aws-s3" && !r.header.variant,
   )
   const fast = speed(run)
-  // Two rows of three: a wide card first in the top row, in the middle of the bottom one.
+  // Fast and Cheap on top; Open, Analytics, and Serverless; then Any object store across the width.
   const cards: Card[] = [
     {
       icon: Gauge,
@@ -113,7 +80,7 @@ export async function BenefitCards() {
       title: "Fast",
       body: fast.body,
       link: { label: "Benchmarks", href: "/benchmarks" },
-      wide: true,
+      span: 2,
       figure: fast.rows && (
         <BarChart
           rows={fast.rows}
@@ -126,28 +93,19 @@ export async function BenefitCards() {
     },
     {
       icon: PiggyBank,
-      art: "cheap",
       title: "Cheap",
       body: "You pay only for storage, reads, and writes. There’s no database server to keep running.",
       link: { label: "Cost", href: "/docs/storage#requests-and-cost" },
-      figure: (
-        <BarChart
-          rows={keepingCost()}
-          caption="Keeping the data a month, before reads and writes"
-          legend={[
-            { label: "Timelake on S3", color: "var(--chart-3)" },
-            { label: "Tiger Cloud", color: "var(--muted-foreground)" },
-          ]}
-        />
-      ),
+      span: 2,
+      figure: <CostCalculator />,
     },
     {
       icon: Layers,
-      art: "formats",
       title: "Open",
       body: "Tables are standard Iceberg and Parquet in your own bucket, so you’re not locked in: DuckDB and Spark read them too.",
       link: { label: "Querying", href: "/docs/querying" },
-      rows: TALL_ROWS,
+      span: 2,
+      figure: <MoveOut />,
     },
     {
       icon: Activity,
@@ -162,7 +120,6 @@ export async function BenefitCards() {
       title: "Serverless",
       body: "No database or maintenance jobs to run. Timelake is a library that runs in your process.",
       link: { label: "How it works", href: "/docs/how-it-works" },
-      wide: true,
     },
     {
       icon: Cloud,
@@ -170,6 +127,7 @@ export async function BenefitCards() {
       title: "Any object store",
       body: "Runs on AWS S3, Google Cloud Storage, Azure, R2, MinIO, or your local disk.",
       link: { label: "Storage", href: "/docs/storage" },
+      span: 4,
     },
   ]
   return (
@@ -180,7 +138,7 @@ export async function BenefitCards() {
           <div
             key={c.title}
             data-use-case
-            className={cn("flex flex-col gap-2 rounded-lg border bg-card p-6", c.wide && "md:col-span-2")}
+            className={cn("flex flex-col gap-2 rounded-lg border bg-card p-6", SPANS[c.span ?? 1])}
           >
             <h3 className="flex items-center gap-2.5 text-lg font-normal">
               <Icon className="size-4.5 text-muted-foreground" aria-hidden />
@@ -189,7 +147,7 @@ export async function BenefitCards() {
             <p className="text-sm leading-relaxed text-muted-foreground">{c.body}</p>
             {/* Pinned to the bottom, so pictures line up across a row. */}
             <div className="mt-auto pt-4">
-              {c.figure ?? <UseCaseArt kind={c.art} cols={c.wide ? WIDE_COLS : undefined} rows={c.rows} />}
+              {c.figure ?? (c.art && <UseCaseArt kind={c.art} cols={(c.span ?? 1) > 1 ? WIDE_COLS : undefined} />)}
             </div>
             <Link
               href={c.link.href}
