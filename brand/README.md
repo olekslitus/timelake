@@ -42,16 +42,16 @@ Everything is generated: edit `marks.mjs` and run `bun brand/marks.mjs` (marks) 
 
 ## Color
 
-Instrument-panel look: dark grey panels with hairline borders, mono labels, ASCII illustrations, and **one accent**.
+Instrument-panel look: near-black panels with hairline borders, mono labels, ASCII illustrations, and **one accent**.
 
 | Token | Dark | Light |
 |---|---|---|
-| background | `#101315` | `#F4F5F5` |
-| panel | `#161A1D` | `#FFFFFF` |
-| line (hairlines) | `#2A3134` | `#D9DEE0` |
-| dim (ASCII fields) | `#3C454A` | `#C3CACD` |
+| background | `#0B0D0E` | `#F4F5F5` |
+| panel | `#101315` | `#FFFFFF` |
+| line (hairlines) | `#23292C` | `#D9DEE0` |
+| dim (ASCII fields) | `#343C40` | `#C3CACD` |
 | foreground | `#E6EBED` | `#0D1113` |
-| muted | `#909BA0` | `#59656A` |
+| muted | `#8B969B` | `#59656A` |
 | **accent: Ice** (Timelake) | `#67D4F0` | `#0B7FA6` |
 
 **Reserved accents** for future Polythings projects or spin-offs (not used by Timelake):
