@@ -2,7 +2,7 @@
 # On commit: formatters and fast linters on the staged files. On push: clippy and the type checkers.
 # Everything: `prek run --all-files --hook-stage pre-push`. CI runs the same checks plus the tests.
 default_install_hook_types: [pre-commit, pre-push]
-exclude: ^(bench/results/|dashboard/data/|packages/timelake-client/src/wasm/|brand/explorations/|.*/tests/fixtures/)
+exclude: ^(bench/results/|dashboard/data/|dashboard/lab-lake/|packages/timelake-client/src/wasm/|brand/explorations/|.*/tests/fixtures/)
 
 repos:
   - repo: builtin
