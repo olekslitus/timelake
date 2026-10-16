@@ -457,8 +457,9 @@ export function HeroFlow() {
         next++
         if (writer.write()) [committed, committedVersion] = [[...values], writer.version]
       }
-      // Readers take turns (unless a tab keeps one on screen), and the one on screen reloads while you publish.
-      if (pinned === null && ++phase > CYCLE) {
+      // While hovered, readers take turns (unless a tab keeps one on screen), and the one on screen reloads while you
+      // publish.
+      if (mode !== null && pinned === null && ++phase > CYCLE) {
         phase = 0
         reader = (reader + 1) % READERS.length
         load(true)
@@ -468,9 +469,10 @@ export function HeroFlow() {
         if (fresh) reveal = 0
       } else if (loading === 0 && reveal < REVEAL) reveal++
       draw()
-      // When not publishing or rotating, nothing needs ticks once the chart is loaded and drawn, until the cursor
-      // does something.
-      if (pinned !== null && mode !== "publish" && loading === 0 && reveal >= REVEAL) stop()
+      // When not publishing or rotating (or no longer hovered), nothing needs ticks once the chart is loaded and drawn,
+      // until the cursor does something; a load or draw-in under way always finishes first.
+      const idle = mode === null || (pinned !== null && mode !== "publish")
+      if (idle && loading === 0 && reveal >= REVEAL) stop()
     }
 
     let timer: ReturnType<typeof setInterval> | null = null
@@ -514,10 +516,11 @@ export function HeroFlow() {
       load(true)
       run()
     }
+    // Leaving stops publishing and rotating; the next tick stops the hero once the reader has finished loading and
+    // drawing in.
     const leave = () => {
       cursorY = null
       mode = null
-      stop()
     }
     area.addEventListener("pointerenter", enter)
     area.addEventListener("pointermove", move)
