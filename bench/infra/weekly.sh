@@ -32,7 +32,8 @@ start() {
   trap - ERR
 }
 
-# Run files reach the bucket after each run; only complete ones (with an end record) are copied.
+# Run files reach the bucket after each run; only complete ones (with an end record) that aren't in the repository yet
+# are copied. A published run file is never replaced: later fixes to it (such as backfilled costs) stay.
 collect() {
   local tmp
   tmp=$(mktemp -d)
@@ -40,7 +41,8 @@ collect() {
   for f in "$tmp"/*.jsonl; do
     [ -e "$f" ] || continue
     grep -q '"kind": "end"' "$f" || continue
-    cmp -s "$f" "../results/runs/$(basename "$f")" || { cp "$f" ../results/runs/ && echo "new: $(basename "$f")"; }
+    [ -e "../results/runs/$(basename "$f")" ] && continue
+    cp "$f" ../results/runs/ && echo "new: $(basename "$f")"
   done
   rm -rf "$tmp"
 }

@@ -55,8 +55,9 @@ GitHub Actions on `main` can assume to start it, run commands on it and read its
    Each database server runs in a container (`servers.sh`) only during its own system's turn. Each target's run files
    go to the bucket as soon as they're done, and the instance stops itself at the end (or after 24 hours).
    `weekly.sh start <commit> <profile>` runs another profile the same way, e.g. `iiot` alone.
-2. **collect** (hourly, Monday to Wednesday): copy the finished run files from the bucket into `bench/results/runs`
-   and commit them to `main` with the website's copy.
+2. **collect** (hourly, Monday to Wednesday): copy the finished run files that aren't in `bench/results/runs` yet from
+   the bucket, and commit them to `main` with the website's copy. A run file already in the repository is never
+   replaced.
 
 Same machine, workloads and pinned competitor versions every week, so the history shows Timelake's changes. Stopped,
 the instance costs only its 100 GB EBS volume.
