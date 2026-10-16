@@ -197,22 +197,25 @@ const PICTURES: Record<ArtKind, (cols: number) => Cell[]> = {
     return cells
   },
   layout: (cols) => {
-    // Day partitions across, a band per series down each: a query for one series over the last two days reads only
-    // that block (lit); the rest stays dim, never read.
+    // What queries on time series draw: a bar chart on the left and a line chart on the right, from one series.
+    const rnd = seeded(7)
     const cells: Cell[] = []
-    const days = Math.ceil(cols / 16)
-    for (let day = 0; day < days; day++)
-      for (let x = day * 16; x < Math.min(day * 16 + 14, cols); x++)
-        for (let series = 0; series < 4; series++) {
-          const read = series === 1 && day >= days - 2
-          for (const dy of [0, 1])
-            cells.push({
-              x,
-              y: 1 + series * 3 + dy,
-              color: read ? "var(--primary)" : "var(--muted-foreground)",
-              alpha: read ? 1 : 0.3,
-            })
-        }
+    const half = Math.floor((cols - 4) / 2)
+    const level = (t: number) => 0.5 + 0.25 * Math.sin(t * 6 + 1) + 0.12 * Math.sin(t * 17) + (rnd() - 0.5) * 0.1
+    const height = (t: number) => Math.max(1, Math.round(level(t) * (ROWS - 2)))
+    for (let x = 0; x + 1 < half; x += 3) {
+      const h = height(x / half)
+      for (const dx of [0, 1])
+        for (let k = 0; k < h; k++) cells.push({ x: x + dx, y: ROWS - 1 - k, color: "var(--primary)", alpha: 0.85 })
+    }
+    let prev: number | null = null
+    for (let x = half + 4; x < cols; x++) {
+      const y = ROWS - 1 - height((x - half - 4) / half)
+      const [top, bottom] = prev === null ? [y, y] : [Math.min(prev, y), Math.max(prev, y)]
+      for (let k = bottom + 1; k < ROWS; k++) cells.push({ x, y: k, color: "var(--chart-4)", alpha: 0.18 })
+      for (let k = top; k <= bottom; k++) cells.push({ x, y: k, color: "var(--chart-4)", alpha: 1 })
+      prev = y
+    }
     return cells
   },
   fast: (cols) => {
