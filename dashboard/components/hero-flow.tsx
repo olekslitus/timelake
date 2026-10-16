@@ -34,12 +34,12 @@ type Reader = {
   per: number
 }
 const READERS: Reader[] = [
-  { name: "Dashboard", query: "avg per minute", pick: (d) => (d[0] ?? []).slice(-2), chart: "line", per: 3 },
-  { name: "Mobile app", query: "latest value", pick: () => [], chart: "latest", per: 1 },
+  { name: "Mobile", query: "latest value", pick: () => [], chart: "latest", per: 1 },
+  { name: "Dashboard", query: "avg per minute", pick: (d) => (d[0] ?? []).slice(-2), chart: "line", per: 8 },
   { name: "DuckDB", query: "avg per hour", pick: (d) => d[0] ?? [], chart: "bars", per: 10 },
-  { name: "Trading app", query: "OHLC per minute", pick: (d) => d[0] ?? [], chart: "candles", per: 8 },
+  { name: "Trading", query: "OHLC per minute", pick: (d) => d[0] ?? [], chart: "candles", per: 8 },
   { name: "AI agent", query: "when was the peak?", pick: (d) => d[0] ?? [], chart: "peak", per: 4 },
-  { name: "Many readers", query: "queries at once", pick: (d) => d.flat(), chart: "parallel", per: 1 },
+  { name: "Many", query: "queries at once", pick: (d) => d.flat(), chart: "parallel", per: 1 },
 ]
 
 /** 5×7 dot-matrix digits for the latest value, top row first. */
@@ -83,15 +83,6 @@ function downsample(values: number[], per: number): Bucket[] {
     })
   }
   return out
-}
-
-/** `values` stretched to `n` points, straight between neighbours. */
-function stretch(values: number[], n: number): number[] {
-  return Array.from({ length: n }, (_, i) => {
-    const t = (i / Math.max(1, n - 1)) * (values.length - 1)
-    const [a, b] = [values[Math.floor(t)] ?? 0, values[Math.ceil(t)] ?? 0]
-    return a + (b - a) * (t - Math.floor(t))
-  })
 }
 
 /**
@@ -293,17 +284,24 @@ export function HeroFlow() {
         }
         return
       }
-      const line = stretch(
-        buckets.map((b) => b.avg),
-        width,
-      )
-      let prev: number | null = null
-      for (let i = 0; i < upTo; i++) {
-        const y = at(line[i] ?? 0)
-        const [a, b] = prev === null ? [y, y] : [Math.min(prev, y), Math.max(prev, y)]
-        for (let cy = a; cy <= b; cy++) square(x + i, cy, reads, 1)
-        prev = y
-      }
+      // The series downsampled: a point per bucket, mid-bucket, joined to the next by a faint line.
+      const points = shown.map((b, i) => [Math.round((span(i)[0] + span(i)[1]) / 2), at(b.avg)] as const)
+      points.forEach(([px, py], i) => {
+        const [nx, ny] = points[i + 1] ?? [px, py]
+        let prev = py
+        for (let cx = px; cx <= nx; cx++) {
+          const y = Math.round(py + ((ny - py) * (cx - px)) / (nx - px || 1))
+          for (let cy = Math.min(prev, y); cy <= Math.max(prev, y); cy++) square(cx, cy, reads, 0.35)
+          prev = y
+        }
+        for (const [dx, dy] of [
+          [0, 0],
+          [1, 0],
+          [0, 1],
+          [1, 1],
+        ] as const)
+          square(px + dx, py + dy, reads, 1)
+      })
     }
 
     const draw = () => {
@@ -358,7 +356,7 @@ export function HeroFlow() {
       // The object store: path, memory, version, then the partitions; the files being read in the reading color.
       const turn = readers ? READERS[reader] : undefined
       const read = new Set(turn ? pickFiles(turn) : [])
-      label("s3://lake/iot/readings", storeX, 4, pen)
+      label("s3://lakehouse/data", storeX, 4, pen)
       label(`memory ${writer.buffered}/${BATCH}`, storeX, 8)
       for (let i = 0; i < BATCH; i++)
         for (const [dx, dy] of [
