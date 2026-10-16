@@ -134,30 +134,32 @@ export default function Home() {
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-24 px-4 pt-8 pb-24">
       <div className="flex flex-col gap-8">
-        <section className="cells">
-          <div className="relative overflow-hidden px-4 py-9 sm:px-8">
-            <HeroDots />
-            {/* The series run between the heading and the buttons; each sits on its own solid patch. */}
-            <div className="relative flex h-[200px] flex-col justify-center gap-5 sm:h-[164px] sm:flex-row sm:items-center sm:justify-between">
-              <h1 className="w-fit rounded-md bg-card/90 px-5 py-4 text-4xl leading-[1.05] font-light tracking-tight backdrop-blur-[2px] sm:text-5xl">
-                The open time&#8209;series
-                <br />
-                lakehouse
-              </h1>
-              <div className="flex w-fit shrink-0 flex-wrap gap-2.5 rounded-md bg-card/90 p-3 backdrop-blur-[2px]">
-                <Button size="lg" className={BTN} nativeButton={false} render={<Link href="/docs/quick-start" />}>
-                  Quick start <ArrowRight />
-                </Button>
-                <Button
-                  size="lg"
-                  variant="outline"
-                  className={BTN}
-                  nativeButton={false}
-                  render={<a href={REPO_URL} target="_blank" rel="noreferrer" />}
-                >
-                  <GithubIcon /> GitHub
-                </Button>
-              </div>
+        <section className="flex flex-col gap-8">
+          {/* The chart on its own; hovering it publishes points at the cursor's height. */}
+          <div className="cells">
+            <div className="relative h-[180px] overflow-hidden sm:h-[220px]">
+              <HeroDots />
+            </div>
+          </div>
+          <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+            <h1 className="text-4xl leading-[1.05] font-light tracking-tight sm:text-5xl">
+              The open time&#8209;series
+              <br />
+              lakehouse
+            </h1>
+            <div className="flex shrink-0 flex-wrap gap-2.5">
+              <Button size="lg" className={BTN} nativeButton={false} render={<Link href="/docs/quick-start" />}>
+                Quick start <ArrowRight />
+              </Button>
+              <Button
+                size="lg"
+                variant="outline"
+                className={BTN}
+                nativeButton={false}
+                render={<a href={REPO_URL} target="_blank" rel="noreferrer" />}
+              >
+                <GithubIcon /> GitHub
+              </Button>
             </div>
           </div>
         </section>
