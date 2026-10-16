@@ -51,7 +51,7 @@ const USE_CASES = [
 const LIMITATIONS = [
   "No row-level deletes: retention drops whole partitions only.",
   "The schema is fixed when a table is created.",
-  "Rows sent twice stay visible until compaction removes them.",
+  "Rows sent twice stay visible to DuckDB and other engines until compaction removes them; the Timelake reader skips them.",
   "Data becomes visible when its append commits; there is no buffer for sub-second freshness.",
   "Tables are found by path; engines that only speak the Iceberg REST catalog protocol can't attach yet.",
   "Google Cloud Storage, Azure Blob Storage and R2 use the same code as S3 but haven't been tested yet.",

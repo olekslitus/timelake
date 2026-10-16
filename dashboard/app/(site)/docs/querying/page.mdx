@@ -78,4 +78,4 @@ SELECT * FROM iceberg_scan('s3://my-bucket/lake/iot/readings');
 SELECT * FROM read_parquet('s3://my-bucket/lake/iot/readings/metadata/lvi-….parquet');
 ```
 
-Duplicates written since the last compaction are visible to DuckDB until compaction removes them; the Timelake reader sees the same rows.
+Duplicates written since the last compaction are visible to DuckDB until compaction removes them. The Timelake reader skips them: it merges the files that may hold the same `(series, time)` and keeps the latest write.

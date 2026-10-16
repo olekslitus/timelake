@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use arrow::array::{Float64Array, Int32Array, Int64Array, RecordBatch, StringArray};
 use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
-use common::{DAY, Scan, T0, batch, opts, plan, rows, scalar_i64, schema, temp_lake};
+use common::{DAY, Scan, T0, batch, opts, plan, rows, scalar_i64, schema, strings, temp_lake};
 use timelake::{AppendOptions, MaintainOptions, Session, TableOptions, property};
 
 fn no_maintenance() -> AppendOptions {
@@ -76,10 +76,29 @@ async fn append_query_latest_compact_expire() {
     let p = plan(&s, "SELECT time FROM iot.readings WHERE value < 5 ORDER BY time DESC LIMIT 1").await;
     assert!(matches!(p.scans[..], [Scan::Files(_)]), "{p:?}");
 
-    // Duplicates + late data, then compaction dedups (latest write wins).
+    // Duplicates + late data: readers see the newest write of each key at once (dedup on read),
+    // then compaction removes the older copies (latest write wins).
     let (nt, _) = t.append(&[batch(T0, 10, 60_000_000, 10, |_, _| -1.0)], no_maintenance()).await.unwrap();
     t = nt;
-    assert_eq!(scalar_i64(&s, "SELECT count(*) FROM iot.readings").await, 43_300);
+    assert_eq!(scalar_i64(&s, "SELECT count(*) FROM iot.readings").await, 43_200);
+    assert_eq!(scalar_i64(&s, "SELECT count(*) FROM iot.readings WHERE value = -1").await, 100);
+    // A filter on another column must not let an older copy through.
+    assert_eq!(scalar_i64(&s, "SELECT count(*) FROM iot.readings WHERE value >= 0").await, 43_100);
+    assert_eq!(scalar_i64(&s, "SELECT count(DISTINCT site) FROM iot.readings WHERE value >= 0").await, 3);
+    let p = plan(&s, "SELECT avg(value) FROM iot.readings").await;
+    assert!(p.has("DedupExec"), "{p:?}");
+    // Filters on the key reach the merged files (row-group pruning); others stay above the dedup.
+    let explain =
+        strings(&rows(&s, "EXPLAIN SELECT avg(value) FROM iot.readings WHERE device = 4 AND value > 0").await, "plan");
+    let merged =
+        explain.iter().flat_map(|p| p.lines()).find(|l| l.contains("DataSourceExec") && l.contains("__timelake_rank"));
+    let merged = merged.unwrap_or_default();
+    assert!(merged.contains("predicate=device@") && !merged.contains("value@"), "{explain:?}");
+    assert_eq!(scalar_i64(&s, "SELECT count(*) FROM iot.readings WHERE device = 4").await, 4320);
+    assert_eq!(scalar_i64(&s, "SELECT count(*) FROM iot.readings WHERE device < 5 AND value = -1").await, 50);
+    assert_eq!(scalar_i64(&s, "SELECT count(*) FROM iot.readings WHERE device = 4 AND value >= 0").await, 4310);
+    // Only the files that overlap the late append are merged; the other days aren't.
+    assert!(!plan(&s, &format!("SELECT avg(value) {last_day}")).await.has("DedupExec"));
     let (nt, rep) = t.maintain(MaintainOptions { expire: false, ..Default::default() }).await.unwrap();
     t = nt;
     assert_eq!(rep.partitions_compacted, 3, "{rep:?}");

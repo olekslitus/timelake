@@ -43,8 +43,10 @@ const BACKOFF_MILLIS: std::ops::Range<u64> = 5..50;
 pub(crate) enum Change {
     /// New data files (and the newest row per series among them, for the last-value index).
     Append { files: Vec<DataFile>, latest: Option<RecordBatch> },
-    /// Remove files and add files with the same rows (compaction): `Operation::Replace`.
-    Replace { removed: Vec<LiveEntry>, added: Vec<DataFile> },
+    /// Remove files and add files with the same rows (compaction): `Operation::Replace`. Each added
+    /// file keeps the data sequence number in `sequence_numbers` (the newest of the files it
+    /// replaces), so files committed in between still order after the rows it holds.
+    Replace { removed: Vec<LiveEntry>, added: Vec<DataFile>, sequence_numbers: Vec<i64> },
     /// Remove files (retention): `Operation::Delete`. The last-value index drops series whose
     /// newest row is older than `lvi_cutoff` (µs since the epoch).
     Delete { removed: Vec<LiveEntry>, lvi_cutoff: Option<i64> },
@@ -59,6 +61,14 @@ impl Change {
             Self::Append { files, .. } => files,
             Self::Replace { added, .. } => added,
             Self::Delete { .. } | Self::Index { .. } => &[],
+        }
+    }
+
+    /// The data sequence number the `i`th added file keeps, if not the commit's own.
+    fn data_sequence(&self, i: usize) -> Option<i64> {
+        match self {
+            Self::Replace { sequence_numbers, .. } => sequence_numbers.get(i).copied(),
+            _ => None,
         }
     }
 
@@ -338,13 +348,13 @@ impl<'a> SnapshotWriter<'a> {
         self.written.lock().unwrap_or_else(PoisonError::into_inner).push(uri.to_string());
     }
 
-    /// A file this commit adds, as its manifest entry.
-    fn added_entry(&self, file: &DataFile) -> LiveEntry {
+    /// The `i`th file this commit adds, as its manifest entry.
+    fn added_entry(&self, i: usize, file: &DataFile) -> LiveEntry {
         LiveEntry {
             status: ManifestStatus::Added,
             data_file: Arc::new(file.clone()),
             snapshot_id: self.snapshot_id,
-            sequence_number: self.sequence_number,
+            sequence_number: self.change.data_sequence(i).unwrap_or(self.sequence_number),
             file_sequence_number: self.sequence_number,
         }
     }
@@ -353,7 +363,8 @@ impl<'a> SnapshotWriter<'a> {
     fn next_files(&self) -> Option<Arc<Vec<LiveEntry>>> {
         let base = self.base.known_files()?;
         let removed: HashSet<&str> = self.change.removed().iter().map(|e| e.data_file.file_path()).collect();
-        let mut files: Vec<LiveEntry> = self.change.added().iter().map(|f| self.added_entry(f)).collect();
+        let mut files: Vec<LiveEntry> =
+            self.change.added().iter().enumerate().map(|(i, f)| self.added_entry(i, f)).collect();
         files.extend(base.iter().filter(|e| !removed.contains(e.data_file.file_path())).cloned());
         Some(Arc::new(files))
     }
@@ -380,9 +391,9 @@ impl<'a> SnapshotWriter<'a> {
         if !added.is_empty() {
             let (uri, mut w) = self.manifest_writer("added");
             let mut entries = Vec::with_capacity(added.len());
-            for f in added {
-                w.add_file(f.clone(), UNASSIGNED_SEQUENCE_NUMBER)?;
-                entries.push(self.added_entry(f));
+            for (i, f) in added.iter().enumerate() {
+                w.add_file(f.clone(), self.change.data_sequence(i).unwrap_or(UNASSIGNED_SEQUENCE_NUMBER))?;
+                entries.push(self.added_entry(i, f));
             }
             out.new.push(w.write_manifest_file().await?);
             out.entries.push((uri, entries));

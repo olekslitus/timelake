@@ -36,7 +36,7 @@ pub(super) fn datum_to_scalar(d: &Datum, dt: &DataType) -> Option<ScalarValue> {
 }
 
 /// The Iceberg field id of a column (carried as Parquet field id metadata).
-fn field_id(schema: &SchemaRef, idx: usize) -> Option<i32> {
+pub(super) fn field_id(schema: &SchemaRef, idx: usize) -> Option<i32> {
     schema.field(idx).metadata().get(parquet::arrow::PARQUET_FIELD_ID_META_KEY)?.parse().ok()
 }
 

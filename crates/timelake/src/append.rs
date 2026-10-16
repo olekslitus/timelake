@@ -36,7 +36,8 @@ pub struct AppendOptions {
 /// What [`Table::append`] did.
 #[derive(Debug)]
 pub struct AppendResult {
-    /// Rows committed by this call: 0 if the batch id was already committed (`commit.duplicate`).
+    /// Rows committed by this call, after removing rows with the same `(series…, time)` within the
+    /// call when dedup is on: 0 if the batch id was already committed (`commit.duplicate`).
     pub rows: usize,
     /// Data files committed by this call.
     pub files: usize,
@@ -58,8 +59,8 @@ impl AppendResult {
 
 impl Table {
     /// Appends Arrow data as one commit. Rows are aligned to the table schema, sorted by
-    /// `(series_key…, time)`, and written to one file per time partition. Returns the new table
-    /// version.
+    /// `(series_key…, time)` (the last of equal keys kept when dedup is on), and written to one file
+    /// per time partition. Returns the new table version.
     pub async fn append(&self, batches: &[RecordBatch], opts: AppendOptions) -> Result<(Table, AppendResult)> {
         let partitions = sort_and_split(self, batches)?;
         let rows = partitions.iter().map(|(_, b)| b.num_rows()).sum();
@@ -204,6 +205,31 @@ mod tests {
         assert_eq!(t2.version(), t1.version());
         // The data files written before the duplicate was detected are gone again.
         assert_eq!(store.paths().await, objects);
+    }
+
+    /// Rows with the same `(series, time)` in one append keep only the last (dedup on), so every
+    /// file is free of duplicates; with dedup off, all are kept.
+    #[tokio::test]
+    async fn one_append_keeps_the_last_of_equal_keys() {
+        let (lake, _store) = faulty_lake();
+        let rows = batch(&[(T0, 1, 1.0), (T0, 2, 2.0), (T0, 1, 3.0)]);
+        let t = lake.create_table("iot.r", &schema(), opts()).await.unwrap();
+        let (_, r) = t.append(std::slice::from_ref(&rows), AppendOptions::default()).await.unwrap();
+        assert_eq!(r.rows, 2);
+        let values = crate::Session::new(lake.clone())
+            .sql("SELECT value FROM iot.r WHERE device = 1")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        let values = values[0].column(0).as_any().downcast_ref::<arrow::array::Float64Array>().unwrap();
+        assert_eq!(values.values().as_ref(), [3.0]);
+
+        let keep_all = crate::TableOptions { dedup: Some(false), ..opts() };
+        let t = lake.create_table("iot.all", &schema(), keep_all).await.unwrap();
+        let (_, r) = t.append(&[rows], AppendOptions::default()).await.unwrap();
+        assert_eq!(r.rows, 3);
     }
 
     #[tokio::test]

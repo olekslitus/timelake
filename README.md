@@ -101,7 +101,7 @@ SELECT * FROM iceberg_scan('s3://lake/wh/iot/readings');   -- reads metadata/ver
 | `timelake.time-column` | (none) | Time column |
 | `timelake.series-key` | (none) | Comma-separated series key columns |
 | `timelake.chunk-interval` | `day` | `hour`, `day` or `month` partitions |
-| `timelake.dedup` | on if a series key is set | Drop duplicate `(series, time)` rows during compaction; the latest write wins |
+| `timelake.dedup` | on if a series key is set | Rows with the same `(series, time)` count once, the latest write winning: within an append, when the Timelake reader reads, and at compaction |
 | `timelake.retention` | forever | Drop partitions older than this, e.g. `90d` |
 | `timelake.auto-maintain` | `true` | Run compaction, retention and expiry inline after appends |
 | `timelake.compact-min-files` | `8` | Inline compaction merges a size tier once it has this many files |

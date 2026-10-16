@@ -17,7 +17,7 @@ use parquet::schema::types::ColumnPath;
 use crate::contract::Contract;
 use crate::error::{Error, Result};
 use crate::schema::align_batch;
-use crate::sort::{ASCENDING, columns, stable_sort_indices};
+use crate::sort::{ASCENDING, columns, last_per_group, stable_sort_indices};
 use crate::storage::Uploads;
 use crate::table::Table;
 
@@ -27,9 +27,19 @@ pub(crate) const ZSTD_LEVEL: i32 = 3;
 /// Rows of one time partition (`None` for unpartitioned tables), sorted by the table's sort key.
 pub(crate) type PartitionRows = (Option<i32>, RecordBatch);
 
-/// Concatenates, sorts by `(partition, series…, time)` with input order as the tiebreak, and splits
-/// by partition.
+/// Concatenates, sorts by `(partition, series…, time)` with input order as the tiebreak, splits by
+/// partition and, when dedup is on, keeps the last of rows with the same `(series…, time)`: every
+/// file is then free of duplicates on its own, which dedup on read relies on.
 pub(crate) fn sort_and_split(table: &Table, batches: &[RecordBatch]) -> Result<Vec<PartitionRows>> {
+    let split = sort_and_split_all(table, batches)?;
+    let keys = table.contract().sort_columns();
+    if !table.contract().dedup || keys.is_empty() {
+        return Ok(split);
+    }
+    split.into_iter().map(|(p, rows)| Ok((p, last_per_group(&rows, &keys)?))).collect()
+}
+
+fn sort_and_split_all(table: &Table, batches: &[RecordBatch]) -> Result<Vec<PartitionRows>> {
     let schema = table.schema();
     let aligned =
         batches.iter().filter(|b| b.num_rows() > 0).map(|b| align_batch(b, &schema)).collect::<Result<Vec<_>>>()?;

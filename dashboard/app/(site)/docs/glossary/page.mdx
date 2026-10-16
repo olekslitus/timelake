@@ -16,7 +16,7 @@ The words used in these docs, in plain terms.
 | **Compaction** | Merging many small files into fewer large ones, and re-sorting them. Fewer files mean fewer requests per query. Timelake also removes duplicates while compacting. |
 | **Conditional write (put-if-absent)** | Asking the object store to create a file only if it doesn't exist yet. The store does the check and the write as one step, so it works as a lock without a lock server. AWS S3, GCS, Azure and most S3-compatible stores support it. |
 | **DataFusion** | Apache DataFusion, a SQL query engine written in Rust. Timelake embeds it and plugs in its own table reader and query rewrites. |
-| **Dedup (deduplication)** | Removing rows that have the same series key and time. The row written last wins. Timelake dedups during compaction, so duplicates are visible until then. |
+| **Dedup (deduplication)** | Removing rows that have the same series key and time. The row written last wins. The Timelake reader skips older copies when reading, and compaction removes them; other engines see them until compaction. |
 | **DuckDB** | A popular in-process SQL engine. Its iceberg extension can read Timelake tables directly, with no Timelake software. |
 | **Footer** | The table of contents at the end of a Parquet file: its columns, row groups and their min and max values. A reader fetches the footer first, then the parts it needs. |
 | **Hot tier** | A planned fast buffer for rows that aren't committed to the lake yet, for second-level freshness. Not built yet. |

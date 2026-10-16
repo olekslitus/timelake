@@ -8,9 +8,25 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
 
 ## Unreleased
 
+### Added
+
+- **Dedup on read.** In tables with dedup on, the Timelake reader (CLI, Python, Rust) returns only the latest write of
+  each `(series, time)`, before compaction has removed the older copies. Only files that may share a key are merged;
+  the rest are read as before. DuckDB, other Iceberg readers and the TypeScript client still see the copies until
+  compaction.
+
 ### Changed
 
+- With dedup on, rows with the same `(series, time)` within one append keep only the last, so the append's `rows`
+  counts them once. Files written by earlier versions may still hold such copies until compaction.
 - The TypeScript client's WebAssembly reader is about 4% smaller (6.7 MB), built with Rust 1.99.
+
+### Fixed
+
+- **Compaction could let an older write win.** Inline compaction merged files of a similar size even when a file of
+  another size was committed between them, and the merged file then counted as newer than that file: where both held
+  the same `(series, time)`, the older value won from then on. Compaction now merges only files next to each other in
+  commit order, and a merged file keeps the data sequence number of the newest file it replaces.
 
 ## 0.4.0 – 2026-10-14
 

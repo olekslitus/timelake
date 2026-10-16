@@ -20,6 +20,8 @@ use object_store::{
     PutMultipartOptions, PutOptions, PutPayload, PutResult,
 };
 
+use iceberg::spec::DataFileBuilder;
+
 use crate::commit::{Change, commit};
 use crate::storage::{Storage, Uploads};
 use crate::write::{sort_and_split, write_partition, writer_properties};
@@ -180,6 +182,33 @@ pub(crate) async fn append_without_index(table: &Table, batches: &[RecordBatch])
         files.extend(write_partition(table, partition, [batch], &props, &uploads).await.unwrap());
     }
     commit(table, Change::Append { files, latest: None }, HashMap::new(), uploads).await.unwrap().0
+}
+
+/// Appends rows as another Iceberg engine might: in the given order (unsorted, keys may repeat),
+/// to one partition, without a sort order id or a last-value index.
+pub(crate) async fn append_unsorted(table: &Table, partition: Option<i32>, batch: RecordBatch) -> Table {
+    let props = writer_properties(table).unwrap();
+    let uploads = Uploads::default();
+    let spec_id = table.metadata().default_partition_spec().spec_id();
+    let batch = crate::schema::align_batch(&batch, &table.schema()).unwrap();
+    let files = write_partition(table, partition, [batch], &props, &uploads).await.unwrap().into_iter().map(|f| {
+        DataFileBuilder::default()
+            .content(f.content_type())
+            .file_path(f.file_path().to_string())
+            .file_format(f.file_format())
+            .partition(f.partition().clone())
+            .partition_spec_id(spec_id)
+            .record_count(f.record_count())
+            .file_size_in_bytes(f.file_size_in_bytes())
+            .column_sizes(f.column_sizes().clone())
+            .value_counts(f.value_counts().clone())
+            .null_value_counts(f.null_value_counts().clone())
+            .lower_bounds(f.lower_bounds().clone())
+            .upper_bounds(f.upper_bounds().clone())
+            .build()
+            .unwrap()
+    });
+    commit(table, Change::Append { files: files.collect(), latest: None }, HashMap::new(), uploads).await.unwrap().0
 }
 
 /// A lake on a [`FaultyStore`].

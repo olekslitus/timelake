@@ -155,15 +155,15 @@ async fn compact(table: &Table, opts: &MaintainOptions, report: &mut MaintainRep
     }
     let props = writer_properties(table)?;
     let uploads = Uploads::default();
-    let (mut removed, mut added) = (vec![], vec![]);
+    let (mut removed, mut added, mut sequence_numbers) = (vec![], vec![], vec![]);
     let mut outcome = Ok(());
-    for (partition, mut files) in plan {
-        // Older commits first, so "later row wins" means "latest write wins".
-        files.sort_by(|a, b| {
-            (a.sequence_number, a.data_file.file_path()).cmp(&(b.sequence_number, b.data_file.file_path()))
-        });
+    for (partition, files) in plan {
+        // The files are a run in commit order (older first, so "later row wins" means "latest write
+        // wins"); the new files take the run's place in that order.
+        let sequence_number = files.iter().map(|f| f.sequence_number).max().unwrap_or_default();
         match rewrite_partition(table, partition, &files, &props, &uploads, report).await {
             Ok(written) => {
+                sequence_numbers.extend(std::iter::repeat_n(sequence_number, written.len()));
                 added.extend(written);
                 removed.extend(files);
             }
@@ -176,7 +176,7 @@ async fn compact(table: &Table, opts: &MaintainOptions, report: &mut MaintainRep
     report.files_written += added.len();
     let paths: Vec<String> = added.iter().map(|f| f.file_path().to_string()).collect();
     let committed = match outcome {
-        Ok(()) => commit(table, Change::Replace { removed, added }, HashMap::new(), uploads).await,
+        Ok(()) => commit(table, Change::Replace { removed, added, sequence_numbers }, HashMap::new(), uploads).await,
         Err(e) => {
             uploads.abort().await;
             Err(e)
@@ -208,7 +208,9 @@ async fn rewrite_partition(
     write_partition(table, partition, row_groups(merged, table.contract().row_group_rows), props, uploads).await
 }
 
-/// Which files of which partitions to rewrite.
+/// Which files of which partitions to rewrite. Each group is a run of files next to each other in
+/// commit order: a file committed between two merged files may rewrite a key they hold, and must
+/// stay newer than the merged file.
 pub(crate) async fn compaction_plan(
     table: &Table,
     opts: &MaintainOptions,
@@ -228,14 +230,17 @@ pub(crate) async fn compaction_plan(
         }
     }
     let mut plan = vec![];
-    for (partition, files) in by_partition {
+    for (partition, mut files) in by_partition {
+        files.sort_by(|a, b| {
+            (a.sequence_number, a.data_file.file_path()).cmp(&(b.sequence_number, b.data_file.file_path()))
+        });
         if opts.tiered {
-            let mut tiers: BTreeMap<u32, Vec<LiveEntry>> = BTreeMap::new();
-            for e in files.into_iter().filter(is_small) {
-                let tier = (e.data_file.file_size_in_bytes() >> TIER_BASE_SHIFT).max(1).ilog(TIER_GROWTH);
-                tiers.entry(tier).or_default().push(e);
-            }
-            plan.extend(tiers.into_values().filter(|group| group.len() >= min_files).map(|group| (partition, group)));
+            let tier = |e: &LiveEntry| {
+                is_small(e).then(|| (e.data_file.file_size_in_bytes() >> TIER_BASE_SHIFT).max(1).ilog(TIER_GROWTH))
+            };
+            let runs = files.chunk_by(|a, b| tier(a) == tier(b));
+            let runs = runs.filter(|run| tier(&run[0]).is_some() && run.len() >= min_files);
+            plan.extend(runs.map(|run| (partition, run.to_vec())));
             continue;
         }
         let n_small = files.iter().filter(|e| is_small(e)).count();
@@ -244,14 +249,12 @@ pub(crate) async fn compaction_plan(
             continue;
         }
         let total: u64 = files.iter().map(|e| e.data_file.file_size_in_bytes()).sum();
-        let picked: Vec<LiveEntry> = if total <= REWRITE_WHOLE_PARTITION_TARGETS * c.target_file_size || unsorted {
-            files
-        } else {
-            files.into_iter().filter(is_small).collect()
-        };
-        if picked.len() >= 2 || (unsorted && !picked.is_empty()) {
-            plan.push((partition, picked));
+        if total <= REWRITE_WHOLE_PARTITION_TARGETS * c.target_file_size || unsorted {
+            plan.push((partition, files));
+            continue;
         }
+        let runs = files.chunk_by(|a, b| is_small(a) == is_small(b)).filter(|run| is_small(&run[0]) && run.len() >= 2);
+        plan.extend(runs.map(|run| (partition, run.to_vec())));
     }
     Ok(plan)
 }
@@ -394,4 +397,48 @@ async fn prune_metadata_files(table: &Table) -> Result<usize> {
         })
         .collect();
     storage.delete_many(doomed).await
+}
+
+#[cfg(test)]
+mod tests {
+    use arrow::array::Float64Array;
+
+    use super::*;
+    use crate::append::AppendOptions;
+    use crate::testing::{T0, batch, faulty_lake, opts, schema};
+    use crate::{Lake, Session};
+
+    fn no_maintenance() -> AppendOptions {
+        AppendOptions { maintain: Some(false), ..AppendOptions::default() }
+    }
+
+    async fn values_of_device_1(lake: &Lake) -> Vec<f64> {
+        let batches = Session::new(lake.clone()).sql("SELECT value FROM iot.r WHERE device = 1").await.unwrap();
+        let batches = batches.collect().await.unwrap();
+        batches
+            .iter()
+            .flat_map(|b| b.column(0).as_any().downcast_ref::<Float64Array>().unwrap().values().to_vec())
+            .collect()
+    }
+
+    /// Tiered compaction merges files of a similar size. When a file of another size lies between
+    /// them in commit order and rewrites a key, its newer value must still win.
+    #[tokio::test]
+    async fn compaction_keeps_the_latest_write_when_it_skips_a_file() {
+        let (lake, _store) = faulty_lake();
+        let t = lake.create_table("iot.r", &schema(), opts()).await.unwrap();
+        let (t, _) = t.append(&[batch(&[(T0, 1, 1.0)])], no_maintenance()).await.unwrap();
+        // A bigger file (another size tier) with a newer value for device 1.
+        let mut rows = vec![(T0, 1, 2.0)];
+        rows.extend((1..200_000u32).map(|i| (T0 + i64::from(i), 2, f64::from(i.wrapping_mul(2_654_435_761)) / 3.0)));
+        let (t, _) = t.append(&[batch(&rows)], no_maintenance()).await.unwrap();
+        let (t, _) = t.append(&[batch(&[(T0 + 1, 3, 3.0)])], no_maintenance()).await.unwrap();
+
+        let tiered = MaintainOptions { tiered: true, expire: false, retention: false, ..MaintainOptions::default() };
+        let (t, _) = t.maintain(tiered).await.unwrap();
+        assert_eq!(values_of_device_1(&lake).await, [2.0]);
+        let (t, _) = t.maintain(MaintainOptions { expire: false, ..MaintainOptions::default() }).await.unwrap();
+        assert_eq!(t.files().await.unwrap().len(), 1);
+        assert_eq!(values_of_device_1(&lake).await, [2.0]);
+    }
 }
