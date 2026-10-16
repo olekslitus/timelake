@@ -621,17 +621,25 @@ export function HeroFlow({
       }
       stop()
     }
+    // With `tabs`, the reader reloads as soon as the cursor comes in, so the readers visibly respond to hovering.
+    const enter = () => {
+      if (!tabs || !layout.readers || loading > 0) return
+      load(true)
+      run()
+    }
     const leave = () => {
       cursorY = null
       mode = null
       stop()
     }
+    area.addEventListener("pointerenter", enter)
     area.addEventListener("pointermove", move)
     area.addEventListener("pointerleave", leave)
     const ro = new ResizeObserver(draw)
     ro.observe(c)
     return () => {
       stop()
+      area.removeEventListener("pointerenter", enter)
       area.removeEventListener("pointermove", move)
       area.removeEventListener("pointerleave", leave)
       ro.disconnect()
