@@ -53,7 +53,7 @@ export async function BenefitCards() {
       icon: Activity,
       art: "layout",
       title: "Analytics",
-      body: "Full analytics toolkit optimized for time-series workloads.",
+      body: "An optimized toolkit for analyzing time series, built into the engine.",
       link: { label: "Performance", href: "/docs/performance" },
     },
     {
