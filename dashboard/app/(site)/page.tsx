@@ -1,4 +1,4 @@
-import { ArrowRight, Bot, Factory, type LucideIcon, Server, Share2, Truck, Zap } from "lucide-react"
+import { ArrowRight, Bot, BrainCircuit, Factory, type LucideIcon, Server, Truck, Zap } from "lucide-react"
 import Link from "next/link"
 import { Suspense } from "react"
 
@@ -39,10 +39,10 @@ const USE_CASES: { icon: LucideIcon; title: string; body: string; note: string; 
     measured: false,
   },
   {
-    icon: Share2,
-    title: "Shared across tools",
-    body: "One copy in your bucket that DuckDB, Spark, notebooks and browser dashboards all read.",
-    note: "Iceberg · Parquet",
+    icon: BrainCircuit,
+    title: "Data science and ML",
+    body: "Time series pulled into notebooks as Arrow tables, for pandas, polars and model training, straight from the bucket.",
+    note: "Python · Arrow",
     measured: true,
   },
   {
