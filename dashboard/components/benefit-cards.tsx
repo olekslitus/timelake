@@ -1,4 +1,4 @@
-import { Activity, ArrowRight, Cloud, Gauge, Layers, ServerOff, type LucideIcon } from "lucide-react"
+import { Activity, ArrowRight, Cloud, Gauge, Layers, PiggyBank, ServerOff, type LucideIcon } from "lucide-react"
 import Link from "next/link"
 
 import { type ArtKind, UseCaseArt } from "@/components/use-case-art"
@@ -35,13 +35,13 @@ async function speed(): Promise<string> {
 const WIDE_COLS = 128
 
 export async function BenefitCards() {
-  // A wide card and two narrow ones on top, two wide ones below.
+  // Two rows of three: a wide card first in the top row, in the middle of the bottom one.
   const cards: Card[] = [
     {
       icon: ServerOff,
       art: "serverless",
       title: "Serverless",
-      body: "No database or maintenance jobs to run. When nothing is querying, you pay only for the files in your bucket.",
+      body: "No database or maintenance jobs to run. Timelake is a library that runs in your process.",
       link: { label: "How it works", href: "/docs/how-it-works" },
       wide: true,
     },
@@ -60,12 +60,11 @@ export async function BenefitCards() {
       link: { label: "Benchmarks", href: "/benchmarks" },
     },
     {
-      icon: Cloud,
-      art: "stores",
-      title: "Any object store",
-      body: "Runs on AWS S3, Google Cloud Storage, Azure, R2, MinIO or your local disk.",
-      link: { label: "Storage", href: "/docs/storage" },
-      wide: true,
+      icon: PiggyBank,
+      art: "cheap",
+      title: "Cheap",
+      body: "You pay only for storage, reads and writes. Keeping the same data costs about 6× less than TimescaleDB on an EBS disk, before counting its server.",
+      link: { label: "Cost", href: "/docs/storage#requests-and-cost" },
     },
     {
       icon: Layers,
@@ -74,6 +73,13 @@ export async function BenefitCards() {
       body: "Your tables are standard Iceberg and Parquet, so DuckDB and Spark can query them too.",
       link: { label: "Querying", href: "/docs/querying" },
       wide: true,
+    },
+    {
+      icon: Cloud,
+      art: "stores",
+      title: "Any object store",
+      body: "Runs on AWS S3, Google Cloud Storage, Azure, R2, MinIO or your local disk.",
+      link: { label: "Storage", href: "/docs/storage" },
     },
   ]
   return (

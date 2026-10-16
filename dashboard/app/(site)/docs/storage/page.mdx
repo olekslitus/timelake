@@ -72,6 +72,8 @@ Object stores charge per request as well as per GB. On AWS S3 Standard (us-east-
 
 So about 7 PUTs and 2 GETs: at one append per second, about $3 a day on S3. Each extra partition adds 1 PUT (and 1 GET for its footer); a large file is uploaded in parts. Inline maintenance adds the reads and writes of the files it compacts. With `timelake.head-format=none` a table has no head: 1 PUT and 2 GETs fewer per commit, and slower first queries.
 
+**Storing.** S3 Standard storage costs $0.023 per GB-month; an EBS gp3 disk, where a database keeps its data, costs $0.08. In the [TimescaleDB comparison](https://github.com/polythings/timelake/blob/main/bench/results/TIMESCALE.md) the same TSBS IoT data took 413 MB in TimescaleDB’s columnstore and 228 MB of Parquet in Timelake: about 6× less to keep in the bucket, before counting the server the database runs on.
+
 **Reading.** What a query sends before it reads data:
 
 | Situation | Requests | Round trips |

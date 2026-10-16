@@ -18,6 +18,7 @@ export type ArtKind =
   | "serverless"
   | "layout"
   | "fast"
+  | "cheap"
   | "stores"
   | "formats"
 
@@ -220,12 +221,28 @@ const PICTURES: Record<ArtKind, (cols: number) => Cell[]> = {
       ).flat(),
     )
   },
+  cheap: (cols) => {
+    // A bill over time: a server's hours fill every column; a bucket's storage is a thin line, and its requests show
+    // only when something reads or writes.
+    const rnd = seeded(12)
+    const cells: Cell[] = []
+    for (let x = 0; x < cols; x++) {
+      for (const y of [1, 2, 3]) cells.push({ x, y, color: "var(--muted-foreground)", alpha: 0.55 })
+      cells.push({ x, y: ROWS - 2, color: "var(--primary)", alpha: 0.4 })
+      if (rnd() < 0.15) {
+        const height = 1 + Math.floor(rnd() * 4)
+        for (let k = 0; k < height; k++) cells.push({ x, y: ROWS - 4 - k, color: "var(--primary)", alpha: 0.9 })
+      }
+    }
+    return cells
+  },
   stores: (cols) => {
-    // Six buckets side by side, one per store the card names, each with a few files.
+    // Buckets side by side, each with a few files: one per store the card names when there is room.
     const rnd = seeded(10)
     const cells: Cell[] = []
-    const width = Math.floor((cols - 5) / 6)
-    for (let b = 0; b < 6; b++) {
+    const count = cols >= 96 ? 6 : 4
+    const width = Math.floor((cols - count + 1) / count)
+    for (let b = 0; b < count; b++) {
       const left = b * (width + 1)
       const right = left + width - 2
       for (let x = left; x <= right; x++)
