@@ -126,9 +126,6 @@ export default function Home() {
           <h1 className="text-4xl leading-[1.05] font-light tracking-tight text-balance sm:text-5xl">
             The open time&#8209;series lakehouse
           </h1>
-          <p className="text-lg text-muted-foreground">
-            Fast time-series queries on object storage, with no servers to run.
-          </p>
           <div className="flex flex-wrap gap-2.5">
             <Button size="lg" className={BTN} nativeButton={false} render={<Link href="/docs/quick-start" />}>
               Quick start <ArrowRight />
