@@ -38,19 +38,16 @@ function DotBar({ share, color, shown }: { share: number; color: string; shown: 
 
 /**
  * Bars in dot squares, a row per label, scaled to the longest bar. They grow in once, left to right, when the chart
- * comes into view, and again when its card is hovered, like the card pictures. `stacked` puts each row's label and
- * values on one line with its bars full width under them, for narrow cards.
+ * comes into view, and again when its card is hovered, like the card pictures.
  */
 export function BarChart({
   rows,
   legend,
   caption,
-  stacked = false,
 }: {
   rows: BarRow[]
   legend?: { label: string; color: string }[]
   caption?: string
-  stacked?: boolean
 }) {
   const box = useRef<HTMLDivElement>(null)
   const [shown, setShown] = useState(false)
@@ -85,47 +82,25 @@ export function BarChart({
   return (
     <div ref={box} className="flex flex-col gap-3 font-mono text-xs">
       {caption && <span className="text-muted-foreground">{caption}</span>}
-      {stacked ? (
-        <div className="flex flex-col gap-2.5">
-          {rows.map((r) => (
-            <div key={r.label} className="flex flex-col gap-1.5">
-              <div className="flex justify-between gap-3">
-                <span className="text-muted-foreground">{r.label}</span>
-                <span className="tabular-nums">
-                  {r.bars.map((b, i) => (
-                    <span key={i} className={b.strong ? undefined : "text-muted-foreground"}>
-                      {b.text}
-                    </span>
-                  ))}
-                </span>
-              </div>
+      <div className="grid grid-cols-[auto_1fr_auto] items-center gap-x-3 gap-y-3">
+        {rows.map((r) => (
+          <div key={r.label} className="contents">
+            <span className="text-muted-foreground">{r.label}</span>
+            <div className="flex flex-col gap-1.5">
               {r.bars.map((b, i) => (
                 <DotBar key={i} share={b.value / longest} color={b.color} shown={shown} />
               ))}
             </div>
-          ))}
-        </div>
-      ) : (
-        <div className="grid grid-cols-[auto_1fr_auto] items-center gap-x-3 gap-y-3">
-          {rows.map((r) => (
-            <div key={r.label} className="contents">
-              <span className="text-muted-foreground">{r.label}</span>
-              <div className="flex flex-col gap-1.5">
-                {r.bars.map((b, i) => (
-                  <DotBar key={i} share={b.value / longest} color={b.color} shown={shown} />
-                ))}
-              </div>
-              <div className="flex flex-col text-right tabular-nums">
-                {r.bars.map((b, i) => (
-                  <span key={i} className={b.strong ? undefined : "text-muted-foreground"}>
-                    {b.text}
-                  </span>
-                ))}
-              </div>
+            <div className="flex flex-col text-right tabular-nums">
+              {r.bars.map((b, i) => (
+                <span key={i} className={b.strong ? undefined : "text-muted-foreground"}>
+                  {b.text}
+                </span>
+              ))}
             </div>
-          ))}
-        </div>
-      )}
+          </div>
+        ))}
+      </div>
       {legend && (
         <div className="flex flex-col gap-1 text-muted-foreground">
           {legend.map((l) => (

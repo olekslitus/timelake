@@ -4,7 +4,7 @@ import type { ReactNode } from "react"
 
 import { BarChart, type BarRow } from "@/components/bar-chart"
 import { type ArtKind, UseCaseArt } from "@/components/use-case-art"
-import { firstRunUsd, latestByTarget, loadRuns, rankings, type Run, SYSTEMS } from "@/lib/benchmarks"
+import { latestByTarget, loadRuns, rankings, type Run } from "@/lib/benchmarks"
 import { cn } from "@/lib/utils"
 
 type Card = {
@@ -64,45 +64,35 @@ function speed(run: Run | undefined): { body: string; rows: BarRow[] | null } {
   }
 }
 
+/** Prices for keeping data a month (October 2026): S3 Standard, and Tiger Cloud's Performance plan. */
+const S3_GB_MONTH = 0.023
+const TIGER_COMPUTE_MONTH = 30
+const TIGER_GB_MONTH = 0.177
+/** Timelake's Parquet for the same data, as a share of TimescaleDB's columnstore (228 MB to 413 MB, TSBS IoT). */
+const PARQUET_SHARE = 228 / 413
+
+const usd = (v: number) => (v < 10 ? `$${v.toFixed(2)}` : `$${Math.round(v).toLocaleString("en")}`)
+
 /**
- * What each lake's queries cost in S3 requests on fresh data, per million queries: the mean first run over the queries
- * every lake answered, at S3 Standard prices, with each lake's cheapest reader. Timelake in green, the rest grey.
+ * Keeping the same data a month, by its size in TimescaleDB: Timelake's Parquet on S3 in green, and a Tiger Cloud
+ * service (its smallest compute plus storage) in grey. Reads and writes are left out.
  */
-function requestCost(run: Run | undefined): BarRow[] | null {
-  const fresh = (run?.queries ?? []).filter((q) => q.checkpoint === "ingested" && q.status === "ok")
-  const engines = new Map<string, Map<string, number>>()
-  for (const q of fresh) {
-    const usd = firstRunUsd(q)
-    if (usd == null) continue
-    const key = `${q.system}+${q.reader}`
-    engines.set(key, (engines.get(key) ?? new Map()).set(`${q.suite}|${q.query}`, usd))
-  }
-  const all = [...engines.values()]
-  const common = [...(all[0]?.keys() ?? [])].filter((q) => all.every((e) => e.has(q)))
-  if (common.length === 0) return null
-  const cheapest = new Map<string, number>()
-  for (const [key, usd] of engines) {
-    const system = key.split("+", 1)[0] ?? key
-    const mean = common.reduce((sum, q) => sum + (usd.get(q) ?? 0), 0) / common.length
-    cheapest.set(system, Math.min(cheapest.get(system) ?? Infinity, mean))
-  }
-  if (!cheapest.has("timelake") || cheapest.size < 2) return null
-  return [...cheapest]
-    .toSorted(([, a], [, b]) => a - b)
-    .map(([system, usd]) => {
-      const perMillion = usd * 1e6
-      return {
-        label: (SYSTEMS[system] ?? system).replace(/ \(.*\)$/, ""),
-        bars: [
-          {
-            value: perMillion,
-            color: system === "timelake" ? "var(--chart-3)" : "var(--muted-foreground)",
-            text: `$${Math.round(perMillion).toLocaleString("en")}`,
-            strong: system === "timelake",
-          },
-        ],
-      }
-    })
+function keepingCost(): BarRow[] {
+  return [
+    ["10 GB", 10],
+    ["100 GB", 100],
+    ["1 TB", 1000],
+  ].map(([label, gb]) => {
+    const size = Number(gb)
+    const [lake, tiger] = [size * PARQUET_SHARE * S3_GB_MONTH, TIGER_COMPUTE_MONTH + size * TIGER_GB_MONTH]
+    return {
+      label: String(label),
+      bars: [
+        { value: lake, color: "var(--chart-3)", text: usd(lake), strong: true },
+        { value: tiger, color: "var(--muted-foreground)", text: usd(tiger) },
+      ],
+    }
+  })
 }
 
 /** Columns in a wide card's picture, twice a narrow one's. */
@@ -115,7 +105,6 @@ export async function BenefitCards() {
     (r) => r.header.target === "aws-s3" && !r.header.variant,
   )
   const fast = speed(run)
-  const cost = requestCost(run)
   // Two rows of three: a wide card first in the top row, in the middle of the bottom one.
   const cards: Card[] = [
     {
@@ -139,9 +128,18 @@ export async function BenefitCards() {
       icon: PiggyBank,
       art: "cheap",
       title: "Cheap",
-      body: "You pay only for storage, reads, and writes. Data costs about 6× less to keep than in TimescaleDB.",
+      body: "You pay only for storage, reads, and writes. There’s no database server to keep running.",
       link: { label: "Cost", href: "/docs/storage#requests-and-cost" },
-      figure: cost && <BarChart rows={cost} caption="S3 requests per 1M queries on fresh data" stacked />,
+      figure: (
+        <BarChart
+          rows={keepingCost()}
+          caption="Keeping the data a month, before reads and writes"
+          legend={[
+            { label: "Timelake on S3", color: "var(--chart-3)" },
+            { label: "Tiger Cloud", color: "var(--muted-foreground)" },
+          ]}
+        />
+      ),
     },
     {
       icon: Layers,
