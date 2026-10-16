@@ -128,8 +128,8 @@ export default function Home() {
           </h1>
           <div className="label-mono">Open source · Apache 2.0 · v0</div>
           <p className="text-muted-foreground">
-            Timelake stores time series in your own S3 bucket and queries them with SQL. There&apos;s no database server
-            to run and no maintenance to schedule.
+            Stream time-series data straight to object storage and query it as soon as it&apos;s written. No database
+            servers to run and no compaction jobs to manage.
           </p>
           <div className="flex flex-wrap gap-2.5">
             <Button size="lg" className={BTN} nativeButton={false} render={<Link href="/docs/quick-start" />}>
