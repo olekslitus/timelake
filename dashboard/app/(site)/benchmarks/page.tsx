@@ -44,6 +44,13 @@ export default function BenchmarksPage() {
           .
         </p>
       </section>
+
+      <Link
+        href="/benchmarks/timebench"
+        className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground hover:underline"
+      >
+        How we run every benchmark: timebench <ArrowRight className="size-3.5" />
+      </Link>
     </div>
   )
 }
