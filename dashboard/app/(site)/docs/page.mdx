@@ -4,11 +4,11 @@ export const metadata = { title: "Introduction" }
 
 Timelake is the open time-series lakehouse. It keeps time series in your own bucket (S3 and S3-compatible stores, Google Cloud Storage, Azure Blob Storage) or a local directory, keeps them laid out for time-series queries without maintenance jobs, and reads them with a query engine that uses that layout. Today tables are stored as Apache Iceberg tables with Parquet data files, so other engines can read them too.
 
-It is a Rust library with a command-line tool (`timelake`), a Python package and a TypeScript client. There is no server: the catalog is files in the warehouse, commits are atomic through conditional writes, and maintenance runs inside the writer or as one stateless command.
+It is a Rust library with a command-line tool (`timelake`), a Python package, and a TypeScript client. There is no server: the catalog is files in the warehouse, commits are atomic through conditional writes, and maintenance runs inside the writer or as one stateless command.
 
 ## What it does
 
-- **Time-series tables.** You declare a time column and a series key (such as `device_id`). Data is partitioned by hour, day or month and every file is sorted by `(series key, time)`.
+- **Time-series tables.** You declare a time column and a series key (such as `device_id`). Data is partitioned by hour, day, or month and every file is sorted by `(series key, time)`.
 - **Streaming-friendly writes.** Each append is one atomic Iceberg snapshot. Retries can be made idempotent with a batch id, and concurrent writers are safe.
 - **Built-in maintenance.** Small files from frequent appends are compacted inline, duplicates are removed (the latest write wins), old data is dropped by retention, and old snapshots are expired.
 - **Fast latest values.** A last-value index holds the newest row of every series; queries for the latest row are rewritten to read it.
@@ -20,6 +20,6 @@ Timelake targets telemetry and other append-heavy time series (IoT and industria
 
 ## Status
 
-This is v0, an early open-source release (Apache 2.0). It covers the write path, maintenance and the reader. A REST catalog, a hot tier for sub-commit freshness, deletes and GDPR erasure, and materialized rollups are planned; see the [roadmap](/roadmap) and [limitations](/docs/limitations).
+This is v0, an early open-source release (Apache 2.0). It covers the write path, maintenance, and the reader. A REST catalog, a hot tier for sub-commit freshness, deletes and GDPR erasure, and materialized rollups are planned; see the [roadmap](/roadmap) and [limitations](/docs/limitations).
 
 Next: [Quick start](/docs/quick-start).

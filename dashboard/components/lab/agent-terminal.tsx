@@ -173,7 +173,7 @@ export function AgentTerminal() {
         </div>
         <Agents />
         <p className="mt-auto text-sm text-muted-foreground">
-          Each agent runs its own reader against the bucket. There is no database whose CPU, memory or connections they
+          Each agent runs its own reader against the bucket. There is no database whose CPU, memory, or connections they
           compete for: object storage serves the reads, and S3 handles at least 5,500 reads per second for each prefix.
         </p>
       </div>

@@ -2,7 +2,7 @@ export const metadata = { title: "Storage & configuration" }
 
 # Storage & configuration
 
-Timelake uses the Rust `object_store` crate for everything: Iceberg metadata, Parquet data and query scans. The warehouse URL picks the backend.
+Timelake uses the Rust `object_store` crate for everything: Iceberg metadata, Parquet data, and query scans. The warehouse URL picks the backend.
 
 | Scheme | Backend | Credentials |
 | --- | --- | --- |
@@ -15,7 +15,7 @@ Timelake uses the Rust `object_store` crate for everything: Iceberg metadata, Pa
 
 ## Options
 
-Options are `object_store` configuration keys: `-o key=value` on the CLI, `storage_options` in Python. For S3, GCS and Azure, unknown keys are an error; other backends ignore options. Common S3 keys:
+Options are `object_store` configuration keys: `-o key=value` on the CLI, `storage_options` in Python. For S3, GCS, and Azure, unknown keys are an error; other backends ignore options. Common S3 keys:
 
 | Key | Meaning |
 | --- | --- |
@@ -29,7 +29,7 @@ Timelake’s own options work with every backend:
 | Key | Meaning |
 | --- | --- |
 | `timelake_version_lookup` | How a table’s first load in a process finds the newest version: `list` (one LIST of `metadata/v…`, sent with the head GET) or `hint` (GET `version-hint.text` with the head, then a HEAD of the next version). Default `list` where the store can list by prefix. See [trade-offs](#request-options-trade-offs). |
-| `timelake_freshness_check` | How a reader that already has a table version checks for a newer one: `head` (a HEAD of the next metadata file) or `list` (a LIST of that exact name). Default `head`; `list` on Tigris. `list` needs S3, GCS or Azure. |
+| `timelake_freshness_check` | How a reader that already has a table version checks for a newer one: `head` (a HEAD of the next metadata file) or `list` (a LIST of that exact name). Default `head`; `list` on Tigris. `list` needs S3, GCS, or Azure. |
 | `timelake_warm_connections` | How many connections a table’s first load opens ahead of the data reads, with small HEAD requests. Default `0`. |
 | `timelake_local_root` | Write objects under a local directory (see below). |
 
@@ -59,7 +59,7 @@ timelake -w https://<store>.public.blob.vercel-storage.com/demo \
 
 ## Requests and cost
 
-Object stores charge per request as well as per GB. On AWS S3 Standard (us-east-1 and us-east-2, October 2026) a PUT, COPY, POST or LIST costs $0.005 per 1,000 and a GET or HEAD $0.0004 per 1,000. Tigris charges the same for writes and LISTs and $0.0005 per 1,000 reads; R2 and Wasabi charge differently. Check your store’s price list.
+Object stores charge per request as well as per GB. On AWS S3 Standard (us-east-1 and us-east-2, October 2026) a PUT, COPY, POST, or LIST costs $0.005 per 1,000 and a GET or HEAD $0.0004 per 1,000. Tigris charges the same for writes and LISTs and $0.0005 per 1,000 reads; R2 and Wasabi charge differently. Check your store’s price list.
 
 **Writing.** An append that lands in one partition, without maintenance:
 
@@ -81,7 +81,7 @@ So about 7 PUTs and 2 GETs: at one append per second, about $3 a day on S3. Each
 | First query on a table in this process, `timelake_version_lookup=list` (default) | 1 GET (head) + 1 LIST | 1 |
 | First query, `timelake_version_lookup=hint`, or plain HTTPS (can’t list) | 2 GETs (head, version hint) + 1 HEAD | 2 |
 | Later queries (after 1 s) | 1 HEAD (a LIST with `timelake_freshness_check=list`) | 1, while the query is planned |
-| Table without a head | + GETs of the metadata, manifest list and manifests | + 2 |
+| Table without a head | + GETs of the metadata, manifest list, and manifests | + 2 |
 
 Then each query reads its data: one GET per byte range, a few per file, and none for footers the head carried. A dashboard that refreshes one table every 5 seconds sends about 17,000 checks a day plus its data reads: a few cents a day on S3.
 
@@ -107,7 +107,7 @@ Then each query reads its data: one GET per byte range, a few per file, and none
 
 ## Conditional writes are required
 
-Commits create the next `vN.metadata.json` with put-if-absent: on S3 that is `If-None-Match: *`, which AWS S3 has supported since 2024; GCS and Azure use their own preconditions. A store that ignores the condition would let two concurrent writers both believe they committed. Timelake has been tested on local disk, RustFS, AWS S3 and S3 Express One Zone (correctness only). With a store you haven’t tested, check that creating the same table twice fails the second time:
+Commits create the next `vN.metadata.json` with put-if-absent: on S3 that is `If-None-Match: *`, which AWS S3 has supported since 2024; GCS and Azure use their own preconditions. A store that ignores the condition would let two concurrent writers both believe they committed. Timelake has been tested on local disk, RustFS, AWS S3, and S3 Express One Zone (correctness only). With a store you haven’t tested, check that creating the same table twice fails the second time:
 
 ```bash
 timelake -w s3://my-bucket/test create t --schema "x:int"     # created t

@@ -48,17 +48,17 @@ A warehouse served over plain HTTP(S), such as Vercel Blob, a public S3, R2 or G
 | `table.latest({ series?, columns? })` | The newest row of each series, read from the last-value index in a single request. Throws if the table has no index. |
 | `table.range({ series?, from?, to?, columns?, limit?, order? })` | Rows in `[from, to)`, ordered by time. `columns` narrows the result type to those columns. |
 | `table.bucket({ series?, from?, to?, every, agg, by? })` | One row per bucket (and per `by` value): `bucket: Date` plus `<column>_<op>` for each aggregate (`count`, `sum`, `avg`, `min`, `max`, `first`, `last`); `"*": ["count"]` gives `count`. |
-| `table.info()` | Contract, schema, snapshots and live files of the current version. |
+| `table.info()` | Contract, schema, snapshots, and live files of the current version. |
 | `table.zodSource()` | The TypeScript source of a Zod schema for the table, ready to paste. |
 | `table.refresh()` | Forget the cached table version, so the next query reads the newest one. |
 | `zodSource(info, exportName?)`, `readerVersion()` | Standalone exports: generate Zod source from a `table.info()` result; the version of the embedded WASM reader. |
-| `table.lastStats` | Requests, bytes, files and milliseconds of the last query. |
+| `table.lastStats` | Requests, bytes, files, and milliseconds of the last query. |
 
 `series` is a value or a list of values of the first series-key column, or an object such as `{ device_id: ["a", "b"] }`. Times are `Date` objects, ISO strings, or epoch milliseconds. Durations are written like `500ms`, `30s`, `10m`, `1h`, `1d` or `1w`, or given as a number of milliseconds. Buckets are aligned to the Unix epoch.
 
 ## How a query runs
 
-1. Read the table's head object (`metadata/timelake-head`) and `version-hint.text` at the same time. The head holds the metadata, the files, and usually the last-value index and file footers, so a `latest` query needs no further request. A HEAD request for the next version runs alongside the query; if one exists, the result is dropped and the query reruns on the newest version. Tables without a head are read through the metadata, the manifest list and the manifests. A loaded version is reused for `cacheMs`, and after that only checked for a newer one.
+1. Read the table's head object (`metadata/timelake-head`) and `version-hint.text` at the same time. The head holds the metadata, the files, and usually the last-value index and file footers, so a `latest` query needs no further request. A HEAD request for the next version runs alongside the query; if one exists, the result is dropped and the query reruns on the newest version. Tables without a head are read through the metadata, the manifest list, and the manifests. A loaded version is reused for `cacheMs`, and after that only checked for a newer one.
 2. Prune data files on their Iceberg column bounds (time range, series key).
 3. For each remaining file, take the Parquet footer from the head or fetch it, then fetch only the row groups and columns the query needs.
 4. Decode, filter, and sort or aggregate in WebAssembly, and return JSON rows (validated with Zod if given).

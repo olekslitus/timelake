@@ -19,7 +19,7 @@ export function ArchitectureDiagram() {
       >
         <title id="arch-title">Timelake architecture</title>
         <desc id="arch-desc">
-          Applications append Arrow data through the Timelake writer, which sorts, partitions and commits Parquet files
+          Applications append Arrow data through the Timelake writer, which sorts, partitions, and commits Parquet files
           and Iceberg metadata to object storage. Maintenance compacts and expires in place. The Timelake reader and
           plain engines such as DuckDB read the same tables.
         </desc>

@@ -12,7 +12,7 @@ Every command prints help with `--help`, for example `timelake import --help`. `
 
 | Flag | Meaning |
 | --- | --- |
-| `-w, --warehouse <url\|path>` | Warehouse location: s3://bucket/prefix, gs://…, az://…, file:///… or a local path. Env: TIMELAKE_WAREHOUSE. Default ./warehouse. |
+| `-w, --warehouse <url\|path>` | Warehouse location: s3://bucket/prefix, gs://…, az://…, file:///…, or a local path. Env: TIMELAKE_WAREHOUSE. Default ./warehouse. |
 | `-o, --option <key=value>` | Storage option, repeatable, e.g. `-o aws_endpoint=http://localhost:9000 -o aws_allow_http=true`. |
 
 ## create
@@ -32,7 +32,7 @@ timelake create iot.devices --schema "device_id:string,site:string,installed:dat
 | `--series-key <a,b>` | Columns that identify a series, comma-separated. |
 | `--chunk <hour\|day\|month>` | Time partition size (default day). Also accepts 1h, 1d, 24h, 1 month. |
 | `--retention <dur>` | Drop data older than this, e.g. 90d (units s, m, h, d, w, y). |
-| `--no-dedup` | Keep every row with the same (series, time): when appending, reading and compacting. |
+| `--no-dedup` | Keep every row with the same (series, time): when appending, reading, and compacting. |
 | `--prop <k=v>` | Extra table property; repeatable. |
 
 ## append
@@ -57,7 +57,7 @@ Create the table if it doesn’t exist (schema from the first file, or `--from`/
 timelake import iot.readings readings/*.parquet --time-column time --series-key device_id --retention 365d
 ```
 
-Inputs: `.parquet` files or directories of Parquet, and `.csv`, `.csv.gz` and `.tsv` with a header row.
+Inputs: `.parquet` files or directories of Parquet, and `.csv`, `.csv.gz`, and `.tsv` with a header row.
 
 ## sql
 
@@ -86,7 +86,7 @@ $ timelake latest iot.readings --format json
 
 ## maintain
 
-Compact, apply retention and expire snapshots, for the given tables or all tables.
+Compact, apply retention, and expire snapshots, for the given tables or all tables.
 
 ```bash
 timelake maintain
@@ -120,7 +120,7 @@ Make an earlier snapshot current again: `timelake rollback <table> <snapshot id>
 
 ## info
 
-Show a table’s contract, schema, size, snapshots, last-value index and newest partitions.
+Show a table’s contract, schema, size, snapshots, last-value index, and newest partitions.
 
 ```bash
 timelake info iot.readings

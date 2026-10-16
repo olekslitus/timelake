@@ -7,18 +7,18 @@ The words used in these docs, in plain terms.
 | Term | Meaning |
 | --- | --- |
 | **Append** | Adding new rows to a table. In Timelake every append is one commit: either all its rows become visible, or none do. |
-| **Apache Arrow** | A standard way to hold a table in memory, column by column. Python (pyarrow, polars), Rust and DataFusion all use it, so data moves between them without being converted. |
-| **Apache Iceberg** | An open table format: a set of metadata files that lists which data files make up a table, plus its schema, partitions and history. Many engines read it (DuckDB, Spark, Trino, Snowflake, Athena). Timelake writes standard Iceberg version 2 tables. |
+| **Apache Arrow** | A standard way to hold a table in memory, column by column. Python (pyarrow, polars), Rust, and DataFusion all use it, so data moves between them without being converted. |
+| **Apache Iceberg** | An open table format: a set of metadata files that lists which data files make up a table, plus its schema, partitions, and history. Many engines read it (DuckDB, Spark, Trino, Snowflake, Athena). Timelake writes standard Iceberg version 2 tables. |
 | **Batch id** | A name you give an append, for example gateway-7-000042. If an append with the same id was already committed, the new one does nothing. This makes retries safe. |
 | **Catalog** | Whatever tells a reader where a table's current metadata is. Many systems run a catalog server (AWS Glue, a REST catalog). Timelake doesn't: the current version is a file in the table folder, and commits use conditional writes. |
-| **Chunk interval** | How much time one partition covers: an hour, a day (the default) or a month. |
+| **Chunk interval** | How much time one partition covers: an hour, a day (the default), or a month. |
 | **Commit** | Making a change visible by writing a new version of the table's metadata. Timelake commits with a conditional write, so two writers can never both create the same version. |
 | **Compaction** | Merging many small files into fewer large ones, and re-sorting them. Fewer files mean fewer requests per query. Timelake also removes duplicates while compacting. |
-| **Conditional write (put-if-absent)** | Asking the object store to create a file only if it doesn't exist yet. The store does the check and the write as one step, so it works as a lock without a lock server. AWS S3, GCS, Azure and most S3-compatible stores support it. |
+| **Conditional write (put-if-absent)** | Asking the object store to create a file only if it doesn't exist yet. The store does the check and the write as one step, so it works as a lock without a lock server. AWS S3, GCS, Azure, and most S3-compatible stores support it. |
 | **DataFusion** | Apache DataFusion, a SQL query engine written in Rust. Timelake embeds it and plugs in its own table reader and query rewrites. |
 | **Dedup (deduplication)** | Removing rows that have the same series key and time. The row written last wins. The Timelake reader skips older copies when reading, and compaction removes them; other engines see them until compaction. |
 | **DuckDB** | A popular in-process SQL engine. Its iceberg extension can read Timelake tables directly, with no Timelake software. |
-| **Footer** | The table of contents at the end of a Parquet file: its columns, row groups and their min and max values. A reader fetches the footer first, then the parts it needs. |
+| **Footer** | The table of contents at the end of a Parquet file: its columns, row groups, and their min and max values. A reader fetches the footer first, then the parts it needs. |
 | **Hot tier** | A planned fast buffer for rows that aren't committed to the lake yet, for second-level freshness. Not built yet. |
 | **Last-value index (LVI)** | A small Parquet file with the newest row of every series, updated on every append. Queries for the latest values read it instead of scanning the table. |
 | **Manifest, manifest list** | Iceberg metadata files (Avro format). A manifest lists data files with their row counts and min and max values. A manifest list lists the manifests of one version. |
@@ -27,14 +27,14 @@ The words used in these docs, in plain terms.
 | **Object storage, object store** | A service that stores files (objects) by name: AWS S3, Cloudflare R2, Google Cloud Storage, Azure Blob Storage, MinIO, RustFS. Each request has a delay and a price, which shapes how Timelake reads and writes. |
 | **Parquet** | Apache Parquet, a compressed, column-by-column file format with min and max values per block. The data files of a Timelake table are Parquet. |
 | **Partition** | The rows of one time chunk (for example, one day), kept in their own folder. Queries for a time range skip other partitions entirely. |
-| **Pruning** | Skipping files, row groups or pages because their min and max values show they can't match the query. |
+| **Pruning** | Skipping files, row groups, or pages because their min and max values show they can't match the query. |
 | **Retention** | How long data is kept. Maintenance drops whole partitions older than the retention period, for example 90d. |
 | **Row group, page** | Blocks inside a Parquet file. A row group holds a range of rows (1M by default in Timelake); each column in it is split into pages. Both carry min and max values used for pruning. |
 | **Series, series key** | A series is one stream of measurements, such as one device's temperature. The series key is the column or columns that identify it, such as device_id or (site, metric). |
 | **Snapshot, version** | The state of a table after one commit. Old snapshots are kept for a while (one hour by default) so running queries and other engines can finish, then expired. |
 | **Snapshot expiry** | Removing old snapshots and deleting the files that only they used. |
-| **Table contract** | A table's time column, series key, chunk interval, dedup and retention. It is stored in the table's properties (timelake.*), so every writer follows it. |
+| **Table contract** | A table's time column, series key, chunk interval, dedup, and retention. It is stored in the table's properties (timelake.*), so every writer follows it. |
 | **Time bucket** | Grouping rows into fixed time windows, such as 5 minutes or 1 hour. For example, time_bucket(INTERVAL '1 hour', time). |
-| **TSBS** | Time Series Benchmark Suite, a standard benchmark from Timescale. Timelake's benchmarks use its IoT dataset: a fleet of trucks reporting position, speed and fuel. |
+| **TSBS** | Time Series Benchmark Suite, a standard benchmark from Timescale. Timelake's benchmarks use its IoT dataset: a fleet of trucks reporting position, speed, and fuel. |
 | **Warehouse** | The root folder or bucket prefix that holds a set of tables, such as s3://my-bucket/lake or ./warehouse. |
 | **WASM (WebAssembly)** | A way to run compiled code in browsers and JavaScript runtimes. Timelake's TypeScript client uses a WebAssembly build of its reader. |

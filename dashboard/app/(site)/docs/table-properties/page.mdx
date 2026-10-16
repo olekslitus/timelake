@@ -8,10 +8,10 @@ A table’s contract and maintenance policy live in Iceberg table properties und
 | --- | --- | --- |
 | `timelake.time-column` | (none) | The time column. Its presence makes the table a time-series table. |
 | `timelake.series-key` | (none) | Comma-separated series key columns. |
-| `timelake.chunk-interval` | day | Partition size: hour, day or month. |
+| `timelake.chunk-interval` | day | Partition size: hour, day, or month. |
 | `timelake.dedup` | true with a series key, else false | Rows with the same (series, time) count once; the latest write wins. Applied within an append, by the Timelake reader, and by compaction. |
 | `timelake.retention` | forever | Drop partitions that end before now minus this duration, e.g. 90d. |
-| `timelake.auto-maintain` | true | Run size-tiered compaction, retention and snapshot expiry inline after appends. |
+| `timelake.auto-maintain` | true | Run size-tiered compaction, retention, and snapshot expiry inline after appends. |
 | `timelake.compact-min-files` | 8 | Inline compaction merges a size tier of a partition once it has this many files. |
 | `timelake.target-file-size-bytes` | 268435456 (256 MiB) | Size at which compaction output and writes roll to a new file. |
 | `timelake.row-group-rows` | 1048576 | Parquet row group size. Page indexes keep single-series reads selective inside large row groups. |

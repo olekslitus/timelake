@@ -9,7 +9,7 @@ import { REPO_URL } from "@/lib/site"
 
 export const metadata: Metadata = {
   title: "timebench",
-  description: "How every benchmark on this site is run: workloads, systems, measurements and history.",
+  description: "How every benchmark on this site is run: workloads, systems, measurements, and history.",
 }
 
 const STATUS: Record<Status, { label: string; variant: "default" | "secondary" | "outline" }> = {
@@ -60,13 +60,13 @@ export default function TimebenchPage() {
         <H2>Principles</H2>
         <ul className="ml-5 list-disc space-y-1.5 text-muted-foreground">
           <li>Every system gets the same rows, in the same order, and the same queries.</li>
-          <li>Each system is written, maintained and read the way its own documentation suggests.</li>
+          <li>Each system is written, maintained, and read the way its own documentation suggests.</li>
           <li>Data arrives as it does in production, in small batches from a stream, not in one bulk load.</li>
           <li>
             Not only table formats: databases and plain files run too, so a result says what a team would otherwise use.
           </li>
           <li>Losses are published next to wins.</li>
-          <li>Every run is kept, with the commit, the machine and every version, and anyone can rerun it.</li>
+          <li>Every run is kept, with the commit, the machine, and every version, and anyone can rerun it.</li>
         </ul>
       </section>
 
@@ -97,7 +97,7 @@ export default function TimebenchPage() {
             best case for each system.
           </li>
           <li>
-            <span className="text-foreground">Concurrent dashboards.</span> 1, 4 and then 16 clients at once, each
+            <span className="text-foreground">Concurrent dashboards.</span> 1, 4, and then 16 clients at once, each
             keeping a reader open like a dashboard backend, run the dashboard queries in turn for 30 seconds: queries
             per second over all clients, and how slow the slowest 5% were.
           </li>
@@ -110,8 +110,8 @@ export default function TimebenchPage() {
         <ul className="ml-5 list-disc space-y-1.5 text-muted-foreground">
           <li>
             <span className="text-foreground">First run.</span> Each query runs in a fresh process, once, then twice
-            more. The first run loads table metadata, file footers and data from storage: the latency a new dashboard,
-            job or serverless function sees. The ranked lists show first runs; the results pages also show the best
+            more. The first run loads table metadata, file footers, and data from storage: the latency a new dashboard,
+            job, or serverless function sees. The ranked lists show first runs; the results pages also show the best
             repeat.
           </li>
           <li>
@@ -241,7 +241,7 @@ uv run timebench run tsbs-iot --scale small    # every lake system on your disk,
 uv run timebench report latest`}
         </pre>
         <p className="text-muted-foreground">
-          Setup, storage options and how to add a benchmark or a system:{" "}
+          Setup, storage options, and how to add a benchmark or a system:{" "}
           <a className="underline underline-offset-4" href={`${REPO_URL}/tree/main/bench`}>
             bench/README.md
           </a>

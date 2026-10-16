@@ -2,7 +2,7 @@ export const metadata = { title: "Development" }
 
 # Development
 
-How to build, test and run each part of the repository. For what each part is, see the [Codebase tour](/docs/codebase); for how to propose a change, [Contribute](/contribute).
+How to build, test, and run each part of the repository. For what each part is, see the [Codebase tour](/docs/codebase); for how to propose a change, [Contribute](/contribute).
 
 ## Tools to install
 
@@ -43,7 +43,7 @@ cargo fmt --all                                 # formatting (rustfmt.toml: widt
 cargo doc --no-deps --open                      # API docs
 ```
 
-The Cargo workspace (root `Cargo.toml`) holds `timelake`, `timelake-format`, `timelake-cli` and `timelake-py`, with one `Cargo.lock` and one `target/`. `timelake-wasm` is built separately for WebAssembly (see below).
+The Cargo workspace (root `Cargo.toml`) holds `timelake`, `timelake-format`, `timelake-cli`, and `timelake-py`, with one `Cargo.lock` and one `target/`. `timelake-wasm` is built separately for WebAssembly (see below).
 
 Try the CLI on a throwaway warehouse:
 
@@ -122,7 +122,7 @@ The code guide for people and AI agents is [CONTRIBUTING.md](https://github.com/
 
 - **Errors:** `thiserror` in Rust libraries, `anyhow` in the CLI; specific exception types in Python.
 - **Comments:** explain why, not what. Public items get a short doc comment.
-- **Commits:** short imperative subject with the area first, such as `bench: …`, `Site: …` or `SPEC: …`.
+- **Commits:** short imperative subject with the area first, such as `bench: …`, `Site: …`, or `SPEC: …`.
 
 ## Continuous integration
 

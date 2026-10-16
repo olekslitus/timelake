@@ -12,10 +12,10 @@ Your data is a set of files in a folder or a bucket. There is no database server
 
 | Piece | What it is | Why Timelake uses it |
 | --- | --- | --- |
-| Object storage | A place to keep files by name: S3, R2, Google Cloud Storage, Azure, MinIO, or a local folder. | Cheap, durable and already where most companies keep their data. You pay per GB and per request. |
+| Object storage | A place to keep files by name: S3, R2, Google Cloud Storage, Azure, MinIO, or a local folder. | Cheap, durable, and already where most companies keep their data. You pay per GB and per request. |
 | Parquet | A file format that stores a table column by column, compressed, with small summaries (min and max values) for each block. | A query that needs one column, or one time range, can read a small part of the file. |
 | Apache Iceberg | A set of metadata files that says which Parquet files form a table, with their row counts and min and max values. | It makes a folder of files behave like one table with versions, and many tools already read it (DuckDB, Spark, Trino, Snowflake). |
-| Apache Arrow | The in-memory column format that data uses while it moves between programs. | Python, Rust and the query engine share data without converting it. |
+| Apache Arrow | The in-memory column format that data uses while it moves between programs. | Python, Rust, and the query engine share data without converting it. |
 | DataFusion | A SQL engine written in Rust that Timelake embeds. | Timelake adds its own table reader and rules to it, so SQL can use the time-series layout. |
 
 ## 1. Creating the table

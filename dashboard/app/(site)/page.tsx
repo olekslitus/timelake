@@ -46,19 +46,19 @@ const DATA: UseCase[] = [
     icon: Bot,
     art: "robot",
     title: "Robotics",
-    body: "Joint positions, torques and sensor readings from robots, recorded at high rates and replayed by time range.",
+    body: "Joint positions, torques, and sensor readings from robots, recorded at high rates and replayed by time range.",
   },
   {
     icon: ChartCandlestick,
     art: "market",
     title: "Financial data",
-    body: "Prices and trades for thousands of instruments, read as time ranges, bars and the latest price.",
+    body: "Prices and trades for thousands of instruments, read as time ranges, bars, and the latest price.",
   },
   {
     icon: Server,
     art: "metrics",
     title: "Server metrics",
-    body: "CPU, memory and disk metrics from thousands of hosts.",
+    body: "CPU, memory, and disk metrics from thousands of hosts.",
   },
 ]
 
@@ -74,7 +74,7 @@ const USES: UseCase[] = [
     icon: BrainCircuit,
     art: "ml",
     title: "Data science and ML",
-    body: "Time series pulled into notebooks as Arrow tables, for pandas, polars and model training, straight from the bucket.",
+    body: "Time series pulled into notebooks as Arrow tables, for pandas, polars, and model training, straight from the bucket.",
   },
   {
     icon: Zap,
@@ -171,12 +171,14 @@ export default function Home() {
       </section>
 
       <section className="flex flex-col gap-6">
-        <SectionHead label="Data">Time series from machines, vehicles, markets and servers.</SectionHead>
+        <SectionHead label="Data">Time series from machines, vehicles, markets, and servers.</SectionHead>
         <UseCaseGrid cases={DATA} columns="lg:grid-cols-5" />
       </section>
 
       <section className="flex flex-col gap-6">
-        <SectionHead label="Uses">Read straight from your bucket by apps, notebooks, functions and agents.</SectionHead>
+        <SectionHead label="Uses">
+          Read straight from your bucket by apps, notebooks, functions, and agents.
+        </SectionHead>
         <UseCaseGrid cases={USES} columns="lg:grid-cols-4" />
       </section>
 

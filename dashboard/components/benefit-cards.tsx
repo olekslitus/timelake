@@ -49,7 +49,7 @@ export async function BenefitCards() {
       icon: PiggyBank,
       art: "cheap",
       title: "Cheap",
-      body: "You pay only for storage, reads and writes. Data costs about 6× less to keep than in TimescaleDB.",
+      body: "You pay only for storage, reads, and writes. Data costs about 6× less to keep than in TimescaleDB.",
       link: { label: "Cost", href: "/docs/storage#requests-and-cost" },
     },
     {
@@ -78,7 +78,7 @@ export async function BenefitCards() {
       icon: Cloud,
       art: "stores",
       title: "Any object store",
-      body: "Runs on AWS S3, Google Cloud Storage, Azure, R2, MinIO or your local disk.",
+      body: "Runs on AWS S3, Google Cloud Storage, Azure, R2, MinIO, or your local disk.",
       link: { label: "Storage", href: "/docs/storage" },
     },
   ]

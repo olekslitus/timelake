@@ -287,7 +287,7 @@ async function Kit() {
       others.length > 0 && {
         value: `${Math.round(Math.min(...others) / freshOwn)}–${Math.round(Math.max(...others) / freshOwn)}×`,
         label: "Faster on fresh data",
-        note: "Than Iceberg, Lance and Parquet files, right after ingest.",
+        note: "Than Iceberg, Lance, and Parquet files, right after ingest.",
       },
     mine?.requests && {
       value: `${mine.requests[0]} req`,

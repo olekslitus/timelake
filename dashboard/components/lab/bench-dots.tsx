@@ -84,7 +84,7 @@ export function BucketObjects({ run }: { run: Run }) {
           <Swatch color="var(--muted-foreground)" /> Data files
         </span>
         <span className="flex items-center gap-2">
-          <Swatch color="var(--muted-foreground)" alpha={0.3} /> Metadata, manifests and indexes
+          <Swatch color="var(--muted-foreground)" alpha={0.3} /> Metadata, manifests, and indexes
         </span>
         <span>
           After streaming {rows[0]?.commits.toLocaleString("en")} commits, before any maintenance job. One square per

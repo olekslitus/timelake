@@ -49,7 +49,7 @@ export const BENCHMARKS: Benchmark[] = [
       {
         title: "The original",
         text: [
-          "The Time Series Benchmark Suite (TSBS), by Timescale, generates data for a use case, loads it into a database and runs a fixed set of query types. Its IoT use case models a fleet of trucks: a readings table (location, speed, fuel use) and a diagnostics table (fuel level, load, status), each truck described by tags.",
+          "The Time Series Benchmark Suite (TSBS), by Timescale, generates data for a use case, loads it into a database, and runs a fixed set of query types. Its IoT use case models a fleet of trucks: a readings table (location, speed, fuel use) and a diagnostics table (fuel level, load, status), each truck described by tags.",
           "TSBS measures bulk-load throughput and query throughput with many parallel workers against a database server. We keep its data and queries, and change how data arrives and what we time, because a lake receives data in small batches and is read by short-lived processes.",
         ],
       },
@@ -58,7 +58,7 @@ export const BENCHMARKS: Benchmark[] = [
         items: [
           "TSBS's own generator, `tsbs_generate_data --use-case=iot`, seed 123, one reading every 10 seconds per truck from 2026-01-01 to 2026-01-04.",
           "Standard scale: 500 trucks, 11.7M readings and 11.7M diagnostics. The generator leaves about 10% of points missing and delivers some late, on purpose.",
-          "Converted once to Parquet with the same schema TSBS loads into TimescaleDB: `readings`, `diagnostics` and a `tags` table.",
+          "Converted once to Parquet with the same schema TSBS loads into TimescaleDB: `readings`, `diagnostics`, and a `tags` table.",
         ],
       },
       {
@@ -109,7 +109,7 @@ export const BENCHMARKS: Benchmark[] = [
           "Query time, right after ingest and after maintenance: the geometric mean of first runs over the queries every system completed.",
           "Commit time: the median and 95th percentile of the 1,728 commits.",
           "While ingesting: every 15 seconds a fresh reader runs the 5 single-truck and fleet queries (the dashboard) and checks the newest row it sees.",
-          "Concurrent dashboards: 1, 4 and 16 clients running the dashboard queries for 30 seconds each, after maintenance.",
+          "Concurrent dashboards: 1, 4, and 16 clients running the dashboard queries for 30 seconds each, after maintenance.",
           "Cost on AWS: ingest requests per month at this data rate, storage per month, and a million queries, at S3 list prices.",
           "Storage after maintenance: files and bytes.",
           "On S3: requests and bytes per query and per phase.",
@@ -162,13 +162,13 @@ export const BENCHMARKS: Benchmark[] = [
         items: [
           "All 15 types, named as in TSBS: single-groupby-<metrics>-<hosts>-<hours> (6 combinations), cpu-max-all-1 and -8, double-groupby-1, -5 and -all, high-cpu-1 and -all, lastpoint, groupby-orderby-limit.",
           "Ported once from TSBS's TimescaleDB SQL to SQL every engine runs. Random hosts and time windows are fixed (hosts below 100, windows ending at 2026-01-03 23:00, TSBS's window lengths). TimescaleDB's `DISTINCT ON` (lastpoint) becomes `ROW_NUMBER() … = 1`.",
-          "The dashboard queries, probed during ingest and run by concurrent clients, are the single-host ones: three single-groupby types, cpu-max-all-1, high-cpu-1 and groupby-orderby-limit.",
+          "The dashboard queries, probed during ingest and run by concurrent clients, are the single-host ones: three single-groupby types, cpu-max-all-1, high-cpu-1, and groupby-orderby-limit.",
         ],
       },
       {
         title: "Systems and storage",
         text: [
-          "The same systems, readers and storage as TSBS IoT (see its methodology), with the host name as the series key: Timelake sorts by it, and TimescaleDB indexes it.",
+          "The same systems, readers, and storage as TSBS IoT (see its methodology), with the host name as the series key: Timelake sorts by it, and TimescaleDB indexes it.",
         ],
       },
       {
@@ -188,7 +188,7 @@ export const BENCHMARKS: Benchmark[] = [
     summary: "One wide table of web analytics, 100M rows; 43 queries.",
     why: "We run a 10% subset during development. Comparable numbers need the full dataset on its reference machine.",
     provenance:
-      "We'll use ClickBench's dataset, queries and scripts, by its rules, for an official entry. Until then, a 10% subset runs in development and isn't published.",
+      "We'll use ClickBench's dataset, queries, and scripts, by its rules, for an official entry. Until then, a 10% subset runs in development and isn't published.",
     methodology: [
       {
         title: "The original",
@@ -212,7 +212,7 @@ export const BENCHMARKS: Benchmark[] = [
     name: "RTABench",
     origin: { label: "RTABench", url: "https://rtabench.com" },
     status: "planned",
-    summary: "Orders and their events: selective lookups, joins and pre-aggregated queries.",
+    summary: "Orders and their events: selective lookups, joins, and pre-aggregated queries.",
     why: "Close to fresh-data dashboards. Its pre-aggregated queries wait for rollups.",
     provenance:
       "We'll use its data and queries; timebench will load the data and time the queries, so the numbers won't compare with its leaderboard.",
@@ -220,7 +220,7 @@ export const BENCHMARKS: Benchmark[] = [
       {
         title: "The original",
         text: [
-          "Timescale's real-time analytics benchmark: an online store's customers, products, orders and 171M order events, with 33 queries. Some read one order or a short window, some join tables, some read pre-aggregated views. It uses ClickBench's harness and rules.",
+          "Timescale's real-time analytics benchmark: an online store's customers, products, orders, and 171M order events, with 33 queries. Some read one order or a short window, some join tables, some read pre-aggregated views. It uses ClickBench's harness and rules.",
         ],
       },
       {
@@ -244,7 +244,7 @@ export const BENCHMARKS: Benchmark[] = [
       {
         title: "The original",
         text: [
-          "A benchmark from the University of Fribourg (VLDB 2023) on hydrology sensor data extended by a generator, up to 200,000 series. Seven query types: selection, filtering, aggregation, downsampling, upsampling, the average of two series and correlation. An online mode inserts at a fixed rate while querying.",
+          "A benchmark from the University of Fribourg (VLDB 2023) on hydrology sensor data extended by a generator, up to 200,000 series. Seven query types: selection, filtering, aggregation, downsampling, upsampling, the average of two series, and correlation. An online mode inserts at a fixed rate while querying.",
         ],
       },
       {
@@ -269,14 +269,14 @@ export const BENCHMARKS: Benchmark[] = [
       {
         title: "The original",
         text: [
-          "The benchmark of Apache IoTDB, by Tsinghua University: devices with sensors write batches from many clients, with a set share of out-of-order points, while clients run 12 query types (point, range, value filter, aggregates, group by time, latest point). A ratio sets the mix of writes and each query type. It supports IoTDB, InfluxDB, TimescaleDB, QuestDB, TDengine and others.",
+          "The benchmark of Apache IoTDB, by Tsinghua University: devices with sensors write batches from many clients, with a set share of out-of-order points, while clients run 12 query types (point, range, value filter, aggregates, group by time, latest point). A ratio sets the mix of writes and each query type. It supports IoTDB, InfluxDB, TimescaleDB, QuestDB, TDengine, and others.",
         ],
       },
       {
         title: "How we'll run it",
         items: [
           "Through a Timelake adapter for its Java interface, talking to Timelake's server mode (PostgreSQL protocol or Flight SQL).",
-          "The same settings for every system: batch size, clients, out-of-order share and the read/write mix.",
+          "The same settings for every system: batch size, clients, out-of-order share, and the read/write mix.",
         ],
       },
     ],
@@ -288,7 +288,7 @@ export const BENCHMARKS: Benchmark[] = [
     status: "planned",
     summary: "How queries slow down over weeks of commits, and what maintenance wins back.",
     why: "Borrows LST-Bench's method (Microsoft, SIGMOD 2024), applied to our own time-series data.",
-    provenance: "Only LST-Bench's method: our own data, queries and runs, not its code or workload.",
+    provenance: "Only LST-Bench's method: our own data, queries, and runs, not its code or workload.",
     methodology: [
       {
         title: "The idea",
@@ -300,7 +300,7 @@ export const BENCHMARKS: Benchmark[] = [
         title: "How we'll run it",
         items: [
           "TSBS IoT and, later, the industrial IoT workload, extended to 30 days of commits.",
-          "Query time, files, metadata size and requests after each round, charted against the number of commits.",
+          "Query time, files, metadata size, and requests after each round, charted against the number of commits.",
         ],
       },
     ],
@@ -313,13 +313,13 @@ export const BENCHMARKS: Benchmark[] = [
     summary: "Plant data as it really arrives, from a day to a month, against databases and lakes, with monthly cost.",
     why: "TSBS models trucks every 10 seconds. Plants look different, and that's where Timelake is used.",
     workload: "iiot",
-    provenance: "Our own benchmark: the data generator, the queries and the method are all timebench's.",
+    provenance: "Our own benchmark: the data generator, the queries, and the method are all timebench's.",
     methodology: [
       {
         title: "Data",
         text: [
-          "Our own generator, the same rows from the same seed every time: a plant of lines and machines, 10 tags per machine. Pressure every second; flow, temperature, current and speed every 10 seconds; vibration and an energy counter every minute; machine state, alarm and setpoint when they change.",
-          "Machines run, stop and fault. Pressure sometimes goes over its alarm limit, energy meters get replaced, sensors drop out or get stuck. Every event is recorded, so answers can be checked.",
+          "Our own generator, the same rows from the same seed every time: a plant of lines and machines, 10 tags per machine. Pressure every second; flow, temperature, current, and speed every 10 seconds; vibration and an energy counter every minute; machine state, alarm, and setpoint when they change.",
+          "Machines run, stop, and fault. Pressure sometimes goes over its alarm limit, energy meters get replaced, sensors drop out or get stuck. Every event is recorded, so answers can be checked.",
         ],
         table: {
           head: ["Scale", "Tags", "Raw data", "History"],
@@ -341,11 +341,11 @@ export const BENCHMARKS: Benchmark[] = [
       {
         title: "Queries",
         items: [
-          "Dashboards: the latest value of 1,000 tags; the last 15 minutes of two machines; a 30-day trend as hourly min, max and mean.",
+          "Dashboards: the latest value of 1,000 tags; the last 15 minutes of two machines; a 30-day trend as hourly min, max, and mean.",
           "Investigation: every tag of five machines around an alarm two hours ago.",
           "Reports: a shift report per machine joined with the asset model; daily counts and means over 30 days.",
           "Process: time above the alarm limit, time-weighted averages, machine uptime, energy from counters that reset, data gaps.",
-          "All relative to the newest data, so a query means the same after 1 day, 7 days or 30.",
+          "All relative to the newest data, so a query means the same after 1 day, 7 days, or 30.",
         ],
       },
       {
@@ -357,7 +357,7 @@ export const BENCHMARKS: Benchmark[] = [
       {
         title: "Systems",
         items: [
-          "Timelake, TimescaleDB, ClickHouse, QuestDB, InfluxDB 3 Core, Iceberg, Lance and plain Parquet files.",
+          "Timelake, TimescaleDB, ClickHouse, QuestDB, InfluxDB 3 Core, Iceberg, Lance, and plain Parquet files.",
           "Each database at a pinned version, loaded with its own recommended client, and removing duplicates the way its docs say.",
           "InfluxDB 3 Core by default won't read more than 432 files in one query, about 3 days of data. It runs twice: as shipped, and with the limit raised.",
           "Later: the same on each vendor's managed cloud, at its own prices.",
@@ -366,7 +366,7 @@ export const BENCHMARKS: Benchmark[] = [
       {
         title: "What we report",
         items: [
-          "Query time after 1 day, 7 days and the full history, after maintenance, and while data arrives.",
+          "Query time after 1 day, 7 days, and the full history, after maintenance, and while data arrives.",
           "Whether each answer is right.",
           "How fresh data is, load speed, storage, and what each setup costs a month on AWS.",
         ],
@@ -392,9 +392,9 @@ export const BENCHMARKS: Benchmark[] = [
       {
         title: "How we'll run it",
         items: [
-          "The same agent, model and questions against the same data in raw files, DuckDB, TimescaleDB, Timelake over SQL, and Timelake over its own agent tools.",
+          "The same agent, model, and questions against the same data in raw files, DuckDB, TimescaleDB, Timelake over SQL, and Timelake over its own agent tools.",
           "Questions generated from the data with events added on purpose, so every answer is known: values with units, comparisons between periods, anomalies and when they happened, a cause shared by many devices, gaps, late data, and questions that should be refused.",
-          "Answers checked automatically. For each question: right or wrong, tokens, tool calls, time and cost.",
+          "Answers checked automatically. For each question: right or wrong, tokens, tool calls, time, and cost.",
           "Then OpenRCA's and AssetOpsBench's tasks against Timelake, as published comparisons.",
         ],
       },
@@ -405,7 +405,7 @@ export const BENCHMARKS: Benchmark[] = [
     name: "TS-Benchmark",
     origin: { label: "TS-Benchmark on GitHub", url: "https://github.com/dbiir/TS-Benchmark" },
     status: "not planned",
-    summary: "Wind-farm sensor data: loading, appends and 5 queries (ICDE 2021).",
+    summary: "Wind-farm sensor data: loading, appends, and 5 queries (ICDE 2021).",
     why: "Unmaintained since 2022, and its 5 queries are covered by the benchmarks above.",
   },
   {
