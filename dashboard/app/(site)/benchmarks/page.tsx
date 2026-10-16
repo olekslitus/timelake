@@ -1,56 +1,78 @@
-import { ArrowRight, ArrowUpRight } from "lucide-react"
+import {
+  ArrowUpRight,
+  BotMessageSquare,
+  Factory,
+  FlaskConical,
+  Hourglass,
+  type LucideIcon,
+  MousePointerClick,
+  RadioTower,
+  Receipt,
+  Thermometer,
+} from "lucide-react"
 import type { Metadata } from "next"
 import Link from "next/link"
 import { Suspense } from "react"
 
-import { BenchRanking } from "@/components/bench-ranking"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { BenchCards } from "@/components/bench-cards"
+import { MoreLink, SectionHead } from "@/components/section-head"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { BENCHMARKS, type Benchmark } from "@/lib/benchmark-catalog"
-import { latestByTarget, loadRuns, rankings, runKey, runLabel, type Run } from "@/lib/benchmarks"
+import { SYSTEMS, latestByTarget, loadRuns, rankings, runKey, runLabel, type Run } from "@/lib/benchmarks"
 import { REPO_URL } from "@/lib/site"
 
 export const metadata: Metadata = { title: "Benchmarks" }
 
+/** An icon per planned benchmark, for what its data is. */
+const ICONS: Record<string, LucideIcon> = {
+  clickbench: MousePointerClick,
+  rtabench: Receipt,
+  "tsm-bench": Thermometer,
+  "iot-benchmark": RadioTower,
+  longevity: Hourglass,
+  "industrial-iot": Factory,
+  "ai-agents": BotMessageSquare,
+}
+
 export default function BenchmarksPage() {
   const planned = BENCHMARKS.filter((b) => b.status === "planned")
   return (
-    <div className="mx-auto max-w-6xl space-y-12 px-4 py-12">
-      <header className="max-w-3xl space-y-3">
-        <h1 className="text-3xl font-semibold tracking-tight">Benchmarks</h1>
-      </header>
+    <div className="mx-auto flex max-w-6xl flex-col gap-16 px-4 pt-8 pb-24">
+      <h1 className="text-4xl leading-[1.05] font-light tracking-tight sm:text-5xl">Benchmarks</h1>
 
-      <Suspense fallback={<div className="h-96 animate-pulse rounded-xl bg-muted" />}>
+      <Suspense fallback={<div className="h-96 animate-pulse rounded-lg bg-muted" />}>
         <Results />
       </Suspense>
 
-      <section className="space-y-4">
-        <h2 className="text-xl font-semibold tracking-tight">Coming next</h2>
-        <div className="grid gap-x-8 gap-y-4 sm:grid-cols-2">
-          {planned.map((b) => (
-            <Link key={b.id} href={`/benchmarks/${b.id}/methodology`} className="group space-y-0.5">
-              <p className="flex items-center gap-1 font-medium group-hover:underline">
-                {b.name} <ArrowRight className="size-3.5 text-muted-foreground" />
-              </p>
-              <p className="text-sm text-muted-foreground">{b.summary}</p>
-            </Link>
-          ))}
-        </div>
-        <p className="text-sm text-muted-foreground">
+      <section className="flex flex-col gap-4">
+        <SectionHead label="Coming next">
           The benchmarks we decided not to run, and why, are on the{" "}
-          <Link href="/benchmarks/timebench#benchmarks" className="underline underline-offset-4">
+          <Link href="/benchmarks/timebench#benchmarks" className="underline underline-offset-4 hover:text-foreground">
             timebench page
           </Link>
           .
-        </p>
+        </SectionHead>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {planned.map((b) => {
+            const Icon = ICONS[b.id] ?? FlaskConical
+            return (
+              <Link
+                key={b.id}
+                href={`/benchmarks/${b.id}/methodology`}
+                className="flex flex-col gap-2 rounded-lg border border-dashed p-6 transition-colors hover:bg-card"
+              >
+                <h3 className="flex items-center gap-2.5 text-lg font-normal">
+                  <Icon className="size-4.5 shrink-0 text-muted-foreground" aria-hidden />
+                  {b.name}
+                </h3>
+                <p className="text-sm leading-relaxed text-muted-foreground">{b.summary}</p>
+              </Link>
+            )
+          })}
+        </div>
       </section>
 
-      <Link
-        href="/benchmarks/timebench"
-        className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground hover:underline"
-      >
-        How we run every benchmark: timebench <ArrowRight className="size-3.5" />
-      </Link>
+      <MoreLink href="/benchmarks/timebench">How we run every benchmark: timebench</MoreLink>
     </div>
   )
 }
@@ -62,71 +84,70 @@ async function Results() {
   ))
 }
 
+/** A benchmark's newest run on each kind of storage, a tab each. */
 function BenchmarkResults({ benchmark, latest }: { benchmark: Benchmark; latest: Run[] }) {
   const [first] = latest
   return (
-    <Card>
-      <CardHeader className="gap-3">
-        <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2">
-          <div className="space-y-1">
-            <CardTitle className="text-xl">{benchmark.name}</CardTitle>
-            <CardDescription>{benchmark.summary}</CardDescription>
-            {benchmark.provenance && <p className="text-xs text-muted-foreground">{benchmark.provenance}</p>}
-          </div>
-          <nav className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
-            <Link href={`/benchmarks/${benchmark.id}`} className="flex items-center gap-1 hover:underline">
-              All results <ArrowRight className="size-3.5" />
-            </Link>
-            <Link
-              href={`/benchmarks/${benchmark.id}/methodology`}
-              className="flex items-center gap-1 text-muted-foreground hover:text-foreground hover:underline"
-            >
-              Methodology <ArrowRight className="size-3.5" />
-            </Link>
-            {benchmark.origin && (
-              <a
-                href={benchmark.origin.url}
-                className="flex items-center gap-1 text-muted-foreground hover:text-foreground hover:underline"
-              >
-                {benchmark.origin.label} <ArrowUpRight className="size-3.5" />
-              </a>
-            )}
-          </nav>
-        </div>
-      </CardHeader>
-      <CardContent>
-        {first ? (
-          <Tabs defaultValue={runKey(first)}>
-            <TabsList>
-              {latest.map((r) => (
-                <TabsTrigger key={runKey(r)} value={runKey(r)}>
-                  {runLabel(r)}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-            {latest.map((r) => (
-              <TabsContent key={runKey(r)} value={runKey(r)} className="space-y-5 pt-4">
-                <div className="grid gap-x-10 gap-y-6 lg:grid-cols-2">
-                  {rankings(r).map((ranking) => (
-                    <BenchRanking key={ranking.title} ranking={ranking} />
-                  ))}
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Run of {r.header.started.slice(0, 10)} on {r.header.machine}, commit{" "}
-                  <a className="font-mono hover:underline" href={`${REPO_URL}/commit/${r.header.commit}`}>
-                    {r.header.commit.slice(0, 7)}
-                  </a>
-                  . {r.header.variant === "bulk" ? "Higher is better." : "Lower is better."}
-                  {r.queries.some((q) => q.correct !== undefined) &&
-                    " Answers are checked against a copy of the data with each row once."}
-                </p>
-              </TabsContent>
-            ))}
-          </Tabs>
-        ) : (
-          <p className="text-sm text-muted-foreground">No runs yet.</p>
+    <section className="flex flex-col gap-4">
+      <div className="flex flex-col gap-3">
+        <SectionHead label={benchmark.name}>{benchmark.summary}</SectionHead>
+        {benchmark.provenance && (
+          <p className="max-w-4xl text-xs leading-relaxed text-muted-foreground">{benchmark.provenance}</p>
         )}
-      </CardContent>
-    </Card>
+        <nav className="flex flex-wrap gap-x-5 gap-y-1">
+          <MoreLink href={`/benchmarks/${benchmark.id}`}>All results</MoreLink>
+          <MoreLink href={`/benchmarks/${benchmark.id}/methodology`}>Methodology</MoreLink>
+          {benchmark.origin && (
+            <a href={benchmark.origin.url} className="flex w-fit items-center gap-1 text-sm hover:underline">
+              {benchmark.origin.label} <ArrowUpRight className="size-3.5" />
+            </a>
+          )}
+        </nav>
+      </div>
+      {first ? (
+        <Tabs defaultValue={runKey(first)} className="gap-4">
+          <TabsList variant="line" className="flex-wrap">
+            {latest.map((r) => (
+              <TabsTrigger key={runKey(r)} value={runKey(r)} className="font-mono text-xs tracking-[0.06em] uppercase">
+                {runLabel(r)}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+          {latest.map((r) => (
+            <TabsContent key={runKey(r)} value={runKey(r)} className="flex flex-col gap-4">
+              {rankings(r).length > 0 ? (
+                <BenchCards run={r} />
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Only{" "}
+                  {Object.keys(r.header.readers)
+                    .map((s) => SYSTEMS[s] ?? s)
+                    .join(", ")}{" "}
+                  ran here, so nothing is ranked. Its times are under{" "}
+                  <Link
+                    href={`/benchmarks/${benchmark.id}`}
+                    className="underline underline-offset-4 hover:text-foreground"
+                  >
+                    all results
+                  </Link>
+                  .
+                </p>
+              )}
+              <p className="text-xs text-muted-foreground">
+                Run of {r.header.started.slice(0, 10)} on {r.header.machine}, commit{" "}
+                <a className="font-mono hover:underline" href={`${REPO_URL}/commit/${r.header.commit}`}>
+                  {r.header.commit.slice(0, 7)}
+                </a>
+                . {r.header.variant === "bulk" ? "Higher is better." : "Lower is better."}
+                {r.queries.some((q) => q.correct !== undefined) &&
+                  " Answers are checked against a copy of the data with each row once."}
+              </p>
+            </TabsContent>
+          ))}
+        </Tabs>
+      ) : (
+        <p className="text-sm text-muted-foreground">No runs yet.</p>
+      )}
+    </section>
   )
 }
