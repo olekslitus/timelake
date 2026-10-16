@@ -20,7 +20,6 @@ export type ArtKind =
   | "fast"
   | "stores"
   | "formats"
-  | "opensource"
 
 /** Columns in a picture, unless a wider one is asked for. */
 const COLS = 64
@@ -222,11 +221,11 @@ const PICTURES: Record<ArtKind, (cols: number) => Cell[]> = {
     )
   },
   stores: (cols) => {
-    // Four buckets side by side, each with a few files.
+    // Six buckets side by side, one per store the card names, each with a few files.
     const rnd = seeded(10)
     const cells: Cell[] = []
-    const width = Math.floor((cols - 3) / 4)
-    for (let b = 0; b < 4; b++) {
+    const width = Math.floor((cols - 5) / 6)
+    for (let b = 0; b < 6; b++) {
       const left = b * (width + 1)
       const right = left + width - 2
       for (let x = left; x <= right; x++)
@@ -252,15 +251,6 @@ const PICTURES: Record<ArtKind, (cols: number) => Cell[]> = {
         for (let dx = 0; dx < 6; dx++)
           for (const dy of [0, 1, 2])
             cells.push({ x: x + dx, y: top + dy, color: "var(--muted-foreground)", alpha: dy === 0 ? 0.8 : 0.45 })
-    return cells
-  },
-  opensource: (cols) => {
-    // A contribution graph: one square per day, brighter for busier days.
-    const rnd = seeded(11)
-    const cells: Cell[] = []
-    for (let x = 0; x < cols; x += 2)
-      for (let y = 0; y < ROWS; y += 2)
-        if (rnd() < 0.7) cells.push({ x, y, color: "var(--primary)", alpha: 0.2 + rnd() * 0.8 })
     return cells
   },
 }

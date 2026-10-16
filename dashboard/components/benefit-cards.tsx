@@ -1,9 +1,8 @@
-import { Activity, ArrowRight, Cloud, Gauge, Layers, Scale, ServerOff, type LucideIcon } from "lucide-react"
+import { Activity, ArrowRight, Cloud, Gauge, Layers, ServerOff, type LucideIcon } from "lucide-react"
 import Link from "next/link"
 
 import { type ArtKind, UseCaseArt } from "@/components/use-case-art"
 import { latestByTarget, loadRuns, rankings } from "@/lib/benchmarks"
-import { REPO_URL } from "@/lib/site"
 import { cn } from "@/lib/utils"
 
 type Card = {
@@ -36,7 +35,7 @@ async function speed(): Promise<string> {
 const WIDE_COLS = 128
 
 export async function BenefitCards() {
-  // Two rows of three: a wide card first in the top row, in the middle of the bottom one.
+  // A wide card and two narrow ones on top, two wide ones below.
   const cards: Card[] = [
     {
       icon: ServerOff,
@@ -66,6 +65,7 @@ export async function BenefitCards() {
       title: "Any object store",
       body: "Runs on AWS S3, Google Cloud Storage, Azure, R2, MinIO or your local disk.",
       link: { label: "Storage", href: "/docs/storage" },
+      wide: true,
     },
     {
       icon: Layers,
@@ -74,13 +74,6 @@ export async function BenefitCards() {
       body: "Your tables are standard Iceberg and Parquet, so DuckDB and Spark can query them too.",
       link: { label: "Querying", href: "/docs/querying" },
       wide: true,
-    },
-    {
-      icon: Scale,
-      art: "opensource",
-      title: "Open source",
-      body: "Apache 2.0 licensed, and built on Apache Arrow and DataFusion.",
-      link: { label: "GitHub", href: REPO_URL },
     },
   ]
   return (

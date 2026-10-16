@@ -133,15 +133,15 @@ function MoreLink({ href, children }: { href: string; children: React.ReactNode 
 export default function Home() {
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-24 px-4 pt-8 pb-24">
-      <div className="flex flex-col gap-8">
-        <section className="flex flex-col gap-8">
-          <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
-            <h1 className="text-4xl leading-[1.05] font-light tracking-tight sm:text-5xl">
-              The open time&#8209;series
-              <br />
-              lakehouse
-            </h1>
-            <div className="flex shrink-0 flex-wrap gap-2.5">
+      <section className="flex flex-col gap-8">
+        <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+          <h1 className="text-4xl leading-[1.05] font-light tracking-tight sm:text-5xl">
+            The open time&#8209;series
+            <br />
+            lakehouse
+          </h1>
+          <div className="flex shrink-0 flex-col gap-2.5 sm:items-end">
+            <div className="flex flex-wrap gap-2.5">
               <Button size="lg" className={BTN} nativeButton={false} render={<Link href="/docs/quick-start" />}>
                 Quick start <ArrowRight />
               </Button>
@@ -155,16 +155,21 @@ export default function Home() {
                 <GithubIcon /> GitHub
               </Button>
             </div>
+            <p className="text-xs text-muted-foreground">Apache 2.0 licensed · v0: minor releases may break things</p>
           </div>
-          {/* Publish on the left by hovering the chart; the store in the middle; readers as tabs on the right. */}
-          <div className="cells">
-            <div className="relative h-[160px] overflow-hidden sm:h-[176px]">
-              <HeroFlow />
-            </div>
+        </div>
+        {/* Publish on the left by hovering the chart; the store in the middle; readers as tabs on the right. */}
+        <div className="cells">
+          <div className="relative h-[160px] overflow-hidden sm:h-[176px]">
+            <HeroFlow />
           </div>
-        </section>
+        </div>
+      </section>
+
+      <section className="flex flex-col gap-6">
+        <SectionHead label="Features">What Timelake does, where your data lives, and what it costs to run.</SectionHead>
         <BenefitCards />
-      </div>
+      </section>
 
       <section className="flex flex-col gap-6">
         <SectionHead label="Data">Time series from machines, vehicles, markets and servers.</SectionHead>
