@@ -158,7 +158,7 @@ export default function Home() {
           </div>
           {/* The chart on its own; hovering it publishes points at the cursor's height. */}
           <div className="cells">
-            <div className="relative h-[180px] overflow-hidden sm:h-[220px]">
+            <div className="relative h-[160px] overflow-hidden sm:h-[176px]">
               <HeroDots />
             </div>
           </div>

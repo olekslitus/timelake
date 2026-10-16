@@ -15,6 +15,8 @@ const PAD = 5
 
 /** The writer's area on the left, in columns, and the gap before the chart. */
 const WRITER = 40
+/** Columns between the strip's left edge and the writer's contents. */
+const INSET = 3
 const GAP = 3
 /** Points buffered in memory before a commit writes them as a file. */
 const BATCH = 8
@@ -131,7 +133,7 @@ export function HeroDots() {
 
       // The writer: the batch in memory, the last commit, then each day's files.
       const top = Math.max(4, Math.floor((rows - 40) / 2))
-      label(`memory ${buffered}/${BATCH}`, 1, top)
+      label(`memory ${buffered}/${BATCH}`, INSET, top)
       for (let i = 0; i < BATCH; i++)
         for (const [dx, dy] of [
           [0, 1],
@@ -139,12 +141,12 @@ export function HeroDots() {
           [0, 2],
           [1, 2],
         ] as const)
-          square(1 + i * 3 + dx, top + dy, pen, i < buffered ? 1 : 0.15)
-      label(`v${version} ${event}`, 1, top + 8, pen)
+          square(INSET + i * 3 + dx, top + dy, pen, i < buffered ? 1 : 0.15)
+      label(`v${version} ${event}`, INSET, top + 8, pen)
       days.forEach((files, d) => {
         const y = top + 14 + d * 9
-        label(DAYS[d] ?? "", 1, y)
-        let x = 1
+        label(DAYS[d] ?? "", INSET, y)
+        let x = INSET
         for (const f of files) {
           const width = widthOf(f)
           if (x + width > WRITER) break
