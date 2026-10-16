@@ -167,7 +167,9 @@ export default function Home() {
       </section>
 
       <section className="flex flex-col gap-6">
-        <SectionHead label="Features">What Timelake does, where your data lives, and what it costs to run.</SectionHead>
+        <SectionHead label="Features">
+          Fast, cheap time-series queries on open files in your own bucket, with no server to run.
+        </SectionHead>
         <BenefitCards />
       </section>
 
