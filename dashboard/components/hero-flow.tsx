@@ -31,7 +31,7 @@ type Reader = {
   name: string
   query: string
   pick: (days: File[][]) => File[]
-  chart: "line" | "band" | "bars" | "candles" | "peak" | "parallel"
+  chart: "line" | "band" | "bars" | "candles" | "peak" | "parallel" | "latest" | "heatmap" | "alerts" | "histogram"
   /** Points per bucket: the reader downsamples the series to this. */
   per: number
 }
@@ -43,6 +43,29 @@ const READERS: Reader[] = [
   { name: "AI agent", query: "when was the peak?", pick: (d) => d[0] ?? [], chart: "peak", per: 4 },
   { name: "Many readers", query: "queries at once", pick: (d) => d.flat(), chart: "parallel", per: 1 },
 ]
+
+/** Candidates for the Grafana slot, shown as their own set to compare. */
+const OPTIONS: Reader[] = [
+  { name: "Mobile app", query: "latest value", pick: () => [], chart: "latest", per: 1 },
+  { name: "Notebook", query: "heatmap by time", pick: (d) => d[0] ?? [], chart: "heatmap", per: 1 },
+  { name: "Alerting", query: "above threshold", pick: (d) => d[0] ?? [], chart: "alerts", per: 1 },
+  { name: "Notebook", query: "distribution", pick: (d) => d.flat(), chart: "histogram", per: 1 },
+]
+const SETS = { main: READERS, options: OPTIONS }
+
+/** 5×7 dot-matrix digits for the latest value, top row first. */
+const DIGITS: Record<string, string[]> = {
+  "0": ["01110", "10001", "10011", "10101", "11001", "10001", "01110"],
+  "1": ["00100", "01100", "00100", "00100", "00100", "00100", "01110"],
+  "2": ["01110", "10001", "00001", "00010", "00100", "01000", "11111"],
+  "3": ["11110", "00001", "00001", "01110", "00001", "00001", "11110"],
+  "4": ["00010", "00110", "01010", "10010", "11111", "00010", "00010"],
+  "5": ["11111", "10000", "11110", "00001", "00001", "10001", "01110"],
+  "6": ["00110", "01000", "10000", "11110", "10001", "10001", "01110"],
+  "7": ["11111", "00001", "00010", "00100", "01000", "01000", "01000"],
+  "8": ["01110", "10001", "10001", "01110", "10001", "10001", "01110"],
+  "9": ["01110", "10001", "10001", "01111", "00001", "00010", "01100"],
+}
 
 /** One color per parallel reader, spread around the color wheel. */
 const hue = (i: number, n: number) => `hsl(${Math.round((i * 360) / n + 30) % 360} 70% 62%)`
@@ -91,7 +114,7 @@ function stretch(values: number[], n: number): number[] {
  * Without `pick`, hovering anywhere publishes and the readers take turns. With `pick`, hovering the chart publishes,
  * and hovering the readers stops publishing and runs the reader under the cursor.
  */
-export function HeroFlow({ pick = false }: { pick?: boolean }) {
+export function HeroFlow({ pick = false, set = "main" }: { pick?: boolean; set?: keyof typeof SETS }) {
   const canvas = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => {
@@ -110,6 +133,7 @@ export function HeroFlow({ pick = false }: { pick?: boolean }) {
     const font = getComputedStyle(document.body).getPropertyValue("--font-mono") || "monospace"
 
     const writer = new Writer()
+    const lineup = SETS[set]
     let values: number[] = []
     // What readers see: the series as of the last commit (points still in memory aren't readable yet).
     let committed: number[] = []
@@ -162,6 +186,95 @@ export function HeroFlow({ pick = false }: { pick?: boolean }) {
       const step = width / buckets.length
       const span = (i: number) => [x + Math.round(i * step), x + Math.round((i + 1) * step) - 1] as const
       const shown = buckets.filter((_, i) => span(i)[0] - x <= upTo)
+      if (r.chart === "latest") {
+        // The newest value in big digits (each dot 2×2 squares), and whether it rose or fell.
+        const last = snapshot.at(-1) ?? 0.5
+        const before = snapshot.at(-6) ?? last
+        const text = String(reading(last))
+        const scale = 2
+        const shownDigits = Math.ceil(text.length * done)
+        ;[...text].slice(0, shownDigits).forEach((ch, k) =>
+          (DIGITS[ch] ?? []).forEach((rowBits, ry) =>
+            [...rowBits].forEach((bit, rx) => {
+              if (bit !== "1") return
+              for (let dx = 0; dx < scale; dx++)
+                for (let dy = 0; dy < scale; dy++)
+                  square(x + k * 6 * scale + rx * scale + dx, top + 4 + ry * scale + dy, reads, 1)
+            }),
+          ),
+        )
+        if (done >= 1) {
+          const ax = x + text.length * 6 * scale + 3
+          const up = last < before
+          ;[
+            [2, 0],
+            [1, 1],
+            [2, 1],
+            [3, 1],
+            [0, 2],
+            [1, 2],
+            [2, 2],
+            [3, 2],
+            [4, 2],
+          ].forEach(([dx = 0, dy = 0]) => square(ax + dx, top + (up ? 8 + dy : 12 - dy), reads, 1))
+          label(up ? "rising" : "falling", ax + 7, top + 12)
+        }
+        return
+      }
+      if (r.chart === "heatmap") {
+        // Time across, then down a row: a cell per stretch of the series, brighter for higher values.
+        const [across, down] = [Math.floor(width / 3), Math.floor((bottom - top) / 3)]
+        const cells = stretch(snapshot, across * down)
+        cells.slice(0, Math.ceil(cells.length * done)).forEach((v, i) => {
+          const [cx, cy] = [x + (i % across) * 3, top + Math.floor(i / across) * 3]
+          const strength = 1 - (v - lo) / (hi - lo || 1)
+          for (const [dx, dy] of [
+            [0, 0],
+            [1, 0],
+            [0, 1],
+            [1, 1],
+          ] as const)
+            square(cx + dx, cy + dy, reads, 0.1 + 0.9 * strength)
+        })
+        return
+      }
+      if (r.chart === "alerts") {
+        // A threshold at the top quarter of the values; the line above it lit, each stretch an alert.
+        const line = stretch(snapshot, width)
+        const sorted = [...snapshot].toSorted((a, b) => a - b)
+        const threshold = sorted[Math.floor(sorted.length * 0.25)] ?? 0.3
+        for (let i = 0; i < width; i += 2) square(x + i, at(threshold), muted, 0.7)
+        let [prev, alerts, above] = [null as number | null, 0, false]
+        for (let i = 0; i < upTo; i++) {
+          const v = line[i] ?? 0
+          const y = at(v)
+          const over = v < threshold
+          if (over && !above) alerts++
+          above = over
+          const [a, b] = prev === null ? [y, y] : [Math.min(prev, y), Math.max(prev, y)]
+          for (let cy = a; cy <= b; cy++) square(x + i, cy, reads, over ? 1 : 0.35)
+          prev = y
+        }
+        label(`threshold ${reading(threshold)}`, x + width - 18, at(threshold) - 1)
+        if (done >= 1) label(`${alerts} alert${alerts === 1 ? "" : "s"}`, x, top + 1, reads)
+        return
+      }
+      if (r.chart === "histogram") {
+        // How the values spread: a bar per range of readings, highest first, as long as its count.
+        const bins = 8
+        const counts = Array.from({ length: bins }, (_, b) => {
+          const [from, to] = [lo + ((hi - lo) * b) / bins, lo + ((hi - lo) * (b + 1)) / bins]
+          return snapshot.filter((v) => v >= from && (v < to || b === bins - 1)).length
+        })
+        const largest = Math.max(...counts)
+        counts.forEach((n, b) => {
+          const y = top + b * 3
+          const length = Math.round(((width - 12) * n * done) / (largest || 1))
+          label(String(reading(lo + ((hi - lo) * b) / bins)), x, y + 2)
+          for (let i = 0; i < length; i++) for (const dy of [0, 1]) square(x + 6 + i, y + dy, reads, 0.85)
+        })
+        return
+      }
       if (r.chart === "parallel") {
         // As many readers as fit, each in its own color, each reading its own stretch of the series.
         const [across, down] = [Math.floor(width / TILE[0]), Math.floor((bottom - top) / TILE[1])]
@@ -304,7 +417,7 @@ export function HeroFlow({ pick = false }: { pick?: boolean }) {
       })
 
       // The object store: path, memory, version, then the partitions; the files being read in the reading color.
-      const turn = readers ? READERS[reader] : undefined
+      const turn = readers ? lineup[reader] : undefined
       const read = new Set(turn ? pickFiles(turn) : [])
       label("s3://lake/iot/readings", storeX, 4, pen)
       label(`memory ${writer.buffered}/${BATCH}`, storeX, 8)
@@ -317,6 +430,13 @@ export function HeroFlow({ pick = false }: { pick?: boolean }) {
         ] as const)
           square(storeX + i * 3 + dx, 8 + dy, pen, i < writer.buffered ? 1 : 0.15)
       label(`v${writer.version} ${writer.event}`, storeX, 15, pen)
+      // The options set keeps a last-value index beside memory, which the latest-value reader reads.
+      if (set === "options") {
+        const index = turn?.chart === "latest"
+        label("index", storeX + 30, 8, index ? reads : muted)
+        for (let dx = 0; dx < 6; dx++)
+          for (const dy of [1, 2]) square(storeX + 30 + dx, 8 + dy, index ? reads : pen, index ? 1 : 0.35)
+      }
       writer.days.forEach((list, d) => {
         const y = 20 + d * 8
         label(writer.partition(d), storeX, y)
@@ -340,14 +460,17 @@ export function HeroFlow({ pick = false }: { pick?: boolean }) {
         const done = Math.min(1, reveal / REVEAL)
         // While a new chart loads there is nothing to show yet; a reload keeps the old one up.
         const show = !(loading > 0 && fresh)
-        const files = `as of v${snapshotVersion} · reads ${read.size} of ${writer.days.flat().length} files`
+        const files =
+          turn.chart === "latest"
+            ? `as of v${snapshotVersion} · reads the last-value index, 0 files`
+            : `as of v${snapshotVersion} · reads ${read.size} of ${writer.days.flat().length} files`
         const bar = (x0: number, width: number, y: number) => {
           if (loading === 0) return
           const filled = Math.round(width * (1 - loading / LOAD))
           for (let i = 0; i < width; i++) square(x0 + i, y, reads, i < filled ? 1 : 0.15)
         }
         if (pick) {
-          READERS.forEach((r, i) => {
+          lineup.forEach((r, i) => {
             const y = listRow(i)
             const active = i === reader
             label(r.name, readersX, y, active ? reads : muted)
@@ -386,7 +509,7 @@ export function HeroFlow({ pick = false }: { pick?: boolean }) {
         // Readers take turns, and the one on screen reloads every few seconds.
         if (++phase > CYCLE) {
           phase = 0
-          reader = (reader + 1) % READERS.length
+          reader = (reader + 1) % lineup.length
           load(true)
         } else if (++sinceLoad >= RELOAD && loading === 0) load(false)
       }
@@ -424,7 +547,7 @@ export function HeroFlow({ pick = false }: { pick?: boolean }) {
       mode = null
       if (layout.readers && x >= layout.readersX - 3) {
         // Reading: the reader in the list row nearest the cursor.
-        const i = READERS.findIndex((_, k) => Math.abs(y - (listRow(k) - 1)) <= 3)
+        const i = lineup.findIndex((_, k) => Math.abs(y - (listRow(k) - 1)) <= 3)
         if (i >= 0) {
           // Another reader, or new data since the last load: load a snapshot, then draw it in.
           mode = "read"
@@ -453,7 +576,7 @@ export function HeroFlow({ pick = false }: { pick?: boolean }) {
       area.removeEventListener("pointerleave", leave)
       ro.disconnect()
     }
-  }, [pick])
+  }, [pick, set])
 
   return <canvas ref={canvas} aria-hidden className="absolute inset-0 h-full w-full" />
 }

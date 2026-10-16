@@ -188,6 +188,14 @@ export default function Home() {
               </div>
             </div>
           </div>
+          <div className="flex flex-col gap-2">
+            <span className="label-mono">Variant: options for the Grafana slot</span>
+            <div className="cells">
+              <div className="relative h-[160px] overflow-hidden sm:h-[176px]">
+                <HeroFlow pick set="options" />
+              </div>
+            </div>
+          </div>
         </section>
         <BenefitCards />
       </div>
