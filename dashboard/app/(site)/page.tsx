@@ -124,7 +124,11 @@ export default function Home() {
         </div>
         <div className="flex flex-col justify-center gap-6 p-7 sm:p-10">
           <h1 className="text-4xl leading-[1.05] font-light tracking-tight text-balance sm:text-5xl">
-            The serverless time&#8209;series lakehouse
+            The serverless
+            <br />
+            time&#8209;series
+            <br />
+            lakehouse
           </h1>
           <div className="label-mono">Open source · Apache 2.0 · Iceberg compatible</div>
           <div className="flex flex-wrap gap-2.5">
