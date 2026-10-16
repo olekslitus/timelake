@@ -53,7 +53,7 @@ export async function BenefitCards() {
       icon: Activity,
       art: "layout",
       title: "Analytics",
-      body: "Data is laid out by time and series, so queries read only what they need.",
+      body: "Optimized for common analytical queries on time series.",
       link: { label: "Performance", href: "/docs/performance" },
     },
     {
