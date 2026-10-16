@@ -30,7 +30,7 @@ function NavLinks({ pathname }: { pathname: string | null }) {
           key={l.href}
           href={l.href}
           className={cn(
-            "rounded-md px-3 py-1.5 font-mono text-xs tracking-[0.08em] text-muted-foreground uppercase transition-colors hover:text-foreground",
+            "rounded-md px-3 py-1.5 font-mono text-[13px] text-muted-foreground transition-colors hover:text-foreground",
             pathname?.startsWith(l.href) && "text-foreground",
           )}
         >
