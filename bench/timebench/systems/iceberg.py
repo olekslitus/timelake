@@ -26,7 +26,7 @@ class Iceberg(System):
     """PyIceberg appends into a SQLite-catalog warehouse, time-series tables partitioned by ``day(time)``.
 
     Maintenance is binpack compaction (S3 Tables' default: same rows, bigger files, no re-sort), simulated by
-    rewriting each time-series table.
+    rewriting each day partition of each time-series table, one at a time so a day is the most held in memory.
     """
 
     name = "iceberg"
@@ -73,7 +73,16 @@ class Iceberg(System):
     def maintain(self) -> None:
         for name in self.time_series or self.loaded_time_series():
             table = self.catalog.load_table(f"{self.namespace}.{name}")
-            table.overwrite(table.scan().to_arrow())
+            time_column = table.schema().find_column_name(table.spec().fields[0].source_id)
+            partitions = table.inspect.partitions()
+            days = zip(partitions["partition"].to_pylist(), partitions["file_count"].to_pylist(), strict=True)
+            for day, files in days:
+                if files < 2:
+                    continue
+                start = dt.datetime.combine(next(iter(day.values())), dt.time(), dt.UTC)
+                end = start + dt.timedelta(days=1)
+                rows = f"{time_column} >= '{start.isoformat()}' AND {time_column} < '{end.isoformat()}'"
+                table.overwrite(table.scan(row_filter=rows).to_arrow(), overwrite_filter=rows)
 
     def loaded_time_series(self) -> list[str]:
         """The partitioned tables of an earlier process (``maintain`` without ``create``)."""

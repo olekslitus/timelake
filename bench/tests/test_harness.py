@@ -18,8 +18,9 @@ from timebench.queries import apply_dialect
 from timebench.report import Run, markdown
 from timebench.results import QueryRecord, read_jsonl
 from timebench.systems import DIALECTS
+from timebench.systems.iceberg import Iceberg
 from timebench.systems.timescaledb import csv_chunks, pg_type
-from timebench.targets import Target
+from timebench.targets import Place, Target
 from timebench.workloads import Batch, Query, TableSpec, Workload
 from timebench.workloads.tsbs import stream_windows, windows
 
@@ -127,6 +128,27 @@ def test_a_run_ingests_maintains_and_queries(system: str) -> None:
     assert records[-1]["mismatches"] == []
     report = markdown(Run(harness.RUNS / f"{header['id']}.jsonl"))
     assert "## Queries, maintained" in report
+
+
+@pytest.mark.usefixtures("bench_dirs")
+def test_iceberg_maintenance_rewrites_each_day_into_one_file() -> None:
+    start = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
+    data = pa.table(
+        {
+            "time": pa.array([start + dt.timedelta(hours=h) for h in range(60)], pa.timestamp("us", tz="UTC")),
+            "v": range(60),
+        }
+    )
+    place = Place(Target("local"), "days", "iceberg")
+    place.clear()
+    iceberg = Iceberg(place, "bench")
+    iceberg.create(TableSpec("x", "time", ()), data.schema)
+    for i in range(0, 60, 6):
+        iceberg.append("x", data.slice(i, 6))
+    iceberg.maintain()
+    table = iceberg.catalog.load_table("bench.x")
+    assert table.inspect.partitions()["file_count"].to_pylist() == [1, 1, 1]
+    assert sorted(table.scan().to_arrow()["v"].to_pylist()) == list(range(60))
 
 
 def test_mismatches_name_the_readers_that_disagree() -> None:
