@@ -38,8 +38,8 @@ const USE_CASES = [
 
 /** Mark + "timelake" in the middle of its cell, on a card-coloured rectangle that masks the field. */
 function HeroLockup() {
-  // The mark's height, from the container's width; the rest follows the brand proportions (brand/marks.mjs).
-  const m = "17cqw"
+  // The mark's height, from the strip's width; the rest follows the brand proportions (brand/marks.mjs).
+  const m = "clamp(2.5rem, 7cqw, 4.5rem)"
   const of = (k: number) => `calc(${m} * ${k})`
   return (
     <div
@@ -82,8 +82,8 @@ export default function Home() {
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-24 px-4 pt-10 pb-24 sm:pt-16">
       <div className="flex flex-col gap-4">
-        <section className="cells md:grid-cols-2">
-          <div className="@container relative grid place-items-center overflow-hidden px-4 py-[10%]">
+        <section className="cells">
+          <div className="@container relative grid place-items-center overflow-hidden px-4 py-8 sm:py-10">
             <pre
               aria-hidden
               className="ascii absolute inset-0 grid place-content-center overflow-hidden text-xs leading-normal"
@@ -92,28 +92,26 @@ export default function Home() {
             </pre>
             <HeroLockup />
           </div>
-          <div className="flex flex-col justify-center gap-6 p-7 sm:p-10">
-            <h1 className="text-4xl leading-[1.05] font-light tracking-tight text-balance sm:text-5xl">
-              Your time&#8209;series
-              <br />
-              lakehouse
-            </h1>
-            <div className="flex flex-wrap gap-2.5">
-              <Button size="lg" className={BTN} nativeButton={false} render={<Link href="/docs/quick-start" />}>
-                Quick start <ArrowRight />
-              </Button>
-              <Button
-                size="lg"
-                variant="outline"
-                className={BTN}
-                nativeButton={false}
-                render={<a href={REPO_URL} target="_blank" rel="noreferrer" />}
-              >
-                <GithubIcon /> GitHub
-              </Button>
-            </div>
-          </div>
         </section>
+        <div className="flex flex-col gap-5 py-6 sm:flex-row sm:items-center sm:justify-between">
+          <h1 className="text-4xl leading-[1.05] font-light tracking-tight sm:text-5xl">
+            Your time&#8209;series lakehouse
+          </h1>
+          <div className="flex shrink-0 flex-wrap gap-2.5">
+            <Button size="lg" className={BTN} nativeButton={false} render={<Link href="/docs/quick-start" />}>
+              Quick start <ArrowRight />
+            </Button>
+            <Button
+              size="lg"
+              variant="outline"
+              className={BTN}
+              nativeButton={false}
+              render={<a href={REPO_URL} target="_blank" rel="noreferrer" />}
+            >
+              <GithubIcon /> GitHub
+            </Button>
+          </div>
+        </div>
         <BenefitCards />
       </div>
 
