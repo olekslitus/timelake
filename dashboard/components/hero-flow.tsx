@@ -20,6 +20,9 @@ const MIN_COLS_FOR_READERS = 200
 /** Ticks one reader's turn lasts when they take turns (about 7 s), and the ticks its chart takes to draw in. */
 const CYCLE = 130
 const REVEAL = 20
+/** Ticks a reader takes to load a snapshot (the loading bar), and between reloads when readers take turns. */
+const LOAD = 8
+const RELOAD = 45
 /** Columns of the readers' list when you pick one by hovering. */
 const LIST = 18
 
@@ -104,6 +107,15 @@ export function HeroFlow({ pick = false }: { pick?: boolean }) {
     let values: number[] = []
     // What readers see: the series as of the last commit (points still in memory aren't readable yet).
     let committed: number[] = []
+    let committedVersion = 0
+    // What the reader shows: a snapshot of the committed data, its version, the load in progress (ticks left, and
+    // whether it brings a new chart that draws in), ticks since the last load, and how far the chart has drawn in.
+    let snapshot: number[] = []
+    let snapshotVersion = 0
+    let loading = 0
+    let fresh = false
+    let sinceLoad = 0
+    let reveal = REVEAL
     let next = 0
     let cursorY: number | null = null
     // The current reader, and how far into its turn (a finished turn when idle).
@@ -135,7 +147,7 @@ export function HeroFlow({ pick = false }: { pick?: boolean }) {
 
     /** A reader's chart in x..x+width, rows top..bottom, drawn `done` (0..1) of the way, in the reading color. */
     const chart = (r: Reader, x: number, width: number, top: number, bottom: number, done: number) => {
-      const buckets = downsample(committed, r.per)
+      const buckets = downsample(snapshot, r.per)
       // Scaled to the buckets' own range, so the shape fills the chart.
       const [lo, hi] = [Math.min(...buckets.map((b) => b.top)), Math.max(...buckets.map((b) => b.bottom))]
       const at = (v: number) => top + Math.round(((v - lo) / (hi - lo || 1)) * (bottom - top))
@@ -241,6 +253,8 @@ export function HeroFlow({ pick = false }: { pick?: boolean }) {
         next = chartCols
         values = [...Array.from({ length: chartCols - kept.length }, (_, x) => shape(x, chartCols)), ...kept]
         committed = values.slice(0, values.length - writer.buffered)
+        committedVersion = writer.version
+        if (snapshot.length === 0) [snapshot, snapshotVersion] = [committed, committedVersion]
       }
 
       for (let x = 0; x < cols; x++) for (let y = 0; y < rows; y++) square(x, y, paper, 0.55)
@@ -294,8 +308,15 @@ export function HeroFlow({ pick = false }: { pick?: boolean }) {
 
       // The reader: who, what it asked, what it read, and its chart.
       if (turn) {
-        const done = Math.min(1, phase / REVEAL)
-        const files = `as of v${writer.version} · reads ${read.size} of ${writer.days.flat().length} files`
+        const done = Math.min(1, reveal / REVEAL)
+        // While a new chart loads there is nothing to show yet; a reload keeps the old one up.
+        const show = !(loading > 0 && fresh)
+        const files = `as of v${snapshotVersion} · reads ${read.size} of ${writer.days.flat().length} files`
+        const bar = (x0: number, width: number, y: number) => {
+          if (loading === 0) return
+          const filled = Math.round(width * (1 - loading / LOAD))
+          for (let i = 0; i < width; i++) square(x0 + i, y, reads, i < filled ? 1 : 0.15)
+        }
         if (pick) {
           READERS.forEach((r, i) => {
             const y = listRow(i)
@@ -304,34 +325,49 @@ export function HeroFlow({ pick = false }: { pick?: boolean }) {
             if (active) for (let dx = 0; dx < LIST - 2; dx++) square(readersX + dx, y + 2, reads, 0.6)
           })
           label(`${turn.query} · ${files}`, readersX + LIST, rows - 2)
-          chart(turn, readersX + LIST, cols - readersX - LIST - 2, 5, rows - 7, done)
+          bar(readersX + LIST, cols - readersX - LIST - 2, 2)
+          if (show) chart(turn, readersX + LIST, cols - readersX - LIST - 2, 5, rows - 7, done)
         } else {
           label(turn.name, readersX, 4, reads)
           label(turn.query, readersX + Math.ceil(turn.name.length * 1.5) + 2, 4)
           label(files, readersX, rows - 2)
-          chart(turn, readersX, cols - readersX - 2, 8, rows - 7, done)
+          bar(readersX, cols - readersX - 2, 6)
+          if (show) chart(turn, readersX, cols - readersX - 2, 8, rows - 7, done)
         }
       }
       ctx.globalAlpha = 1
     }
 
-    /** One tick: publish a point (it is written), or move the reader's chart along. */
+    /** Starts loading a snapshot; `isFresh` when it is for another reader, whose chart then draws in. */
+    const load = (isFresh: boolean) => {
+      loading = LOAD
+      fresh = isFresh
+    }
+
+    /** One tick: publish a point (it is written), and move the readers' loads and charts along. */
     const tick = () => {
       if (mode === "publish") {
         const last = values.at(-1) ?? 0.5
         const value = cursorY === null ? shape(next, values.length) : last + (cursorY - last) * FOLLOW
         values = [...values.slice(1), value]
         next++
-        if (writer.write()) committed = [...values]
+        if (writer.write()) [committed, committedVersion] = [[...values], writer.version]
       }
-      if (!pick && ++phase > CYCLE) {
-        phase = 0
-        reader = (reader + 1) % READERS.length
+      if (!pick) {
+        // Readers take turns, and the one on screen reloads every few seconds.
+        if (++phase > CYCLE) {
+          phase = 0
+          reader = (reader + 1) % READERS.length
+          load(true)
+        } else if (++sinceLoad >= RELOAD && loading === 0) load(false)
       }
-      if (pick && mode === "read") phase++
+      if (loading > 0 && --loading === 0) {
+        ;[snapshot, snapshotVersion, sinceLoad] = [[...committed], committedVersion, 0]
+        if (fresh) reveal = 0
+      } else if (loading === 0 && reveal < REVEAL) reveal++
       draw()
-      // With `pick`, a finished chart doesn't need ticks until something changes.
-      if (pick && mode === "read" && phase > REVEAL) stop()
+      // With `pick`, nothing needs ticks once the chart is loaded and drawn, until the cursor does something.
+      if (pick && mode !== "publish" && loading === 0 && reveal >= REVEAL) stop()
     }
 
     let timer: ReturnType<typeof setInterval> | null = null
@@ -361,10 +397,11 @@ export function HeroFlow({ pick = false }: { pick?: boolean }) {
         // Reading: the reader in the list row nearest the cursor.
         const i = READERS.findIndex((_, k) => Math.abs(y - (listRow(k) - 1)) <= 3)
         if (i >= 0) {
+          // Another reader, or new data since the last load: load a snapshot, then draw it in.
           mode = "read"
-          if (i !== reader) {
+          if (i !== reader || (loading === 0 && committedVersion !== snapshotVersion)) {
             reader = i
-            phase = 0
+            load(true)
           }
           run()
           return
