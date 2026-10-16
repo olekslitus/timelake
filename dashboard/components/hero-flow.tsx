@@ -219,13 +219,13 @@ export function HeroFlow({
       const span = (i: number) => [x + Math.round(i * step), x + Math.round((i + 1) * step) - 1] as const
       const shown = buckets.filter((_, i) => span(i)[0] - x <= upTo)
       if (r.chart === "latest") {
-        // The newest value in big digits (each dot 2×2 squares), and whether it rose or fell.
+        // The newest value in big digits (each dot 2×2 squares), and whether it rose or fell; one number, so it shows
+        // at once rather than drawing in.
         const last = snapshot.at(-1) ?? 0.5
         const before = snapshot.at(-6) ?? last
         const text = String(reading(last))
         const scale = 2
-        const shownDigits = Math.ceil(text.length * done)
-        ;[...text].slice(0, shownDigits).forEach((ch, k) =>
+        ;[...text].forEach((ch, k) =>
           (DIGITS[ch] ?? []).forEach((rowBits, ry) =>
             [...rowBits].forEach((bit, rx) => {
               if (bit !== "1") return
@@ -235,22 +235,20 @@ export function HeroFlow({
             }),
           ),
         )
-        if (done >= 1) {
-          const ax = x + text.length * 6 * scale + 3
-          const up = last < before
-          ;[
-            [2, 0],
-            [1, 1],
-            [2, 1],
-            [3, 1],
-            [0, 2],
-            [1, 2],
-            [2, 2],
-            [3, 2],
-            [4, 2],
-          ].forEach(([dx = 0, dy = 0]) => square(ax + dx, top + (up ? 8 + dy : 12 - dy), reads, 1))
-          label(up ? "rising" : "falling", ax + 7, top + 12)
-        }
+        const ax = x + text.length * 6 * scale + 3
+        const up = last < before
+        ;[
+          [2, 0],
+          [1, 1],
+          [2, 1],
+          [3, 1],
+          [0, 2],
+          [1, 2],
+          [2, 2],
+          [3, 2],
+          [4, 2],
+        ].forEach(([dx = 0, dy = 0]) => square(ax + dx, top + (up ? 8 + dy : 12 - dy), reads, 1))
+        label(up ? "rising" : "falling", ax + 7, top + 12)
         return
       }
       if (r.chart === "heatmap") {
