@@ -89,5 +89,9 @@ export const EXPLORING: RoadmapItem[] = [
   { title: "Data to events", description: "Turn new data into events on any stream." },
   { title: "Computed metrics", description: "Your Python functions, applied automatically like rollups." },
   { title: "Edge and device sync", description: "Write on devices and gateways; Timelake moves it to the lake." },
-  { title: "Server mode", description: "Timelake as a database on one machine, with the bucket as the copy." },
+  {
+    title: "Server mode",
+    description:
+      "Timelake as a database on one machine, with the bucket as the copy. Then TSBS run with its own tools, next to published results.",
+  },
 ]

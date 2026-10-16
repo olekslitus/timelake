@@ -773,7 +773,7 @@ We adopt the **TSBS IoT use case** (Timescale's Time Series Benchmark Suite) rat
 | `daily-activity` | Uptime/downtime per day (≈ `uptime`) |
 | `breakdown-frequency` | Event detection over history |
 
-**Data generation:** Use the TSBS generator (`tsbs_generate_data --use-case=iot`), then convert it once to Parquet as the common input for every system. This keeps results comparable with published TSBS numbers.
+**Data generation:** Use the TSBS generator (`tsbs_generate_data --use-case=iot`), then convert it once to Parquet as the common input for every system. The data is the same as in published TSBS results, but the method isn't: TSBS loads in bulk with parallel workers and reports throughput, while timebench streams commits and times single queries from fresh processes. Numbers that sit next to published ones need TSBS's own loader and query runner (§17.7).
 
 ### 17.2 Lake extensions (what TSBS doesn't cover)
 TSBS assumes a database. A lake also has to be judged on these, borrowing ideas from IoTDB-Benchmark and TPCx-IoT (out-of-order ingestion, downsampling):
@@ -895,6 +895,7 @@ We run the public benchmarks that fit a time-series lake, so results compare wit
 |---|---|---|
 | TSBS IoT | Running | The base workload (§17.1). |
 | TSBS DevOps / cpu-only | Running (2026-10-15) | The TSBS use case most databases publish; same generator. 4,000 hosts, streamed and as a bulk load (rows per second). |
+| TSBS with its own tools | Planned, after F8 (decided 2026-10-15) | timebench uses TSBS's generator and queries but its own method (§17.1). For numbers comparable with published TSBS results, run TSBS's loader and query runner against Timelake's server mode through the Postgres wire protocol (F8, §21.8), as for TimescaleDB; or add a Timelake target to TSBS. |
 | ClickBench | Planned | A 10% subset runs in development. Comparable numbers need the full dataset on its reference machine (c6a.4xlarge). An official entry waits until the system is more refined (issue #90). Its SQL is CC BY-NC-SA, so it stays out of the repository. |
 | RTABench | Planned | Fresh data, selective lookups and joins. Its pre-aggregate queries wait for rollups (§10). |
 | TSM-Bench | Planned | Seven query templates, queries while ingesting, compression. Its repository has no license: ask the authors first. |
@@ -1236,6 +1237,7 @@ A single binary on site (factory, vessel, rig, substation) that devices send dat
   - TimescaleDB, as a hypertable and as columnstore;
   - Timelake behind a thin server: DataFusion plus Flight SQL or Postgres wire.
   - Then managed Tiger Cloud and InfluxDB 3 at similar $/month.
+  - Then TSBS with its own loader and query runner over the Postgres wire protocol, and IoTDB's IoT-benchmark, so results sit next to published ones (§17.7).
 - **Measure:**
   - p50 and p95 latency, cold and warm;
   - throughput with N concurrent dashboards;

@@ -111,7 +111,8 @@ export const BENCHMARKS: Benchmark[] = [
       {
         title: "Compared with published TSBS numbers",
         text: [
-          "Published TSBS results measure a database server loading data as fast as it can and answering many queries in parallel. Ours measure single queries from a fresh process after streaming commits, so the numbers can't be set side by side. TSBS DevOps, planned, will add a run in TSBS's own terms.",
+          "Published TSBS results measure a database server loading data as fast as it can and answering many queries in parallel. Ours measure single queries from a fresh process after streaming commits, so the numbers can't be set side by side.",
+          "Planned: a run with TSBS's own loader and query runner, once Timelake has a server mode that speaks the PostgreSQL protocol. Those numbers can sit next to published ones.",
         ],
       },
     ],
@@ -165,6 +166,7 @@ export const BENCHMARKS: Benchmark[] = [
         title: "Compared with published TSBS numbers",
         text: [
           "Published TSBS DevOps results come from a database server queried by many parallel workers, reporting queries per second at full load. Ours are single queries from a fresh process, so the query times can't be set side by side. The bulk-load rate and the concurrent-dashboard throughput are the closest to TSBS's terms.",
+          "Planned: a run with TSBS's own loader and query runner, once Timelake has a server mode that speaks the PostgreSQL protocol.",
         ],
       },
     ],
