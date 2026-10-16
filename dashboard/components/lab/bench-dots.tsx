@@ -1,4 +1,4 @@
-import { DotGrid } from "@/components/lab/dots"
+import { DotGrid } from "@/components/dots"
 import { type QueryRecord, type Run, SYSTEMS, SYSTEM_COLORS, engineLabel } from "@/lib/benchmarks"
 
 /** Systems in the order the charts list them. */

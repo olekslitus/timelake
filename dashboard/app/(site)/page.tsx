@@ -2,12 +2,12 @@ import { ArrowRight, Bot, BrainCircuit, Factory, type LucideIcon, Server, Truck,
 import Link from "next/link"
 import { Suspense } from "react"
 
-import { BenchRanking } from "@/components/bench-ranking"
+import { BenchCards } from "@/components/bench-cards"
 import { BenefitCards } from "@/components/benefit-cards"
 import { GithubIcon } from "@/components/github-icon"
 import { StackDiagram } from "@/components/stack-diagram"
 import { Button } from "@/components/ui/button"
-import { latestByTarget, loadRuns, rankings } from "@/lib/benchmarks"
+import { latestByTarget, loadRuns } from "@/lib/benchmarks"
 import { REPO_URL } from "@/lib/site"
 
 const BTN = "font-mono text-xs uppercase tracking-[0.06em]"
@@ -153,11 +153,7 @@ async function Measurements() {
           <MoreLink href="/benchmarks/timebench">How we measure</MoreLink>
         </nav>
       </div>
-      <div className="grid gap-x-10 gap-y-6 lg:grid-cols-2">
-        {rankings(run).map((r) => (
-          <BenchRanking key={r.title} ranking={r} />
-        ))}
-      </div>
+      <BenchCards run={run} />
     </section>
   )
 }

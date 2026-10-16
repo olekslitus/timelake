@@ -16,7 +16,6 @@ export type Racer = {
 
 /** The slowest racer finishes after this many milliseconds of animation; the others keep their proportions. */
 const PLAY_MS = 7000
-const DOT = 3
 const GAP = 1
 
 /**
@@ -24,21 +23,27 @@ const GAP = 1
  * in a few seconds). What a dot stands for is in `unit` and the caption.
  */
 export function Race({
+  title,
   racers,
   unit,
   decimals = 0,
   caption,
+  dot = 3,
 }: {
+  title?: string
   racers: Racer[]
   unit: string
   decimals?: number
   caption: string
+  /** Pixels per square. */
+  dot?: number
 }) {
   // A replay mounts the lanes afresh, which restarts the clock.
   const [run, setRun] = useState(0)
   return (
-    <div className="flex flex-col gap-5 rounded-md border bg-card p-6">
-      <Lanes key={run} racers={racers} unit={unit} decimals={decimals} />
+    <div className="flex flex-col gap-5 rounded-lg border bg-card p-6">
+      {title ? <h3 className="text-lg font-normal">{title}</h3> : null}
+      <Lanes key={run} racers={racers} unit={unit} decimals={decimals} dot={dot} />
       <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4 text-xs text-muted-foreground">
         <span className="max-w-3xl">{caption}</span>
         <button
@@ -54,7 +59,7 @@ export function Race({
 }
 
 /** Every racer against one clock, from mount until the slowest is done. */
-function Lanes({ racers, unit, decimals }: { racers: Racer[]; unit: string; decimals: number }) {
+function Lanes({ racers, unit, decimals, dot }: { racers: Racer[]; unit: string; decimals: number; dot: number }) {
   const [elapsed, setElapsed] = useState(0)
   const slowest = Math.max(...racers.map((r) => r.seconds))
   const scale = PLAY_MS / 1000 / slowest
@@ -71,10 +76,22 @@ function Lanes({ racers, unit, decimals }: { racers: Racer[]; unit: string; deci
     return () => cancelAnimationFrame(frame)
   }, [scale, slowest])
 
-  return racers.map((r) => <Lane key={r.label} racer={r} elapsed={elapsed} unit={unit} decimals={decimals} />)
+  return racers.map((r) => <Lane key={r.label} racer={r} elapsed={elapsed} unit={unit} decimals={decimals} dot={dot} />)
 }
 
-function Lane({ racer, elapsed, unit, decimals }: { racer: Racer; elapsed: number; unit: string; decimals: number }) {
+function Lane({
+  racer,
+  elapsed,
+  unit,
+  decimals,
+  dot,
+}: {
+  racer: Racer
+  elapsed: number
+  unit: string
+  decimals: number
+  dot: number
+}) {
   const canvas = useRef<HTMLCanvasElement>(null)
   const frac = Math.min(1, elapsed / racer.seconds)
   const shown = Math.round(racer.dots * frac)
@@ -86,12 +103,12 @@ function Lane({ racer, elapsed, unit, decimals }: { racer: Racer; elapsed: numbe
     const c = canvas.current
     if (!c) return
     const width = c.clientWidth
-    const perRow = Math.max(1, Math.floor(width / (DOT + GAP)))
+    const perRow = Math.max(1, Math.floor(width / (dot + GAP)))
     const rows = Math.ceil(racer.dots / perRow)
     const dpr = window.devicePixelRatio || 1
     c.width = width * dpr
-    c.height = rows * (DOT + GAP) * dpr
-    c.style.height = `${rows * (DOT + GAP)}px`
+    c.height = rows * (dot + GAP) * dpr
+    c.style.height = `${rows * (dot + GAP)}px`
     const ctx = c.getContext("2d")
     if (!ctx) return
     ctx.scale(dpr, dpr)
@@ -100,9 +117,9 @@ function Lane({ racer, elapsed, unit, decimals }: { racer: Racer; elapsed: numbe
     const off = css.getPropertyValue("--border").trim()
     for (let i = 0; i < racer.dots; i++) {
       ctx.fillStyle = i < shown ? on : off
-      ctx.fillRect((i % perRow) * (DOT + GAP), Math.floor(i / perRow) * (DOT + GAP), DOT, DOT)
+      ctx.fillRect((i % perRow) * (dot + GAP), Math.floor(i / perRow) * (dot + GAP), dot, dot)
     }
-  }, [racer, shown])
+  }, [racer, shown, dot])
 
   return (
     <div className="flex flex-col gap-2">
