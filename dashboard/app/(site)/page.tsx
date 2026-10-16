@@ -19,6 +19,7 @@ import { BenchCards } from "@/components/bench-cards"
 import { BenefitCards } from "@/components/benefit-cards"
 import { GithubIcon } from "@/components/github-icon"
 import { HeroFlow } from "@/components/hero-flow"
+import { MoreLink, SectionHead } from "@/components/section-head"
 import { StackDiagram } from "@/components/stack-diagram"
 import { Button } from "@/components/ui/button"
 import { type ArtKind, UseCaseArt } from "@/components/use-case-art"
@@ -116,23 +117,6 @@ function UseCaseGrid({ cases, columns }: { cases: UseCase[]; columns: string }) 
         )
       })}
     </div>
-  )
-}
-
-function SectionHead({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex flex-col gap-2">
-      <h2 className="text-2xl leading-tight font-light tracking-tight">{label}</h2>
-      <p className="text-sm text-muted-foreground">{children}</p>
-    </div>
-  )
-}
-
-function MoreLink({ href, children }: { href: string; children: React.ReactNode }) {
-  return (
-    <Link href={href} className="flex w-fit items-center gap-1 text-sm hover:underline">
-      {children} <ArrowRight className="size-3.5" />
-    </Link>
   )
 }
 
