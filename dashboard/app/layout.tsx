@@ -3,7 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google"
 
 import { ThemeProvider } from "@/components/theme-provider"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { SITE_URL } from "@/lib/site"
+import { SITE_DESCRIPTION, SITE_NAME, SITE_URL } from "@/lib/site"
 
 import "./globals.css"
 
@@ -12,10 +12,10 @@ const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"]
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
-  title: { default: "Timelake · The open time-series lakehouse", template: "%s · Timelake" },
-  description:
-    "The open time-series lakehouse. Fast queries on your own object storage, with no database and no maintenance jobs.",
-  openGraph: { siteName: "Timelake", type: "website" },
+  title: { default: `${SITE_NAME}: the open time-series lakehouse`, template: `%s · ${SITE_NAME}` },
+  description: SITE_DESCRIPTION,
+  applicationName: SITE_NAME,
+  openGraph: { siteName: SITE_NAME, type: "website" },
 }
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

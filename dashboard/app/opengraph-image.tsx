@@ -3,7 +3,8 @@ import { join } from "node:path"
 
 import { ImageResponse } from "next/og"
 
-import { MARK } from "@/components/brand/mark-geometry"
+import { FG, INK, markDataUrl } from "@/components/brand/mark-image"
+import { SITE_SUMMARY } from "@/lib/site"
 
 // The card shown when a timelake.dev link is shared. Geist fonts are in assets/fonts (SIL Open Font License).
 export const alt = "Timelake: the open time-series lakehouse"
@@ -17,19 +18,9 @@ const [light, medium, mono] = await Promise.all([
   readFile(join(fonts, "GeistMono-Medium.ttf")),
 ])
 
-const INK = "#0B0D0E",
-  LINE = "#23292C",
-  FG = "#E6EBED",
+const LINE = "#23292C",
   MUTED = "#8B969B",
   ICE = "#67D4F0"
-
-// Satori ignores clip paths on inline SVG, so the mark goes in as an SVG image (rendered with resvg).
-const markSvg =
-  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><clipPath id="c"><circle cx="50" cy="50" r="${MARK.clipRadius}"/></clipPath></defs>` +
-  `<g clip-path="url(#c)" fill="none" stroke="${FG}" stroke-width="${MARK.strokeWidth}" stroke-linejoin="miter" stroke-miterlimit="12">` +
-  MARK.lines.map((p) => `<polyline points="${p}"/>`).join("") +
-  `</g></svg>`
-const markSrc = `data:image/svg+xml;base64,${Buffer.from(markSvg).toString("base64")}`
 
 export default function Image() {
   return new ImageResponse(
@@ -48,7 +39,7 @@ export default function Image() {
       >
         <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
           {/* oxlint-disable-next-line nextjs/no-img-element -- ImageResponse renders plain <img>; next/image can't run here */}
-          <img src={markSrc} width={72} height={72} alt="" />
+          <img src={markDataUrl(FG)} width={72} height={72} alt="" />
           <div style={{ fontFamily: "Geist", fontWeight: 500, fontSize: 45, letterSpacing: "-0.045em", color: FG }}>
             timelake
           </div>
@@ -66,9 +57,7 @@ export default function Image() {
           >
             The open time-series lakehouse
           </div>
-          <div style={{ fontFamily: "Geist", fontWeight: 300, fontSize: 30, color: MUTED }}>
-            Fast queries on your own object storage, with no database and no maintenance jobs.
-          </div>
+          <div style={{ fontFamily: "Geist", fontWeight: 300, fontSize: 30, color: MUTED }}>{SITE_SUMMARY}</div>
         </div>
         <div
           style={{
