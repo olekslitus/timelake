@@ -128,7 +128,7 @@ servers() {
 
 # A profile's local entries, then (once those files are in the bucket) its S3 entries.
 run_profile() {
-  sudo shutdown -h +720  # a safety net; the instance stops itself when the run is done (below)
+  sudo shutdown -h +1440  # a safety net; the instance stops itself when the run is done (below)
   build_timebench
   servers up
   uv run timebench profile "$1" --target local

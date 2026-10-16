@@ -19,6 +19,24 @@ scale = "standard"
 target = "local"
 systems = ["timelake", "iceberg", "lance", "parquet", "timescaledb"]
 
+# Industrial IoT (SPEC §17.6): every system, the database servers in Docker on the same machine (infra/servers.sh).
+[[run]]
+workload = "iiot"
+scale = "small"
+target = "local"
+systems = [
+  "reference",
+  "timelake",
+  "timescaledb",
+  "clickhouse",
+  "questdb",
+  "influxdb3",
+  "influxdb3-defaults",
+  "iceberg",
+  "lance",
+  "parquet",
+]
+
 # Bulk load: 1-hour windows as fast as each system commits; judged by rows per second, no queries.
 [[run]]
 workload = "tsbs-devops"
