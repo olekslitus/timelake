@@ -1,4 +1,4 @@
-import { ArrowRight, Factory, type LucideIcon, Server, Share2, Truck } from "lucide-react"
+import { ArrowRight, Bot, Factory, type LucideIcon, Server, Share2, Truck, Zap } from "lucide-react"
 import Link from "next/link"
 import { Suspense } from "react"
 
@@ -43,6 +43,20 @@ const USE_CASES: { icon: LucideIcon; title: string; body: string; note: string; 
     title: "Shared across tools",
     body: "One copy in your bucket that DuckDB, Spark, notebooks and browser dashboards all read.",
     note: "Iceberg · Parquet",
+    measured: true,
+  },
+  {
+    icon: Zap,
+    title: "Serverless functions",
+    body: "Lambda functions and short jobs that start, append or query, and exit. There are no connections to pool and no database to size.",
+    note: "Python · Rust · CLI",
+    measured: true,
+  },
+  {
+    icon: Bot,
+    title: "AI agents",
+    body: "Agents can query as often as they like: reads go to object storage, so there is no database for them to overload.",
+    note: "CLI · SQL",
     measured: true,
   },
 ]
@@ -104,7 +118,7 @@ export default function Home() {
         <SectionHead label="What is it for?">
           Many series written all the time, and read by more than one tool.
         </SectionHead>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {USE_CASES.map((u) => {
             const Icon = u.icon
             return (

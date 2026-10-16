@@ -57,14 +57,14 @@ export async function BenefitCards() {
     {
       icon: ServerOff,
       title: "Serverless",
-      body: "No database to run and no maintenance jobs. Your data lives as files in your own bucket.",
+      body: "No database or maintenance jobs to run. When nothing is querying, you pay only for the files in your bucket.",
       link: { label: "How it works", href: "/docs/how-it-works" },
       wide: true,
       art: PROCESSES,
     },
     {
       icon: Activity,
-      title: "Built for time series",
+      title: "Time-series analytics",
       body: "Data is laid out by time and series, so queries read only what they need.",
       link: { label: "Performance", href: "/docs/performance" },
     },
