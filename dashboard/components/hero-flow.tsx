@@ -51,7 +51,9 @@ const OPTIONS: Reader[] = [
   { name: "Alerting", query: "above threshold", pick: (d) => d[0] ?? [], chart: "alerts", per: 1 },
   { name: "Notebook", query: "distribution", pick: (d) => d.flat(), chart: "histogram", per: 1 },
 ]
-const SETS = { main: READERS, options: OPTIONS }
+/** The live variant's readers: the main set with the mobile app in Grafana's place. */
+const LIVE: Reader[] = READERS.map((r) => (r.name === "Grafana" ? (OPTIONS[0] ?? r) : r))
+const SETS = { main: READERS, options: OPTIONS, live: LIVE }
 
 /** 5×7 dot-matrix digits for the latest value, top row first. */
 const DIGITS: Record<string, string[]> = {
@@ -112,9 +114,19 @@ function stretch(values: number[], n: number): number[] {
  * as of the last commit, so their chart lags the live one and moves a commit at a time.
  *
  * Without `pick`, hovering anywhere publishes and the readers take turns. With `pick`, hovering the chart publishes,
- * and hovering the readers stops publishing and runs the reader under the cursor.
+ * and hovering the readers stops publishing and runs the reader under the cursor. With `tabs`, the readers are tabs on
+ * top: Rotate, the default, takes them in turn, and hovering a reader's tab keeps that one on screen. Hovering the
+ * chart publishes and the reader reloads as data commits; hovering the rest publishes nothing.
  */
-export function HeroFlow({ pick = false, set = "main" }: { pick?: boolean; set?: keyof typeof SETS }) {
+export function HeroFlow({
+  pick = false,
+  tabs = false,
+  set = "main",
+}: {
+  pick?: boolean
+  tabs?: boolean
+  set?: keyof typeof SETS
+}) {
   const canvas = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => {
@@ -150,7 +162,10 @@ export function HeroFlow({ pick = false, set = "main" }: { pick?: boolean; set?:
     let cursorY: number | null = null
     // The current reader, and how far into its turn (a finished turn when idle).
     let reader = 0
-    let phase = CYCLE
+    let phase = tabs ? 0 : CYCLE
+    // With `tabs`: the reader kept on screen, or null to rotate; and where each tab is (0 is Rotate).
+    let pinned: number | null = null
+    let tabAreas: { x0: number; x1: number; y: number; i: number }[] = []
     // What the cursor is doing: publishing, reading, or nothing.
     let mode: "publish" | "read" | null = null
     let layout = { storeX: 0, readersX: 0, rows: 0, readers: false }
@@ -169,6 +184,7 @@ export function HeroFlow({ pick = false, set = "main" }: { pick?: boolean; set?:
     const rowOf = (v: number) => PAD + Math.round(Math.max(0, Math.min(1, v)) * (layout.rows - 1 - 2 * PAD))
     /** The files a reader's query reads, or yesterday's if today has none yet. */
     const pickFiles = (r: Reader) => {
+      if (r.chart === "latest") return []
       const files = r.pick(writer.days)
       return files.length > 0 ? files : (writer.days[1] ?? [])
     }
@@ -384,6 +400,7 @@ export function HeroFlow({ pick = false, set = "main" }: { pick?: boolean; set?:
       const storeX = chartEnd + GAP
       const readersX = storeX + STORE + GAP
       layout = { storeX, readersX, rows, readers }
+      tabAreas = []
       const chartCols = chartEnd - 1
       if (values.length !== chartCols) {
         const kept = values.slice(-chartCols)
@@ -430,8 +447,8 @@ export function HeroFlow({ pick = false, set = "main" }: { pick?: boolean; set?:
         ] as const)
           square(storeX + i * 3 + dx, 8 + dy, pen, i < writer.buffered ? 1 : 0.15)
       label(`v${writer.version} ${writer.event}`, storeX, 15, pen)
-      // The options set keeps a last-value index beside memory, which the latest-value reader reads.
-      if (set === "options") {
+      // Sets with a latest-value reader keep a last-value index beside memory, which that reader reads.
+      if (lineup.some((r) => r.chart === "latest")) {
         const index = turn?.chart === "latest"
         label("index", storeX + 30, 8, index ? reads : muted)
         for (let dx = 0; dx < 6; dx++)
@@ -466,7 +483,8 @@ export function HeroFlow({ pick = false, set = "main" }: { pick?: boolean; set?:
             : `as of v${snapshotVersion} · reads ${read.size} of ${writer.days.flat().length} files`
         const bar = (x0: number, width: number, y: number) => {
           if (loading === 0) return
-          const filled = Math.round(width * (1 - loading / LOAD))
+          // Full on the last tick of the load, so the bar finishes before the chart shows.
+          const filled = Math.round((width * (LOAD - loading + 1)) / LOAD)
           for (let i = 0; i < width; i++) square(x0 + i, y, reads, i < filled ? 1 : 0.15)
         }
         if (pick) {
@@ -479,6 +497,23 @@ export function HeroFlow({ pick = false, set = "main" }: { pick?: boolean; set?:
           label(`${turn.query} · ${files}`, readersX + LIST, rows - 2)
           bar(readersX + LIST, cols - readersX - LIST - 2, 2)
           if (show) chart(turn, readersX + LIST, cols - readersX - LIST - 2, 5, rows - 7, done)
+        } else if (tabs) {
+          // Rotate, then a tab per reader, wrapping to another row when they don't fit. The selected tab is
+          // underlined; the reader on screen is in the reading color.
+          ctx.font = `9px ${font}`
+          let [tx, ty] = [readersX, 4]
+          ;["Rotate", ...lineup.map((r) => r.name)].forEach((name, i) => {
+            const span = Math.ceil(ctx.measureText(name).width / CELL)
+            if (tx + span > cols - 2 && tx > readersX) [tx, ty] = [readersX, ty + 5]
+            const selected = i === 0 ? pinned === null : pinned === i - 1
+            label(name, tx, ty, selected || i - 1 === reader ? reads : muted)
+            if (selected) for (let dx = 0; dx < span; dx++) square(tx + dx, ty + 2, reads, 0.6)
+            tabAreas.push({ x0: tx, x1: tx + span, y: ty, i })
+            tx += span + 3
+          })
+          label(`${turn.query} · ${files}`, readersX, rows - 2)
+          bar(readersX, cols - readersX - 2, ty + 5)
+          if (show) chart(turn, readersX, cols - readersX - 2, ty + 8, rows - 7, done)
         } else {
           label(turn.name, readersX, 4, reads)
           label(turn.query, readersX + Math.ceil(turn.name.length * 1.5) + 2, 4)
@@ -506,20 +541,22 @@ export function HeroFlow({ pick = false, set = "main" }: { pick?: boolean; set?:
         if (writer.write()) [committed, committedVersion] = [[...values], writer.version]
       }
       if (!pick) {
-        // Readers take turns, and the one on screen reloads every few seconds.
-        if (++phase > CYCLE) {
+        // Readers take turns (unless a tab keeps one on screen), and the one on screen reloads every few seconds.
+        if (pinned === null && ++phase > CYCLE) {
           phase = 0
           reader = (reader + 1) % lineup.length
           load(true)
-        } else if (++sinceLoad >= RELOAD && loading === 0) load(false)
+        } else if (mode === "publish" && ++sinceLoad >= RELOAD && loading === 0) load(false)
       }
       if (loading > 0 && --loading === 0) {
         ;[snapshot, snapshotVersion, sinceLoad] = [[...committed], committedVersion, 0]
         if (fresh) reveal = 0
       } else if (loading === 0 && reveal < REVEAL) reveal++
       draw()
-      // With `pick`, nothing needs ticks once the chart is loaded and drawn, until the cursor does something.
-      if (pick && mode !== "publish" && loading === 0 && reveal >= REVEAL) stop()
+      // When not publishing (and not rotating), nothing needs ticks once the chart is loaded and drawn, until the
+      // cursor does something.
+      const still = pick || (tabs && pinned !== null)
+      if (still && mode !== "publish" && loading === 0 && reveal >= REVEAL) stop()
     }
 
     let timer: ReturnType<typeof setInterval> | null = null
@@ -531,11 +568,34 @@ export function HeroFlow({ pick = false, set = "main" }: { pick?: boolean; set?:
       timer = null
     }
 
+    /** Selects tab `i`: Rotate (0) carries on from the reader on screen; a reader's tab keeps it on screen. */
+    const select = (i: number) => {
+      if (i === 0) {
+        if (pinned !== null) [pinned, phase] = [null, 0]
+        return
+      }
+      pinned = i - 1
+      if (reader !== pinned) {
+        reader = pinned
+        load(true)
+      }
+    }
+
     draw()
     const move = (e: PointerEvent) => {
       const r = c.getBoundingClientRect()
       const [x, y] = [(e.clientX - r.left) / CELL, (e.clientY - r.top) / CELL]
       const height = Math.floor(r.height / CELL)
+      if (tabs) {
+        // Publishing over the chart; elsewhere no new data, and a tab under the cursor is selected.
+        const onChart = x < layout.storeX - 3
+        cursorY = onChart ? Math.max(0, Math.min(1, (y - PAD) / (height - 1 - 2 * PAD))) : null
+        mode = onChart ? "publish" : "read"
+        const tab = tabAreas.find((t) => x >= t.x0 - 1 && x <= t.x1 + 1 && y >= t.y - 4 && y <= t.y + 3)
+        if (tab) select(tab.i)
+        run()
+        return
+      }
       if (!pick || x < layout.storeX - 3) {
         // Publishing: the cursor's height within the chart's padded area, 0..1.
         cursorY = Math.max(0, Math.min(1, (y - PAD) / (height - 1 - 2 * PAD)))
@@ -576,7 +636,7 @@ export function HeroFlow({ pick = false, set = "main" }: { pick?: boolean; set?:
       area.removeEventListener("pointerleave", leave)
       ro.disconnect()
     }
-  }, [pick, set])
+  }, [pick, tabs, set])
 
   return <canvas ref={canvas} aria-hidden className="absolute inset-0 h-full w-full" />
 }
