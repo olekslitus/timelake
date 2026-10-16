@@ -51,18 +51,16 @@ export default function Home() {
     <div className="mx-auto flex max-w-6xl flex-col gap-24 px-4 pt-10 pb-24 sm:pt-16">
       <div className="flex flex-col gap-4">
         <section className="cells">
-          <div className="@container relative grid place-items-center overflow-hidden px-4 py-8 sm:py-10">
-            <pre
-              aria-hidden
-              className="ascii absolute inset-0 grid place-content-center overflow-hidden text-xs leading-normal"
-            >
+          {/* Whole rows (18px) and characters (ch) of the field around the band, so its edges fall between them. */}
+          <div className="relative overflow-hidden px-[2ch] py-[36px] font-mono text-xs sm:px-[4ch]">
+            <pre aria-hidden className="ascii absolute inset-0 overflow-hidden text-xs leading-[18px]">
               {FIELD}
             </pre>
-            <div className="relative flex flex-col items-center gap-6 bg-card px-6 py-6 text-center sm:px-10">
-              <h1 className="text-4xl leading-[1.05] font-light tracking-tight sm:text-5xl">
+            <div className="relative flex h-[198px] flex-col justify-center gap-5 bg-card px-6 sm:h-[126px] sm:flex-row sm:items-center sm:justify-between sm:px-8">
+              <h1 className="font-sans text-4xl leading-[1.05] font-light tracking-tight sm:text-5xl">
                 Your time&#8209;series lakehouse
               </h1>
-              <div className="flex flex-wrap justify-center gap-2.5">
+              <div className="flex shrink-0 flex-wrap gap-2.5">
                 <Button size="lg" className={BTN} nativeButton={false} render={<Link href="/docs/quick-start" />}>
                   Quick start <ArrowRight />
                 </Button>
