@@ -4,8 +4,6 @@ import { Suspense } from "react"
 
 import { BenchRanking } from "@/components/bench-ranking"
 import { BenefitCards } from "@/components/benefit-cards"
-import { WORDMARK } from "@/components/brand/mark-geometry"
-import { TimelakeMark } from "@/components/brand/timelake-mark"
 import { GithubIcon } from "@/components/github-icon"
 import { StackDiagram } from "@/components/stack-diagram"
 import { Button } from "@/components/ui/button"
@@ -14,7 +12,7 @@ import { REPO_URL } from "@/lib/site"
 
 const BTN = "font-mono text-xs uppercase tracking-[0.06em]"
 
-/** The dim /\/\ field behind the hero lockup: larger than any viewport, centred on the lockup and clipped by its block. */
+/** The dim /\/\ field behind the hero heading: larger than any viewport, centred on it and clipped by its block. */
 const FIELD = Array.from({ length: 40 }, (_, r) => (r % 2 ? "\\/" : "/\\").repeat(120)).join("\n")
 
 const USE_CASES = [
@@ -35,36 +33,6 @@ const USE_CASES = [
     body: "Tables that DuckDB, Spark, notebooks and browser dashboards read directly from the bucket, without exporting copies.",
   },
 ]
-
-/** Mark + "timelake" in the middle of its cell, on a card-coloured rectangle that masks the field. */
-function HeroLockup() {
-  // The mark's height, from the strip's width; the rest follows the brand proportions (brand/marks.mjs).
-  const m = "clamp(2.5rem, 7cqw, 4.5rem)"
-  const of = (k: number) => `calc(${m} * ${k})`
-  return (
-    <div
-      role="img"
-      aria-label="Timelake"
-      className="relative flex items-center bg-card"
-      style={{ gap: of(WORDMARK.gapOfMark), padding: `${of(0.1)} ${of(0.16)}` }}
-    >
-      <TimelakeMark
-        className="shrink-0"
-        style={{ width: m, height: m, transform: `translateY(${of(WORDMARK.markDropOfMark)})` }}
-      />
-      <span
-        className="font-sans leading-none"
-        style={{
-          fontSize: of(WORDMARK.sizeOfMark),
-          fontWeight: WORDMARK.weight,
-          letterSpacing: `${WORDMARK.letterSpacingEm}em`,
-        }}
-      >
-        {WORDMARK.text}
-      </span>
-    </div>
-  )
-}
 
 function SectionHead({ label }: { label: string }) {
   return <h2 className="text-2xl leading-tight font-light tracking-tight">{label}</h2>
@@ -90,28 +58,27 @@ export default function Home() {
             >
               {FIELD}
             </pre>
-            <HeroLockup />
+            <div className="relative flex flex-col items-center gap-6 bg-card px-6 py-6 text-center sm:px-10">
+              <h1 className="text-4xl leading-[1.05] font-light tracking-tight sm:text-5xl">
+                Your time&#8209;series lakehouse
+              </h1>
+              <div className="flex flex-wrap justify-center gap-2.5">
+                <Button size="lg" className={BTN} nativeButton={false} render={<Link href="/docs/quick-start" />}>
+                  Quick start <ArrowRight />
+                </Button>
+                <Button
+                  size="lg"
+                  variant="outline"
+                  className={BTN}
+                  nativeButton={false}
+                  render={<a href={REPO_URL} target="_blank" rel="noreferrer" />}
+                >
+                  <GithubIcon /> GitHub
+                </Button>
+              </div>
+            </div>
           </div>
         </section>
-        <div className="flex flex-col gap-5 py-6 sm:flex-row sm:items-center sm:justify-between">
-          <h1 className="text-4xl leading-[1.05] font-light tracking-tight sm:text-5xl">
-            Your time&#8209;series lakehouse
-          </h1>
-          <div className="flex shrink-0 flex-wrap gap-2.5">
-            <Button size="lg" className={BTN} nativeButton={false} render={<Link href="/docs/quick-start" />}>
-              Quick start <ArrowRight />
-            </Button>
-            <Button
-              size="lg"
-              variant="outline"
-              className={BTN}
-              nativeButton={false}
-              render={<a href={REPO_URL} target="_blank" rel="noreferrer" />}
-            >
-              <GithubIcon /> GitHub
-            </Button>
-          </div>
-        </div>
         <BenefitCards />
       </div>
 
