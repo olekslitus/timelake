@@ -38,7 +38,7 @@ From 0.2.0 to 0.3.0, the first `latest` query on S3 went from about 510 ms to 24
 
 ## 0.3.0: table state in one object
 
-- **What changed:** after each commit the writer also writes `metadata/timelake-head`: the table metadata, the live files with their statistics, and the last-value index. A reader gets them in one request instead of following the version hint, metadata, manifest list and manifests. See [Architecture](/docs/architecture#head-object).
+- **What changed:** after each commit the writer also writes `metadata/timelake-head`: the table metadata, the live files with their statistics, and the last-value index. A reader gets them in one request instead of following the version hint, metadata, manifest list, and manifests. See [Architecture](/docs/architecture#head-object).
 - **Round trips** (unit test): a first `latest` query 3 → 2, a first filtered scan 6 → 3.
 - **Measured** (first query, ms; S3 mean of two runs, Tigris one run):
 
@@ -51,7 +51,7 @@ From 0.2.0 to 0.3.0, the first `latest` query on S3 went from about 510 ms to 24
 
 ## 0.2.0: two-step commit
 
-- **What changed:** an append encodes its data files, manifests, manifest list and last-value index first, uploads them all at once, then makes the one conditional write that commits. The version hint is written in the background.
+- **What changed:** an append encodes its data files, manifests, manifest list, and last-value index first, uploads them all at once, then makes the one conditional write that commits. The version hint is written in the background.
 - **Round trips** (unit test): an append 5 → 2.
 - **Measured** (the full v0 ingest on S3, 1,728 commits):
 

@@ -13,7 +13,7 @@ export function readOnlyError(query: string): string | null {
   const stmt = statement.replace(/--[^\n]*/g, "").trim()
   const first = stmt.split(/\s+/)[0]?.toUpperCase() ?? ""
   if (!["SELECT", "WITH", "EXPLAIN", "SHOW", "DESCRIBE", "VALUES"].includes(first)) {
-    return "The console is read-only: use SELECT, WITH, EXPLAIN, SHOW or DESCRIBE."
+    return "The console is read-only: use SELECT, WITH, EXPLAIN, SHOW, or DESCRIBE."
   }
   if (/\b(COPY|INSERT|CREATE|DROP|DELETE|UPDATE|ALTER|SET)\b/i.test(stmt)) {
     return "The console is read-only."

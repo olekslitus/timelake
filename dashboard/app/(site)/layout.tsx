@@ -34,7 +34,7 @@ export default function SiteLayout({ children }: LayoutProps<"/">) {
               </a>
             </span>
             <Link href="/docs/credits" className="hover:text-foreground">
-              Built on Apache Arrow, Apache DataFusion, Apache Parquet and Apache Iceberg.
+              Built on Apache Arrow, Apache DataFusion, Apache Parquet, and Apache Iceberg.
             </Link>
           </div>
         </div>

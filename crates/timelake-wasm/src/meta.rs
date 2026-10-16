@@ -324,7 +324,8 @@ mod tests {
         assert!(meta("0.1.0").is_ok());
         assert!(meta("2").is_ok());
         assert!(meta("0.2.9").is_ok());
-        let err = meta("0.3.0").map(|_| ()).unwrap_err().to_string();
+        assert!(meta("0.3.0").is_ok());
+        let err = meta("0.4.0").map(|_| ()).unwrap_err().to_string();
         assert!(err.contains("upgrade Timelake"), "{err}");
     }
 }

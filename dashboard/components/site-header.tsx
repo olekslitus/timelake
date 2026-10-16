@@ -7,9 +7,9 @@ import { Suspense } from "react"
 
 import { TimelakeLockup } from "@/components/brand/timelake-mark"
 import { GithubIcon } from "@/components/github-icon"
-import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { DOCS_NAV } from "@/lib/docs-nav"
 import { REPO_URL } from "@/lib/site"
 import { cn } from "@/lib/utils"
@@ -30,7 +30,7 @@ function NavLinks({ pathname }: { pathname: string | null }) {
           key={l.href}
           href={l.href}
           className={cn(
-            "rounded-md px-3 py-1.5 font-mono text-xs tracking-[0.08em] text-muted-foreground uppercase transition-colors hover:text-foreground",
+            "rounded-md px-3 py-1.5 font-mono text-[13px] text-muted-foreground transition-colors hover:text-foreground",
             pathname?.startsWith(l.href) && "text-foreground",
           )}
         >
@@ -56,6 +56,17 @@ export function SiteHeader() {
           <ActiveNavLinks />
         </Suspense>
         <div className="flex-1" />
+        <span className="hidden font-mono text-[13px] text-muted-foreground sm:inline">
+          Apache 2.0 ·{" "}
+          <Tooltip>
+            <TooltipTrigger className="cursor-help underline decoration-dotted underline-offset-4 hover:text-foreground">
+              v0
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              Timelake is at v0 and not ready for production yet. Formats and APIs may change between releases.
+            </TooltipContent>
+          </Tooltip>
+        </span>
         <Button
           variant="ghost"
           size="icon"
@@ -65,7 +76,6 @@ export function SiteHeader() {
         >
           <GithubIcon className="size-4" />
         </Button>
-        <ThemeToggle />
         <Sheet>
           <SheetTrigger render={<Button variant="ghost" size="icon" className="md:hidden" aria-label="Open menu" />}>
             <Menu className="size-4" />

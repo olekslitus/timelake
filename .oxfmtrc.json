@@ -25,6 +25,7 @@
     "dashboard/components/ui/**",
     "dashboard/components/brand/mark-geometry.ts",
     "dashboard/data/**",
+    "dashboard/lab-lake/**",
     "packages/timelake-client/src/wasm/**",
     "brand/explorations/**",
     "brand/designs/**",

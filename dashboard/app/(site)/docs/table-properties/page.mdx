@@ -8,10 +8,10 @@ A table’s contract and maintenance policy live in Iceberg table properties und
 | --- | --- | --- |
 | `timelake.time-column` | (none) | The time column. Its presence makes the table a time-series table. |
 | `timelake.series-key` | (none) | Comma-separated series key columns. |
-| `timelake.chunk-interval` | day | Partition size: hour, day or month. |
+| `timelake.chunk-interval` | day | Partition size: hour, day, or month. |
 | `timelake.dedup` | true with a series key, else false | Rows with the same (series, time) count once; the latest write wins. Applied within an append, by the Timelake reader, and by compaction. |
 | `timelake.retention` | forever | Drop partitions that end before now minus this duration, e.g. 90d. |
-| `timelake.auto-maintain` | true | Run size-tiered compaction, retention and snapshot expiry inline after appends. |
+| `timelake.auto-maintain` | true | Run size-tiered compaction, retention, and snapshot expiry inline after appends. |
 | `timelake.compact-min-files` | 8 | Inline compaction merges a size tier of a partition once it has this many files. |
 | `timelake.compact-cold-after` | 1h | Inline maintenance rewrites a partition whole (sorted, duplicates removed) once the table holds data newer than the partition's end by this much and the partition has two small files, whether the append touched it or not. `off` leaves it to the size tiers. |
 | `timelake.ingest-time-column` | `_ingest_ts` for time-series tables | The column holding each row's insertion time, set at creation (`ingest_time=False` / `--no-ingest-time` leaves it out). Each append fills it with the time the append started, unless the input brings its own values. Among rows with the same (series, time), the latest insertion wins, then the later commit. |

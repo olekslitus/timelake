@@ -14,7 +14,7 @@ export const metadata: Metadata = { title: "Explorer" }
 export default function OverviewPage() {
   return (
     <>
-      <PageHeader title="Overview" description="Tables, size and freshness of the warehouse." />
+      <PageHeader title="Overview" description="Tables, size, and freshness of the warehouse." />
       <Suspense
         fallback={
           <>

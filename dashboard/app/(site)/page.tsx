@@ -1,67 +1,123 @@
-import { ArrowRight } from "lucide-react"
+import {
+  ArrowRight,
+  Bot,
+  BotMessageSquare,
+  BrainCircuit,
+  ChartCandlestick,
+  Factory,
+  LayoutDashboard,
+  type LucideIcon,
+  Server,
+  Truck,
+  Zap,
+} from "lucide-react"
 import Link from "next/link"
 import { Suspense } from "react"
 
-import { BenchRanking } from "@/components/bench-ranking"
-import { CodeBlock } from "@/components/code-block"
+import { BenchCards } from "@/components/bench-cards"
+import { BenefitCards } from "@/components/benefit-cards"
 import { GithubIcon } from "@/components/github-icon"
+import { HeroFlow } from "@/components/hero-flow"
 import { StackDiagram } from "@/components/stack-diagram"
 import { Button } from "@/components/ui/button"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { SYSTEMS, latestByTarget, loadRuns, rankings } from "@/lib/benchmarks"
+import { type ArtKind, UseCaseArt } from "@/components/use-case-art"
+import { latestByTarget, loadRuns } from "@/lib/benchmarks"
 import { REPO_URL } from "@/lib/site"
 
 const BTN = "font-mono text-xs uppercase tracking-[0.06em]"
 
-const PARTS = [
-  {
-    title: "Writing",
-    body: "An append writes Arrow data as Parquet files, partitioned by time (hour, day or month) and sorted by series and time. Each commit is a new metadata file written with a conditional put, so concurrent writers can't overwrite each other and no catalog server is needed.",
-  },
-  {
-    title: "Maintenance",
-    body: "After an append, the writer merges small files of similar size within a partition and expires old snapshots. A full pass rewrites each partition into one sorted file and removes duplicate rows. Retention drops whole partitions.",
-  },
-  {
-    title: "Reading",
-    body: "SQL runs in DataFusion, embedded in the CLI and the Python and Rust libraries. Queries skip files and row groups by time and series, and latest-value queries read a small index updated on every append. A TypeScript client reads the same files in the browser, and DuckDB, Spark and other Iceberg readers can read them too.",
-  },
-]
+type UseCase = { icon: LucideIcon; art: ArtKind; title: string; body: string }
 
-const USE_CASES = [
+/** The data that comes in as time series, each with a picture drawn in squares. */
+const DATA: UseCase[] = [
   {
-    title: "Industrial sensor data",
-    body: "Plants with thousands of tags sampled every second to every minute, from gateways that sometimes go offline and send their backlog later. Our industrial IoT benchmark models this; its first results are being collected.",
+    icon: Factory,
+    art: "sensors",
+    title: "Industrial IoT",
+    body: "Thousands of sensor tags sampled every second to every minute, with backlogs sent after outages.",
   },
   {
-    title: "Vehicle and device fleets",
-    body: "Location and diagnostics from thousands of devices every few seconds. Measured weekly with TSBS IoT.",
+    icon: Truck,
+    art: "fleet",
+    title: "Vehicle fleets",
+    body: "Position and diagnostics from thousands of vehicles and devices, every few seconds.",
   },
   {
+    icon: Bot,
+    art: "robot",
+    title: "Robotics",
+    body: "Joint positions, torques, and sensor readings from robots, recorded at high rates and replayed by time range.",
+  },
+  {
+    icon: ChartCandlestick,
+    art: "market",
+    title: "Financial data",
+    body: "Prices and trades for thousands of instruments, read as time ranges, bars, and the latest price.",
+  },
+  {
+    icon: Server,
+    art: "metrics",
     title: "Server metrics",
-    body: "CPU and system metrics from thousands of hosts. Measured weekly with TSBS DevOps.",
+    body: "CPU, memory, and disk metrics from thousands of hosts.",
+  },
+]
+
+/** The ways that data gets read. */
+const USES: UseCase[] = [
+  {
+    icon: LayoutDashboard,
+    art: "dashboard",
+    title: "Dashboards and apps",
+    body: "Charts and apps that read the bucket over HTTPS with the TypeScript client, in the browser or at the edge.",
   },
   {
-    title: "Data read by several tools",
-    body: "Tables that DuckDB, Spark, notebooks and browser dashboards read directly from the bucket, without exporting copies.",
+    icon: BrainCircuit,
+    art: "ml",
+    title: "Data science and ML",
+    body: "Time series pulled into notebooks as Arrow tables, for pandas, polars, and model training, straight from the bucket.",
+  },
+  {
+    icon: Zap,
+    art: "functions",
+    title: "Serverless functions",
+    body: "Lambda functions and short jobs that start, append or query, and exit. There are no connections to pool and no database to size.",
+  },
+  {
+    icon: BotMessageSquare,
+    art: "agents",
+    title: "AI agents",
+    body: "Agents can query as often as they like: reads go to object storage, so there is no database for them to overload.",
   },
 ]
 
-/** The main limitations of v0 (docs/limitations). */
-const LIMITATIONS = [
-  "No row-level deletes: retention drops whole partitions only.",
-  "The schema is fixed when a table is created.",
-  "Rows sent twice stay visible to DuckDB and other engines until compaction removes them; the Timelake reader skips them.",
-  "Data becomes visible when its append commits; there is no buffer for sub-second freshness.",
-  "Tables are found by path; engines that only speak the Iceberg REST catalog protocol can't attach yet.",
-  "Google Cloud Storage, Azure Blob Storage and R2 use the same code as S3 but haven't been tested yet.",
-]
-
-function SectionHead({ label, children }: { label: string; children?: React.ReactNode }) {
+/** A row of use-case cards, each with its picture. */
+function UseCaseGrid({ cases, columns }: { cases: UseCase[]; columns: string }) {
   return (
-    <div className="flex max-w-3xl flex-col gap-3">
-      <h2 className="label-mono">{label}</h2>
-      {children ? <p className="text-muted-foreground">{children}</p> : null}
+    <div className={`grid gap-4 sm:grid-cols-2 ${columns}`}>
+      {cases.map((u) => {
+        const Icon = u.icon
+        return (
+          <div key={u.title} data-use-case className="flex flex-col gap-2 rounded-lg border bg-card p-6">
+            <div className="mb-3">
+              <UseCaseArt kind={u.art} />
+            </div>
+            <h3 className="flex items-center gap-2.5 text-lg font-normal">
+              <Icon className="size-4.5 shrink-0 text-muted-foreground" aria-hidden />
+              {u.title}
+            </h3>
+            <p className="text-sm leading-relaxed text-muted-foreground">{u.body}</p>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function SectionHead({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-2">
+      <h2 className="text-2xl leading-tight font-light tracking-tight">{label}</h2>
+      <p className="text-sm text-muted-foreground">{children}</p>
     </div>
   )
 }
@@ -76,117 +132,66 @@ function MoreLink({ href, children }: { href: string; children: React.ReactNode 
 
 export default function Home() {
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-24 px-4 pt-10 pb-24 sm:pt-16">
-      <section className="flex max-w-3xl flex-col gap-6">
-        <div className="label-mono">Open source · Apache 2.0 · v0</div>
-        <h1 className="text-4xl leading-[1.05] font-light tracking-tight sm:text-6xl">Timelake</h1>
-        <p className="text-lg text-muted-foreground">
-          A table format and query engine for time-series data in object storage. Data is written as Parquet files with
-          Apache Iceberg metadata to an S3 bucket or a local disk, and queried with SQL from the command line, Python,
-          Rust or the browser.
-        </p>
-        <div className="flex flex-wrap gap-2.5">
-          <Button size="lg" className={BTN} nativeButton={false} render={<Link href="/docs/quick-start" />}>
-            Quick start <ArrowRight />
-          </Button>
-          <Button
-            size="lg"
-            variant="outline"
-            className={BTN}
-            nativeButton={false}
-            render={<a href={REPO_URL} target="_blank" rel="noreferrer" />}
-          >
-            <GithubIcon /> GitHub
-          </Button>
+    <div className="mx-auto flex max-w-6xl flex-col gap-16 px-4 pt-8 pb-24">
+      <section className="flex flex-col gap-8">
+        <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+          <h1 className="text-4xl leading-[1.05] font-light tracking-tight sm:text-5xl">
+            The open time&#8209;series
+            <br />
+            lakehouse
+          </h1>
+          <div className="flex shrink-0 flex-wrap gap-2.5">
+            <Button size="lg" className={BTN} nativeButton={false} render={<Link href="/docs/quick-start" />}>
+              Quick start <ArrowRight />
+            </Button>
+            <Button
+              size="lg"
+              variant="outline"
+              className={BTN}
+              nativeButton={false}
+              render={<a href={REPO_URL} target="_blank" rel="noreferrer" />}
+            >
+              <GithubIcon /> GitHub
+            </Button>
+          </div>
+        </div>
+        {/* Publish on the left by hovering the chart; the store in the middle; readers as tabs on the right. */}
+        <div className="cells">
+          <div className="relative h-[160px] overflow-hidden sm:h-[176px]">
+            <HeroFlow />
+          </div>
         </div>
       </section>
 
-      <section className="flex flex-col gap-6">
-        <SectionHead label="How it works">
-          Timelake is a library, not a server. Writers, maintenance and readers run in your own processes; everything
-          they share is in the bucket.
+      <section className="flex flex-col gap-4">
+        <SectionHead label="Features">
+          Fast, cheap time-series queries on open files in your own bucket, with no server to run.
+        </SectionHead>
+        <BenefitCards />
+      </section>
+
+      <section className="flex flex-col gap-4">
+        <SectionHead label="Data">Time series from machines, vehicles, markets, and servers.</SectionHead>
+        <UseCaseGrid cases={DATA} columns="lg:grid-cols-5" />
+      </section>
+
+      <section className="flex flex-col gap-4">
+        <SectionHead label="Uses">
+          Read straight from your bucket by apps, notebooks, functions, and agents.
+        </SectionHead>
+        <UseCaseGrid cases={USES} columns="lg:grid-cols-4" />
+      </section>
+
+      <section className="flex flex-col gap-4">
+        <SectionHead label="Architecture">
+          From the sources that send data to the tools that read it, with only your bucket in between.
         </SectionHead>
         <StackDiagram />
-        <div className="cells md:grid-cols-3">
-          {PARTS.map((p) => (
-            <div key={p.title} className="flex flex-col gap-2 p-6">
-              <h3 className="text-lg font-normal">{p.title}</h3>
-              <p className="text-sm text-muted-foreground">{p.body}</p>
-            </div>
-          ))}
-        </div>
-        <nav className="flex flex-wrap gap-x-5 gap-y-1">
-          <MoreLink href="/docs/how-it-works">How it works</MoreLink>
-          <MoreLink href="/docs/architecture">Architecture</MoreLink>
-        </nav>
-      </section>
-
-      <section className="flex flex-col gap-6">
-        <SectionHead label="Use cases" />
-        <div className="cells sm:grid-cols-2">
-          {USE_CASES.map((u) => (
-            <div key={u.title} className="flex flex-col gap-2 p-6">
-              <h3 className="text-lg font-normal">{u.title}</h3>
-              <p className="text-sm text-muted-foreground">{u.body}</p>
-            </div>
-          ))}
-        </div>
       </section>
 
       <Suspense fallback={null}>
         <Measurements />
       </Suspense>
-
-      <section className="flex flex-col gap-6">
-        <SectionHead label="Limitations">Timelake is at v0. What it doesn&apos;t do yet:</SectionHead>
-        <ul className="flex max-w-3xl list-disc flex-col gap-1.5 pl-5 text-sm text-muted-foreground">
-          {LIMITATIONS.map((l) => (
-            <li key={l}>{l}</li>
-          ))}
-        </ul>
-        <nav className="flex flex-wrap gap-x-5 gap-y-1">
-          <MoreLink href="/docs/limitations">All limitations</MoreLink>
-          <MoreLink href="/roadmap">Roadmap</MoreLink>
-        </nav>
-      </section>
-
-      <section className="flex flex-col gap-6">
-        <SectionHead label="Quick start">Use a local folder, or an s3://, gs:// or az:// location.</SectionHead>
-        <Tabs defaultValue="cli">
-          <TabsList>
-            <TabsTrigger value="cli">CLI</TabsTrigger>
-            <TabsTrigger value="python">Python</TabsTrigger>
-            <TabsTrigger value="duckdb">DuckDB</TabsTrigger>
-          </TabsList>
-          <TabsContent value="cli" className="pt-2">
-            <CodeBlock title="shell">{`export TIMELAKE_WAREHOUSE=s3://my-bucket/lake
-
-# Create a time-series table from a file's schema and load it
-timelake import iot.readings readings.parquet --time-column time --series-key device_id
-
-timelake sql "SELECT device_id, time_bucket(INTERVAL '1 hour', time) AS h, avg(temp)
-              FROM iot.readings WHERE time > now() - INTERVAL '1 day' GROUP BY 1, 2"
-timelake latest iot.readings     # newest row per device, from the index`}</CodeBlock>
-          </TabsContent>
-          <TabsContent value="python" className="pt-2">
-            <CodeBlock title="python">{`import timelake
-
-lake = timelake.Lake("s3://my-bucket/lake")
-t = lake.create_table("iot.readings", batch.schema,
-                      time_column="time", series_key=["device_id"], retention="365d")
-t.append(batch)                                   # pyarrow, polars, any Arrow stream
-
-lake.sql("SELECT * FROM iot.readings WHERE device_id = 'pump-7' ORDER BY time DESC LIMIT 1")
-lake.latest("iot.readings")                       # pyarrow.Table, one row per device`}</CodeBlock>
-          </TabsContent>
-          <TabsContent value="duckdb" className="pt-2">
-            <CodeBlock title="duckdb">{`INSTALL iceberg; LOAD iceberg;
--- no catalog and no Timelake needed
-SELECT device_id, max(time) FROM iceberg_scan('s3://my-bucket/lake/iot/readings') GROUP BY 1;`}</CodeBlock>
-          </TabsContent>
-        </Tabs>
-        <MoreLink href="/docs/quick-start">Quick start</MoreLink>
-      </section>
     </div>
   )
 }
@@ -197,24 +202,18 @@ async function Measurements() {
     (r) => r.header.target === "aws-s3" && !r.header.variant,
   )
   if (!run) return null
-  const systems = Object.keys(run.header.readers).map((s) => SYSTEMS[s] ?? s)
   return (
-    <section className="flex flex-col gap-6">
-      <SectionHead label="Measurements">
-        Every Monday, timebench, our benchmark tool, streams the same data into {systems.join(", ")} on one AWS instance
-        in us-east-2 and times every query from a fresh process. Below: TSBS IoT on S3, run of{" "}
-        {run.header.started.slice(0, 10)}. It uses TSBS&apos;s data and queries with our own method, so the numbers
-        don&apos;t compare with published TSBS results. Lower is better; Timelake is in blue.
-      </SectionHead>
-      <div className="grid gap-x-10 gap-y-6 lg:grid-cols-2">
-        {rankings(run).map((r) => (
-          <BenchRanking key={r.title} ranking={r} />
-        ))}
+    <section className="flex flex-col gap-4">
+      <div className="flex flex-col gap-3">
+        <SectionHead label="Benchmarks">
+          Measured every week on AWS S3, against other lakes with the same data and queries. Lower is better.
+        </SectionHead>
+        <nav className="flex flex-wrap gap-x-5 gap-y-1">
+          <MoreLink href="/benchmarks">All benchmarks</MoreLink>
+          <MoreLink href="/benchmarks/timebench">How we measure</MoreLink>
+        </nav>
       </div>
-      <nav className="flex flex-wrap gap-x-5 gap-y-1">
-        <MoreLink href="/benchmarks">All benchmarks</MoreLink>
-        <MoreLink href="/benchmarks/timebench">How we measure</MoreLink>
-      </nav>
+      <BenchCards run={run} />
     </section>
   )
 }

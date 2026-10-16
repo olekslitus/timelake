@@ -2,7 +2,7 @@ export const metadata = { title: "Python API" }
 
 # Python API
 
-The `timelake` package wraps the Rust library with PyO3. Data goes in and out as Apache Arrow, so pyarrow, polars and anything that implements the Arrow C stream interface work without copies. Calls release the GIL while they run. It needs Python 3.10 or later; wheels cover Linux, macOS and Windows.
+The `timelake` package wraps the Rust library with PyO3. Data goes in and out as Apache Arrow, so pyarrow, polars, and anything that implements the Arrow C stream interface work without copies. Calls release the GIL while they run. It needs Python 3.10 or later; wheels cover Linux, macOS, and Windows.
 
 ```bash
 pip install timelake
@@ -18,11 +18,11 @@ import timelake
 lake = timelake.Lake(location, storage_options=None)
 ```
 
-Opens a warehouse. `location` is a local path or an `s3://`, `gs://`, `az://` or `file://` URL; `storage_options` is a dict of object store options (see Storage & configuration). `lake.location` returns the normalized URL.
+Opens a warehouse. `location` is a local path or an `s3://`, `gs://`, `az://`, or `file://` URL; `storage_options` is a dict of object store options (see Storage & configuration). `lake.location` returns the normalized URL.
 
 | Method | Returns |
 | --- | --- |
-| `create_table(name, schema, time_column=None, series_key=None, chunk=None, retention=None, dedup=None, ingest_time=None, properties=None)` | `Table`. `schema` is a pyarrow schema or anything with a `.schema`. `chunk` is "hour", "day" or "month"; `retention` a duration such as "90d"; `ingest_time=False` leaves out the `_ingest_ts` column; `properties` extra table properties. |
+| `create_table(name, schema, time_column=None, series_key=None, chunk=None, retention=None, dedup=None, ingest_time=None, properties=None)` | `Table`. `schema` is a pyarrow schema or anything with a `.schema`. `chunk` is "hour", "day", or "month"; `retention` a duration such as "90d"; `ingest_time=False` leaves out the `_ingest_ts` column; `properties` extra table properties. |
 | `table(name)` | `Table` at its latest version. |
 | `tables()` | `list[str]` of `namespace.table`. |
 | `sql(query, namespace="default")` | `pyarrow.Table`. Unqualified names resolve in `namespace`. |
@@ -35,7 +35,7 @@ Properties: `name`, `location`, `version`, `schema` (pyarrow). Methods that comm
 
 | Method | Returns |
 | --- | --- |
-| `append(data, batch_id=None, maintain=None)` | dict: `rows`, `files`, `bytes`, `version`, `commit_ms`, `attempts`, `duplicate`; `maintenance` when inline maintenance did work, or `maintenance_error` if it failed after the append committed (the data is in the table: run `maintain()` later rather than retrying the append). A skipped duplicate batch reports 0 rows, files and bytes. `maintain` overrides the table’s auto-maintain setting. |
+| `append(data, batch_id=None, maintain=None)` | dict: `rows`, `files`, `bytes`, `version`, `commit_ms`, `attempts`, `duplicate`; `maintenance` when inline maintenance did work, or `maintenance_error` if it failed after the append committed (the data is in the table: run `maintain()` later rather than retrying the append). A skipped duplicate batch reports 0 rows, files, and bytes. `maintain` overrides the table’s auto-maintain setting. |
 | `upgrade(dry_run=False, compact=True, keep_snapshots="7d")` | dict: `steps` (empty if the table was current), `version_before`, `snapshot_before`, `keep_snapshots_until_ms`. Brings the table to the current format; see [Upgrading](/docs/upgrading). |
 | `rollback(snapshot_id)` | Makes an earlier snapshot current again (`KeyError` if the table has none with that id). |
 | `maintain(compact=True, retention=True, expire=True)` | dict: `partitions_compacted`, `files_rewritten`, `files_written`, `rows_rewritten`, `duplicates_removed`, `partitions_dropped`, `snapshots_expired`, `objects_deleted`, `seconds`. |
@@ -48,7 +48,7 @@ Properties: `name`, `location`, `version`, `schema` (pyarrow). Methods that comm
 
 ## Types
 
-The package ships type information (`py.typed` and a stub), so editors complete `Lake` and `Table` methods and type checkers (ty, mypy, pyright) check calls. The result dicts are typed as `timelake.AppendResult`, `timelake.MaintainReport` and `timelake.TableInfo`.
+The package ships type information (`py.typed` and a stub), so editors complete `Lake` and `Table` methods and type checkers (ty, mypy, pyright) check calls. The result dicts are typed as `timelake.AppendResult`, `timelake.MaintainReport`, and `timelake.TableInfo`.
 
 ## Errors
 
@@ -56,7 +56,7 @@ The package ships type information (`py.typed` and a stub), so editors complete 
 | --- | --- |
 | `KeyError` | The table doesn’t exist. |
 | `FileExistsError` | Creating a table that already exists. |
-| `ValueError` | Invalid input or configuration: a column not in the table, a missing required column, a value that can't be cast to the column type, an unknown storage option, a bad duration (`retention="90 parsecs"`), chunk name or property value. |
+| `ValueError` | Invalid input or configuration: a column not in the table, a missing required column, a value that can't be cast to the column type, an unknown storage option, a bad duration (`retention="90 parsecs"`), chunk name, or property value. |
 | `timelake.ConflictError` | Another writer kept committing first and the change could not be rebased (a subclass of `RuntimeError`). |
 | `RuntimeError` | Storage and query failures. |
 

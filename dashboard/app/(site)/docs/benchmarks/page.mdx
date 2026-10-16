@@ -2,12 +2,12 @@ export const metadata = { title: "Benchmarks (docs)" }
 
 # Benchmarks
 
-The results, their history and the public benchmarks we know of are on the [Benchmarks page](/benchmarks). The
+The results, their history, and the public benchmarks we know of are on the [Benchmarks page](/benchmarks). The
 benchmark lives in the repository under `bench/`, and anyone can rerun it.
 
 `timebench` streams a workload into each system the way its own docs suggest, runs each system's maintenance, and
 runs every query in a fresh process before and after maintenance. Each run is one file in `bench/results/runs` with
-the commit, the machine, every version and every measurement; together they are the history the website charts.
+the commit, the machine, every version, and every measurement; together they are the history the website charts.
 
 ```bash
 uv sync && cargo build --release -p timelake-cli
@@ -16,7 +16,7 @@ uv run timebench run tsbs-iot --scale small    # every lake system on the local 
 uv run timebench report latest
 ```
 
-- **Workloads:** `tsbs-iot` (TSBS IoT, streamed in 5-minute batches) at `small`, `standard` and `large` scale.
+- **Workloads:** `tsbs-iot` (TSBS IoT, streamed in 5-minute batches) at `small`, `standard`, and `large` scale.
 - **Systems:** Timelake, Iceberg written by PyIceberg, S3 Tables, Lance, plain Parquet files, and TimescaleDB (any
   server, set by `BENCH_TIMESCALEDB_DSN`).
 - **Storage:** the local disk, or S3 through `bench/tools/s3proxy`, which counts requests and bytes. In front of AWS it
