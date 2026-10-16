@@ -62,10 +62,10 @@ const LIMITATIONS = [
   "Google Cloud Storage, Azure Blob Storage and R2 use the same code as S3 but haven't been tested yet.",
 ]
 
-/** Mark + "timelake" in the middle of the hero, on a card-coloured rectangle that masks the field. */
+/** Mark + "timelake" in the middle of its cell, on a card-coloured rectangle that masks the field. */
 function HeroLockup() {
   // The mark's height, from the container's width; the rest follows the brand proportions (brand/marks.mjs).
-  const m = "10cqw"
+  const m = "17cqw"
   const of = (k: number) => `calc(${m} * ${k})`
   return (
     <div
@@ -112,8 +112,8 @@ function MoreLink({ href, children }: { href: string; children: React.ReactNode 
 export default function Home() {
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-24 px-4 pt-10 pb-24 sm:pt-16">
-      <section className="cells">
-        <div className="@container relative grid place-items-center overflow-hidden px-4 py-[6cqw]">
+      <section className="cells md:grid-cols-2">
+        <div className="@container relative grid place-items-center overflow-hidden px-4 py-[10%]">
           <pre
             aria-hidden
             className="ascii absolute inset-0 grid place-content-center overflow-hidden text-xs leading-normal"
@@ -122,12 +122,12 @@ export default function Home() {
           </pre>
           <HeroLockup />
         </div>
-        <div className="flex flex-col gap-6 p-7 sm:p-12">
-          <h1 className="text-4xl leading-[1.05] font-light tracking-tight text-balance sm:text-6xl">
+        <div className="flex flex-col justify-center gap-6 p-7 sm:p-10">
+          <h1 className="text-4xl leading-[1.05] font-light tracking-tight text-balance sm:text-5xl">
             The open time&#8209;series lakehouse
           </h1>
           <div className="label-mono">Open source · Apache 2.0 · v0</div>
-          <p className="max-w-3xl text-lg text-muted-foreground">
+          <p className="text-muted-foreground">
             A table format and query engine for time-series data in object storage. Data is written as Parquet files
             with Apache Iceberg metadata to an S3 bucket or a local disk, and queried with SQL from the command line,
             Python, Rust or the browser.
