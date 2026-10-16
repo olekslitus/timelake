@@ -158,6 +158,8 @@ export function HeroFlow({
     let fresh = false
     let sinceLoad = 0
     let reveal = REVEAL
+    // How fast each of many readers loads, relative to the load (at least 1, so every bar is full at the end).
+    let paces: number[] = []
     let next = 0
     let cursorY: number | null = null
     // The current reader, and how far into its turn (a finished turn when idle).
@@ -190,6 +192,15 @@ export function HeroFlow({
     }
     /** The rows of the readers' list, one per reader. */
     const listRow = (i: number) => 8 + i * 6
+
+    /** Where each of many readers draws in x..x+width, rows top..bottom: as many tiles as fit, row by row. */
+    const tiles = (x: number, width: number, top: number, bottom: number) => {
+      const [across, down] = [Math.floor(width / TILE[0]), Math.floor((bottom - top) / TILE[1])]
+      return Array.from({ length: across * down }, (_, t) => ({
+        x0: x + (t % across) * TILE[0],
+        y0: top + 1 + Math.floor(t / across) * TILE[1],
+      }))
+    }
 
     /** A reader's chart in x..x+width, rows top..bottom, drawn `done` (0..1) of the way, in the reading color. */
     const chart = (r: Reader, x: number, width: number, top: number, bottom: number, done: number) => {
@@ -293,12 +304,10 @@ export function HeroFlow({
       }
       if (r.chart === "parallel") {
         // As many readers as fit, each in its own color, each reading its own stretch of the series.
-        const [across, down] = [Math.floor(width / TILE[0]), Math.floor((bottom - top) / TILE[1])]
-        const count = across * down
-        const shownTiles = Math.ceil(count * done)
+        const all = tiles(x, width, top, bottom)
+        const count = all.length
         label(`${count} readers`, x, top - 1)
-        for (let t = 0; t < shownTiles; t++) {
-          const [x0, y0] = [x + (t % across) * TILE[0], top + 1 + Math.floor(t / across) * TILE[1]]
+        all.slice(0, Math.ceil(count * done)).forEach(({ x0, y0 }, t) => {
           const [w, h] = [TILE[0] - 3, TILE[1] - 3]
           const from = (t * 7) % Math.max(1, snapshot.length - w)
           const slice = snapshot.slice(from, from + w)
@@ -306,7 +315,7 @@ export function HeroFlow({
           slice.forEach((v, i) =>
             square(x0 + i, y0 + Math.round(((v - least) / (most - least || 1)) * h), hue(t, count), 1),
           )
-        }
+        })
         return
       }
       if (r.chart === "bars") {
@@ -487,6 +496,19 @@ export function HeroFlow({
           const filled = Math.round((width * (LOAD - loading + 1)) / LOAD)
           for (let i = 0; i < width; i++) square(x0 + i, y, reads, i < filled ? 1 : 0.15)
         }
+        /** The loading bar at row `barY` (many readers get one each, over their tiles), then the chart from `top`. */
+        const body = (x0: number, width: number, barY: number, top: number) => {
+          if (loading > 0 && turn.chart === "parallel") {
+            const progress = (LOAD - loading + 1) / LOAD
+            const all = tiles(x0, width, top, rows - 7)
+            all.forEach((t, i) => {
+              const filled = Math.round((TILE[0] - 3) * Math.min(1, progress * (paces[i % paces.length] ?? 1)))
+              for (let dx = 0; dx < TILE[0] - 3; dx++)
+                square(t.x0 + dx, t.y0 - 1, hue(i, all.length), dx < filled ? 1 : 0.15)
+            })
+          } else bar(x0, width, barY)
+          if (show) chart(turn, x0, width, top, rows - 7, done)
+        }
         if (pick) {
           lineup.forEach((r, i) => {
             const y = listRow(i)
@@ -495,8 +517,7 @@ export function HeroFlow({
             if (active) for (let dx = 0; dx < LIST - 2; dx++) square(readersX + dx, y + 2, reads, 0.6)
           })
           label(`${turn.query} · ${files}`, readersX + LIST, rows - 2)
-          bar(readersX + LIST, cols - readersX - LIST - 2, 2)
-          if (show) chart(turn, readersX + LIST, cols - readersX - LIST - 2, 5, rows - 7, done)
+          body(readersX + LIST, cols - readersX - LIST - 2, 2, 5)
         } else if (tabs) {
           // Rotate, then a tab per reader, wrapping to another row when they don't fit. The selected tab is
           // underlined; the reader on screen is in the reading color.
@@ -512,14 +533,12 @@ export function HeroFlow({
             tx += span + 3
           })
           label(`${turn.query} · ${files}`, readersX, rows - 2)
-          bar(readersX, cols - readersX - 2, ty + 5)
-          if (show) chart(turn, readersX, cols - readersX - 2, ty + 8, rows - 7, done)
+          body(readersX, cols - readersX - 2, ty + 5, ty + 8)
         } else {
           label(turn.name, readersX, 4, reads)
           label(turn.query, readersX + Math.ceil(turn.name.length * 1.5) + 2, 4)
           label(files, readersX, rows - 2)
-          bar(readersX, cols - readersX - 2, 6)
-          if (show) chart(turn, readersX, cols - readersX - 2, 8, rows - 7, done)
+          body(readersX, cols - readersX - 2, 6, 8)
         }
       }
       ctx.globalAlpha = 1
@@ -529,6 +548,7 @@ export function HeroFlow({
     const load = (isFresh: boolean) => {
       loading = LOAD
       fresh = isFresh
+      paces = Array.from({ length: 64 }, () => 1 + Math.random() * 0.7)
     }
 
     /** One tick: publish a point (it is written), and move the readers' loads and charts along. */
