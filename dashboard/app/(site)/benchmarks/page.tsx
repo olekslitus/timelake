@@ -18,14 +18,6 @@ export default function BenchmarksPage() {
     <div className="mx-auto max-w-6xl space-y-12 px-4 py-12">
       <header className="max-w-3xl space-y-3">
         <h1 className="text-3xl font-semibold tracking-tight">Benchmarks</h1>
-        <p className="text-muted-foreground">
-          Timelake against the systems a team would otherwise use for time series, on public benchmarks and our own.
-          Measured with{" "}
-          <Link href="/benchmarks/timebench" className="text-foreground underline underline-offset-4">
-            timebench
-          </Link>
-          , and rerun every week.
-        </p>
       </header>
 
       <Suspense fallback={<div className="h-96 animate-pulse rounded-xl bg-muted" />}>
