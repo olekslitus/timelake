@@ -223,15 +223,15 @@ const PICTURES: Record<ArtKind, (cols: number) => Cell[]> = {
   },
   cheap: (cols) => {
     // A bill over time: a server's hours fill every column; a bucket's storage is a thin line, and its requests show
-    // only when something reads or writes.
+    // only when something reads or writes, in green for what you save.
     const rnd = seeded(12)
     const cells: Cell[] = []
     for (let x = 0; x < cols; x++) {
       for (const y of [1, 2, 3]) cells.push({ x, y, color: "var(--muted-foreground)", alpha: 0.55 })
-      cells.push({ x, y: ROWS - 2, color: "var(--primary)", alpha: 0.4 })
+      cells.push({ x, y: ROWS - 2, color: "var(--chart-3)", alpha: 0.4 })
       if (rnd() < 0.15) {
         const height = 1 + Math.floor(rnd() * 4)
-        for (let k = 0; k < height; k++) cells.push({ x, y: ROWS - 4 - k, color: "var(--primary)", alpha: 0.9 })
+        for (let k = 0; k < height; k++) cells.push({ x, y: ROWS - 4 - k, color: "var(--chart-3)", alpha: 0.9 })
       }
     }
     return cells
