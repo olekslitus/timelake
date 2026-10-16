@@ -2,9 +2,9 @@ import { Activity, ArrowRight, Cloud, Gauge, Layers, PiggyBank, ServerOff, type 
 import Link from "next/link"
 import type { ReactNode } from "react"
 
-import { type Latency, LatencyChart } from "@/components/latency-chart"
+import { BarChart, type BarRow } from "@/components/bar-chart"
 import { type ArtKind, UseCaseArt } from "@/components/use-case-art"
-import { latestByTarget, loadRuns, rankings } from "@/lib/benchmarks"
+import { firstRunUsd, latestByTarget, loadRuns, rankings, type Run, SYSTEMS } from "@/lib/benchmarks"
 import { cn } from "@/lib/utils"
 
 type Card = {
@@ -26,14 +26,13 @@ const percentile = (values: number[], p: number) => {
   return sorted[Math.max(0, Math.ceil(p * sorted.length) - 1)] ?? 0
 }
 
+const ms = (seconds: number) => `${Math.round(seconds * 1000)} ms`
+
 /**
- * Timelake's query times in the newest weekly S3 run: p50, p90, and p99 after maintenance, cold (each query's first
- * run, in a fresh process) and warm (the mean of its repeats), and how much faster it is than the other lakes.
+ * Timelake's query times in a weekly S3 run: p50, p90, and p99 after maintenance, warm (the mean of each query's repeats
+ * in the same process) over cold (its first run, in a fresh process), and how much faster it is than the other lakes.
  */
-async function speed(): Promise<{ body: string; latency: Latency[] | null }> {
-  const run = latestByTarget(await loadRuns(), "tsbs-iot").find(
-    (r) => r.header.target === "aws-s3" && !r.header.variant,
-  )
+function speed(run: Run | undefined): { body: string; rows: BarRow[] | null } {
   const ranked = run ? rankings(run) : []
   const ingested = ranked.find((r) => r.title.startsWith("Queries, right"))?.rows ?? []
   const own = ingested.find((r) => r.timelake)
@@ -42,7 +41,7 @@ async function speed(): Promise<{ body: string; latency: Latency[] | null }> {
     (q) => q.system === "timelake" && q.reader === "timelake" && q.checkpoint === "maintained" && q.status === "ok",
   )
   if (!own || others.length === 0 || queries.length === 0)
-    return { body: "Measured every week against other lakes on S3.", latency: null }
+    return { body: "Measured every week against other lakes on S3.", rows: null }
   const x = (v: number) => Math.round(v / own.value)
   const range = `${x(Math.min(...others))}⁠–⁠${x(Math.max(...others))}×`
   const cold = queries.map((q) => q.times[0])
@@ -52,21 +51,71 @@ async function speed(): Promise<{ body: string; latency: Latency[] | null }> {
   })
   return {
     body: `Query times on S3 over ${queries.length} TSBS IoT queries, and ${range} faster than other lakes on fresh data.`,
-    latency: [0.5, 0.9, 0.99].map((p) => ({
-      label: `p${Math.round(p * 100)}`,
-      warm: percentile(warm, p),
-      cold: percentile(cold, p),
-    })),
+    rows: [0.5, 0.9, 0.99].map((p) => {
+      const [w, c] = [percentile(warm, p), percentile(cold, p)]
+      return {
+        label: `p${Math.round(p * 100)}`,
+        bars: [
+          { value: w, color: "var(--chart-4)", text: ms(w) },
+          { value: c, color: "var(--primary)", text: ms(c), strong: true },
+        ],
+      }
+    }),
   }
+}
+
+/**
+ * What each lake's queries cost in S3 requests on fresh data, per million queries: the mean first run over the queries
+ * every lake answered, at S3 Standard prices, with each lake's cheapest reader. Timelake in green, the rest grey.
+ */
+function requestCost(run: Run | undefined): BarRow[] | null {
+  const fresh = (run?.queries ?? []).filter((q) => q.checkpoint === "ingested" && q.status === "ok")
+  const engines = new Map<string, Map<string, number>>()
+  for (const q of fresh) {
+    const usd = firstRunUsd(q)
+    if (usd == null) continue
+    const key = `${q.system}+${q.reader}`
+    engines.set(key, (engines.get(key) ?? new Map()).set(`${q.suite}|${q.query}`, usd))
+  }
+  const all = [...engines.values()]
+  const common = [...(all[0]?.keys() ?? [])].filter((q) => all.every((e) => e.has(q)))
+  if (common.length === 0) return null
+  const cheapest = new Map<string, number>()
+  for (const [key, usd] of engines) {
+    const system = key.split("+", 1)[0] ?? key
+    const mean = common.reduce((sum, q) => sum + (usd.get(q) ?? 0), 0) / common.length
+    cheapest.set(system, Math.min(cheapest.get(system) ?? Infinity, mean))
+  }
+  if (!cheapest.has("timelake") || cheapest.size < 2) return null
+  return [...cheapest]
+    .toSorted(([, a], [, b]) => a - b)
+    .map(([system, usd]) => {
+      const perMillion = usd * 1e6
+      return {
+        label: (SYSTEMS[system] ?? system).replace(/ \(.*\)$/, ""),
+        bars: [
+          {
+            value: perMillion,
+            color: system === "timelake" ? "var(--chart-3)" : "var(--muted-foreground)",
+            text: `$${Math.round(perMillion).toLocaleString("en")}`,
+            strong: system === "timelake",
+          },
+        ],
+      }
+    })
 }
 
 /** Columns in a wide card's picture, twice a narrow one's. */
 const WIDE_COLS = 128
-/** Rows in the pictures next to the Fast chart, about as tall as it. */
+/** Rows in a picture next to the charts, about as tall as them. */
 const TALL_ROWS = 30
 
 export async function BenefitCards() {
-  const fast = await speed()
+  const run = latestByTarget(await loadRuns(), "tsbs-iot").find(
+    (r) => r.header.target === "aws-s3" && !r.header.variant,
+  )
+  const fast = speed(run)
+  const cost = requestCost(run)
   // Two rows of three: a wide card first in the top row, in the middle of the bottom one.
   const cards: Card[] = [
     {
@@ -76,7 +125,15 @@ export async function BenefitCards() {
       body: fast.body,
       link: { label: "Benchmarks", href: "/benchmarks" },
       wide: true,
-      figure: fast.latency && <LatencyChart rows={fast.latency} />,
+      figure: fast.rows && (
+        <BarChart
+          rows={fast.rows}
+          legend={[
+            { label: "Warm: a repeat in the same process", color: "var(--chart-4)" },
+            { label: "Cold: the first run, in a fresh process", color: "var(--primary)" },
+          ]}
+        />
+      ),
     },
     {
       icon: PiggyBank,
@@ -84,7 +141,7 @@ export async function BenefitCards() {
       title: "Cheap",
       body: "You pay only for storage, reads, and writes. Data costs about 6× less to keep than in TimescaleDB.",
       link: { label: "Cost", href: "/docs/storage#requests-and-cost" },
-      rows: TALL_ROWS,
+      figure: cost && <BarChart rows={cost} caption="S3 requests per 1M queries on fresh data" stacked />,
     },
     {
       icon: Layers,

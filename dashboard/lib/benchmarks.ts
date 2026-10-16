@@ -102,6 +102,8 @@ export type QueryRecord = {
   server_ms?: Times
   /** The first run's requests at the store's list prices. */
   usd?: number
+  /** Requests by type (GET, PUT, LIST, …), per run, where the store counted them. */
+  kinds?: Record<string, number>[]
   /** Whether the answer matched the reference system's (absent when the run had none). */
   correct?: boolean
 }
@@ -145,6 +147,21 @@ const ENGINES: Record<string, string> = {
   "questdb+questdb": "QuestDB",
   "influxdb3+influxdb3": "InfluxDB 3 Core",
   "influxdb3-defaults+influxdb3": "InfluxDB 3 Core, as shipped",
+}
+
+/** S3 Standard prices per request (us-east-1 and us-east-2, October 2026): writes and LISTs, and reads. */
+const S3_WRITE_USD = 0.005 / 1000
+const S3_READ_USD = 0.0004 / 1000
+const S3_WRITES = new Set(["PUT", "COPY", "POST", "LIST"])
+
+/** A query's first run at S3 Standard request prices (DELETE is free), or null where requests weren't counted. */
+export function firstRunUsd(q: QueryRecord): number | null {
+  const kinds = q.kinds?.[0]
+  if (!kinds) return q.usd ?? null
+  return Object.entries(kinds).reduce(
+    (sum, [kind, n]) => sum + (kind === "DELETE" ? 0 : n * (S3_WRITES.has(kind) ? S3_WRITE_USD : S3_READ_USD)),
+    0,
+  )
 }
 
 export const SYSTEMS: Record<string, string> = {
