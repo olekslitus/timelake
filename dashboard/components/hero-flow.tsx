@@ -31,7 +31,7 @@ type Reader = {
   name: string
   query: string
   pick: (days: File[][]) => File[]
-  chart: "line" | "band" | "bars" | "candles" | "peak"
+  chart: "line" | "band" | "bars" | "candles" | "peak" | "parallel"
   /** Points per bucket: the reader downsamples the series to this. */
   per: number
 }
@@ -41,7 +41,13 @@ const READERS: Reader[] = [
   { name: "DuckDB", query: "avg per hour", pick: (d) => d[0] ?? [], chart: "bars", per: 10 },
   { name: "Trading app", query: "OHLC per minute", pick: (d) => d[0] ?? [], chart: "candles", per: 8 },
   { name: "AI agent", query: "when was the peak?", pick: (d) => d[0] ?? [], chart: "peak", per: 4 },
+  { name: "Many readers", query: "queries at once", pick: (d) => d.flat(), chart: "parallel", per: 1 },
 ]
+
+/** One color per parallel reader, spread around the color wheel. */
+const hue = (i: number, n: number) => `hsl(${Math.round((i * 360) / n + 30) % 360} 70% 62%)`
+/** Columns and rows of one parallel reader's tile, gaps included. */
+const TILE = [15, 8] as const
 
 /** The series' shape when nobody is hovering: height (0..1, 0 at the top) at column x of `cols`. */
 const shape = (x: number, cols: number) => 0.5 + Math.sin((x / cols) * 6 + 1) * 0.3 + Math.sin((x / cols) * 23) * 0.06
@@ -156,6 +162,24 @@ export function HeroFlow({ pick = false }: { pick?: boolean }) {
       const step = width / buckets.length
       const span = (i: number) => [x + Math.round(i * step), x + Math.round((i + 1) * step) - 1] as const
       const shown = buckets.filter((_, i) => span(i)[0] - x <= upTo)
+      if (r.chart === "parallel") {
+        // As many readers as fit, each in its own color, each reading its own stretch of the series.
+        const [across, down] = [Math.floor(width / TILE[0]), Math.floor((bottom - top) / TILE[1])]
+        const count = across * down
+        const shownTiles = Math.ceil(count * done)
+        label(`${count} readers`, x, top - 1)
+        for (let t = 0; t < shownTiles; t++) {
+          const [x0, y0] = [x + (t % across) * TILE[0], top + 1 + Math.floor(t / across) * TILE[1]]
+          const [w, h] = [TILE[0] - 3, TILE[1] - 3]
+          const from = (t * 7) % Math.max(1, snapshot.length - w)
+          const slice = snapshot.slice(from, from + w)
+          const [least, most] = [Math.min(...slice), Math.max(...slice)]
+          slice.forEach((v, i) =>
+            square(x0 + i, y0 + Math.round(((v - least) / (most - least || 1)) * h), hue(t, count), 1),
+          )
+        }
+        return
+      }
       if (r.chart === "bars") {
         shown.forEach((b, i) => {
           const [x0, x1] = span(i)
@@ -300,7 +324,12 @@ export function HeroFlow({ pick = false }: { pick?: boolean }) {
         for (const f of list) {
           const width = widthOf(f)
           if (x + width > storeX + STORE) break
-          const [fill, alpha] = read.has(f) ? [reads, 1] : [pen, f === writer.fresh ? 0.9 : 0.35]
+          // Many readers color each file with one of theirs; any other reader in the reading color.
+          const many = turn?.chart === "parallel"
+          const n = writer.days.flat().indexOf(f)
+          const [fill, alpha] = read.has(f)
+            ? [many ? hue(n * 5, 24) : reads, 1]
+            : [pen, f === writer.fresh ? 0.9 : 0.35]
           for (let dx = 0; dx < width; dx++) for (const dy of [1, 2, 3]) square(x + dx, y + dy, fill, alpha)
           x += width + 1
         }
