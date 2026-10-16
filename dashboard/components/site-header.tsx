@@ -9,6 +9,7 @@ import { TimelakeLockup } from "@/components/brand/timelake-mark"
 import { GithubIcon } from "@/components/github-icon"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { DOCS_NAV } from "@/lib/docs-nav"
 import { REPO_URL } from "@/lib/site"
 import { cn } from "@/lib/utils"
@@ -55,7 +56,17 @@ export function SiteHeader() {
           <ActiveNavLinks />
         </Suspense>
         <div className="flex-1" />
-        <span className="hidden font-mono text-[13px] text-muted-foreground sm:inline">Apache 2.0 · v0</span>
+        <span className="hidden font-mono text-[13px] text-muted-foreground sm:inline">
+          Apache 2.0 ·{" "}
+          <Tooltip>
+            <TooltipTrigger className="cursor-help underline decoration-dotted underline-offset-4 hover:text-foreground">
+              v0
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              Timelake is at v0 and not ready for production yet: formats and APIs may change between releases.
+            </TooltipContent>
+          </Tooltip>
+        </span>
         <Button
           variant="ghost"
           size="icon"
