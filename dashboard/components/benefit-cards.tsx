@@ -3,7 +3,6 @@ import Link from "next/link"
 
 import { type ArtKind, UseCaseArt } from "@/components/use-case-art"
 import { latestByTarget, loadRuns, rankings } from "@/lib/benchmarks"
-import { cn } from "@/lib/utils"
 
 type Card = {
   icon: LucideIcon
@@ -11,7 +10,6 @@ type Card = {
   title: string
   body: string
   link: { label: string; href: string }
-  wide?: boolean
 }
 
 /** Timelake's query times in the newest weekly S3 run, against the other systems in it. */
@@ -31,11 +29,11 @@ async function speed(): Promise<string> {
   return `Queries on S3 return in ${Math.round(maintained.value * 1000)} ms, and are ${range} faster than other lakes on fresh data.`
 }
 
-/** Columns in a wide card's picture, twice a narrow one's. */
-const WIDE_COLS = 128
+/** Columns in a card's picture: as many 4 px squares as fit a third of the page. */
+const CARD_COLS = 76
 
 export async function BenefitCards() {
-  // Two rows of three: a wide card first in the top row, in the middle of the bottom one.
+  // Two rows of three.
   const cards: Card[] = [
     {
       icon: Gauge,
@@ -43,7 +41,6 @@ export async function BenefitCards() {
       title: "Fast",
       body: await speed(),
       link: { label: "Benchmarks", href: "/benchmarks" },
-      wide: true,
     },
     {
       icon: PiggyBank,
@@ -56,7 +53,7 @@ export async function BenefitCards() {
       icon: Layers,
       art: "formats",
       title: "Open",
-      body: "Tables are standard Iceberg and Parquet in your own bucket, so you’re not locked in: DuckDB and Spark read them too.",
+      body: "Standard Iceberg and Parquet in your own bucket, so you’re not locked in.",
       link: { label: "Querying", href: "/docs/querying" },
     },
     {
@@ -72,7 +69,6 @@ export async function BenefitCards() {
       title: "Serverless",
       body: "No database or maintenance jobs to run. Timelake is a library that runs in your process.",
       link: { label: "How it works", href: "/docs/how-it-works" },
-      wide: true,
     },
     {
       icon: Cloud,
@@ -83,17 +79,13 @@ export async function BenefitCards() {
     },
   ]
   return (
-    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
       {cards.map((c) => {
         const Icon = c.icon
         return (
-          <div
-            key={c.title}
-            data-use-case
-            className={cn("flex flex-col gap-2 rounded-lg border bg-card p-6", c.wide && "md:col-span-2")}
-          >
+          <div key={c.title} data-use-case className="flex flex-col gap-2 rounded-lg border bg-card p-6">
             <div className="mb-3">
-              <UseCaseArt kind={c.art} cols={c.wide ? WIDE_COLS : undefined} />
+              <UseCaseArt kind={c.art} cols={CARD_COLS} />
             </div>
             <h3 className="flex items-center gap-2.5 text-lg font-normal">
               <Icon className="size-4.5 text-muted-foreground" aria-hidden />

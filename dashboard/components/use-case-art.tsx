@@ -345,5 +345,15 @@ export function UseCaseArt({ kind, cols = COLS }: { kind: ArtKind; cols?: number
     }
   }, [kind, cols])
 
-  return <canvas ref={canvas} aria-hidden className="block h-auto w-full" style={{ maxWidth: cols * CELL }} />
+  // Sized in the HTML too, so the picture takes its height before the script draws it.
+  return (
+    <canvas
+      ref={canvas}
+      aria-hidden
+      width={cols * CELL}
+      height={ROWS * CELL}
+      className="block h-auto w-full"
+      style={{ maxWidth: cols * CELL }}
+    />
+  )
 }
