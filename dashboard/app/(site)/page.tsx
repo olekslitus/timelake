@@ -92,28 +92,25 @@ const USES: UseCase[] = [
   },
 ]
 
-/** A labelled row of use-case cards. */
-function UseCaseGroup({ label, cases, columns }: { label: string; cases: UseCase[]; columns: string }) {
+/** A row of use-case cards, each with its picture. */
+function UseCaseGrid({ cases, columns }: { cases: UseCase[]; columns: string }) {
   return (
-    <div className="flex flex-col gap-3">
-      <h3 className="label-mono">{label}</h3>
-      <div className={`grid gap-4 sm:grid-cols-2 ${columns}`}>
-        {cases.map((u) => {
-          const Icon = u.icon
-          return (
-            <div key={u.title} data-use-case className="flex flex-col gap-2 rounded-lg border bg-card p-6">
-              <div className="mb-3">
-                <UseCaseArt kind={u.art} />
-              </div>
-              <h4 className="flex items-center gap-2.5 text-lg font-normal">
-                <Icon className="size-4.5 shrink-0 text-muted-foreground" aria-hidden />
-                {u.title}
-              </h4>
-              <p className="text-sm leading-relaxed text-muted-foreground">{u.body}</p>
+    <div className={`grid gap-4 sm:grid-cols-2 ${columns}`}>
+      {cases.map((u) => {
+        const Icon = u.icon
+        return (
+          <div key={u.title} data-use-case className="flex flex-col gap-2 rounded-lg border bg-card p-6">
+            <div className="mb-3">
+              <UseCaseArt kind={u.art} />
             </div>
-          )
-        })}
-      </div>
+            <h3 className="flex items-center gap-2.5 text-lg font-normal">
+              <Icon className="size-4.5 shrink-0 text-muted-foreground" aria-hidden />
+              {u.title}
+            </h3>
+            <p className="text-sm leading-relaxed text-muted-foreground">{u.body}</p>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -172,11 +169,13 @@ export default function Home() {
       </div>
 
       <section className="flex flex-col gap-6">
-        <SectionHead label="What is it for?">
-          The data that comes in as time series, and the ways it gets read.
-        </SectionHead>
-        <UseCaseGroup label="Data" cases={DATA} columns="lg:grid-cols-5" />
-        <UseCaseGroup label="Uses" cases={USES} columns="lg:grid-cols-4" />
+        <SectionHead label="Data">Time series from machines, vehicles, markets and servers.</SectionHead>
+        <UseCaseGrid cases={DATA} columns="lg:grid-cols-5" />
+      </section>
+
+      <section className="flex flex-col gap-6">
+        <SectionHead label="Uses">Read straight from your bucket by apps, notebooks, functions and agents.</SectionHead>
+        <UseCaseGrid cases={USES} columns="lg:grid-cols-4" />
       </section>
 
       <section className="flex flex-col gap-6">
