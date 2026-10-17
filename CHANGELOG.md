@@ -19,7 +19,6 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
 - **Cold partitions compact sooner.** Once newer data is `timelake.compact-cold-after` (default 1 hour) past a
   partition's end, inline maintenance rewrites the partition into sorted, duplicate-free files when it has two small
   files, even if the append didn't touch it.
-
 - **Insertion time.** Time-series tables get an `_ingest_ts` column: each append fills it with the time the append
   started, unless the input brings its own values (an import keeping arrival times). Among rows with the same
   `(series, time)` the latest insertion wins, then the later commit, everywhere: within an append, on read, in
@@ -43,7 +42,6 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
   the raw table, grouped by series-key columns, with `count`, `sum`, `min`, `max`, `avg`, `first_value` and
   `last_value`. `timelake maintain` and `Table.maintain()` report `rollups_refreshed` and `rollup_rows`
   (`--no-rollups`, `rollups=False` to skip). The docs have a new page, "Rollups".
-
 - **Block cache.** Reads of files a table never changes (data files, manifests, manifest lists, last-value index
   files) go through a cache of 1 MiB blocks, in memory by default on object stores and HTTPS (256 MiB), and on local
   disk with `timelake_cache=disk`, shared by every process on the machine (4 GiB). A query still checks for a newer
@@ -54,6 +52,9 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
 
 ### Changed
 
+- **Table format 0.3.0** for new tables (the insertion-time column). Timelake 0.4 and older can't open them: upgrade
+  every reader and writer first. `timelake upgrade` raises older tables to 0.3.0 but doesn't add `_ingest_ts` (a
+  table's columns are fixed at creation for now).
 - **Settings are checked.** Creating or altering a table with an unknown `timelake.*` property, a bad value, or a
   setting fixed at creation (`time-column`, `series-key`, `chunk-interval`, `dedup`, `ingest-time-column`) as a
   property is an error; use the table options for those. `timelake.format-version` can no longer be set by hand.
@@ -62,10 +63,6 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
 - Rust: `SessionSettings` has `get` and `flag` instead of public fields. `Session::parse` returns
   `timelake::Statement` (DataFusion's statement, or a rollup statement) for `Session::execute`.
   `MaintainOptions` has a `rollups` field and `MaintainReport` has `rollups_refreshed` and `rollup_rows`.
-
-- **Table format 0.3.0** for new tables (the insertion-time column). Timelake 0.4 and older can't open them: upgrade
-  every reader and writer first. `timelake upgrade` raises older tables to 0.3.0 but doesn't add `_ingest_ts` (a
-  table's columns are fixed at creation for now).
 - With dedup on, rows with the same `(series, time)` within one append keep only the last, so the append's `rows`
   counts them once. Files written by earlier versions may still hold such copies until compaction.
 - Benchmarks: Timelake's repeat runs on object storage now read from its memory cache, so their times drop from
