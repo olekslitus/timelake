@@ -1,7 +1,7 @@
 import type { MetadataRoute } from "next"
 
 import { BENCHMARKS } from "@/lib/benchmark-catalog"
-import { WORKLOADS } from "@/lib/benchmarks"
+import { hasResults } from "@/lib/benchmarks"
 import { DOCS_NAV } from "@/lib/docs-nav"
 import { SITE_URL } from "@/lib/site"
 
@@ -13,9 +13,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     ...DOCS_NAV.flatMap((s) => s.items.map((i) => i.href)),
     "/benchmarks",
     "/benchmarks/timebench",
-    ...BENCHMARKS.filter((b) => b.workload && WORKLOADS.some((w) => w.id === b.workload)).map(
-      (b) => `/benchmarks/${b.id}`,
-    ),
+    ...BENCHMARKS.filter(hasResults).map((b) => `/benchmarks/${b.id}`),
     ...BENCHMARKS.filter((b) => b.methodology).map((b) => `/benchmarks/${b.id}/methodology`),
     "/roadmap",
     "/contribute",

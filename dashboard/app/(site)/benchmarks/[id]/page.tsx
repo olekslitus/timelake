@@ -27,6 +27,7 @@ import {
   loadRuns,
   panels,
   s3TablesDelay,
+  hasResults,
   targetLabel,
   type Run,
   type Workload,
@@ -36,8 +37,8 @@ import { REPO_URL } from "@/lib/site"
 
 type Props = { params: Promise<{ id: string }> }
 
-/** Benchmarks with results; the others have only a methodology page. */
-const withResults = () => BENCHMARKS.filter((b) => b.workload && WORKLOADS.some((w) => w.id === b.workload))
+/** Benchmarks with published results; the others have only a methodology page. */
+const withResults = () => BENCHMARKS.filter(hasResults)
 
 export function generateStaticParams() {
   return withResults().map((b) => ({ id: b.id }))
@@ -51,7 +52,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 export default async function BenchmarkPage({ params }: Props) {
   const b = benchmark((await params).id)
   const workload = WORKLOADS.find((w) => w.id === b?.workload)
-  if (!b || !workload) notFound()
+  if (!b || !workload || !hasResults(b)) notFound()
   return (
     <div className="mx-auto max-w-6xl space-y-12 px-4 py-12">
       <header className="max-w-3xl space-y-3">

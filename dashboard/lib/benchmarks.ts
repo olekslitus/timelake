@@ -130,6 +130,14 @@ export const WORKLOADS = [
 
 export type Workload = (typeof WORKLOADS)[number]
 
+/**
+ * Whether a benchmark's results are published: it runs (status "running") and its workload is one timebench has. A
+ * planned benchmark's runs stay off the site until its results are checked.
+ */
+export function hasResults(b: { status: string; workload?: string }): boolean {
+  return b.status === "running" && WORKLOADS.some((w) => w.id === b.workload)
+}
+
 /** How the site names each system and reader pair; a system's own reader comes first. */
 const ENGINES: Record<string, string> = {
   "timelake+timelake": "Timelake",
