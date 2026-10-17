@@ -479,6 +479,12 @@ impl Storage {
     }
 
     /// An output file whose upload completes in [`Uploads::send`] rather than when it is closed.
+    /// A multipart upload of `uri` whose completion is queued in `uploads`, like
+    /// [`Storage::deferred_output_file`], for writers that produce bytes themselves.
+    pub(crate) fn deferred_writer(&self, uri: &str, uploads: &Uploads) -> Result<DeferredWriter> {
+        Ok(DeferredWriter { inner: BufWriter::new(self.store.clone(), self.path(uri)?), uploads: uploads.clone() })
+    }
+
     pub(crate) fn deferred_output_file(&self, uri: &str, uploads: &Uploads) -> OutputFile {
         let storage = IcebergStorage { inner: Some(self.clone()), uploads: Some(uploads.clone()) };
         OutputFile::new(Arc::new(storage), uri.to_string())
@@ -713,6 +719,27 @@ impl FileWrite for ObjectWrite {
             }
             None => w.shutdown().await.map_err(ice_err),
         }
+    }
+}
+
+/// See [`Storage::deferred_writer`].
+pub(crate) struct DeferredWriter {
+    inner: BufWriter,
+    uploads: Uploads,
+}
+
+impl DeferredWriter {
+    /// Sends `bytes` (in parts, as they fill).
+    pub(crate) async fn put(&mut self, bytes: Vec<u8>) -> Result<()> {
+        if !bytes.is_empty() {
+            self.inner.put(Bytes::from(bytes)).await?;
+        }
+        Ok(())
+    }
+
+    /// Queues the end of the upload, to be sent with the commit.
+    pub(crate) fn close(self) {
+        self.uploads.push(Pending::Writer(self.inner));
     }
 }
 

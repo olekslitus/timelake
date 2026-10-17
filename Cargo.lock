@@ -4246,7 +4246,9 @@ dependencies = [
  "arrow-row",
  "arrow-schema",
  "arrow-select",
+ "bytes",
  "chrono",
+ "parquet",
  "serde",
  "serde_json",
 ]

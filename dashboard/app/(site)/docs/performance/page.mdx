@@ -12,6 +12,7 @@ Each version is a [tag on GitHub](https://github.com/polythings/timelake/tags): 
 
 | Version | Change | Commit | Effect |
 | --- | --- | --- | --- |
+| Unreleased | Columns encoded in parallel | | The same compaction 2.37 → 1.17 s; importing 11.7M rows 6.0 → 4.7 s |
 | Unreleased | Streaming compaction | | Full compaction of 72 hourly files (11.7M rows) into 3 days: 3.65 → 2.37 s, peak memory 1.95 → 0.53 GB |
 | Unreleased | Version check interval | | Queries within `version-check-interval` send no request: one round trip less per query (unit test) |
 | 0.5.0 | Block cache | `69c6ca5` | Repeat queries on S3 (TSBS IoT): 54 → 16 ms, no requests; 16 clients 288 → 398 queries/s |
@@ -20,6 +21,11 @@ Each version is a [tag on GitHub](https://github.com/polythings/timelake/tags): 
 | 0.2.0 | Two-step commit | `d2b80cd` | Commit p50 on S3: 483 → 243 ms; a 1,728-commit ingest 1,307 → 795 s |
 
 From 0.2.0 to 0.3.0, the first `latest` query on S3 went from about 510 ms to 240 ms, and on Tigris from about 810 ms to 210 ms. 0.1.0 is the baseline for 0.2.0’s commit numbers.
+
+## Unreleased: columns encoded in parallel
+
+- **What changed:** Timelake writes Parquet with its own writer, shared with the WebAssembly writer, instead of iceberg-rust's. Each row group's columns are encoded on threads of their own. The files are byte for byte the same, with the same statistics in Iceberg metadata (checked by a test).
+- **Measured** on the same laptop and data as streaming compaction below, three runs each: compaction 2.37 → 1.17 s; importing the 11.7M rows in one append 6.0 → 4.7 s (two runs each).
 
 ## Unreleased: streaming compaction
 

@@ -7,23 +7,20 @@ use arrow::array::{Array, ArrayRef, Int32Array, RecordBatch, TimestampMicrosecon
 use arrow::compute::kernels::zip::zip;
 use arrow::compute::{cast, concat_batches, is_not_null, take_record_batch};
 use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
-use iceberg::spec::{DataContentType, DataFile, Literal, PrimitiveLiteral, Struct};
-use iceberg::writer::CurrentFileStatus;
-use iceberg::writer::file_writer::{FileWriter, FileWriterBuilder, ParquetWriterBuilder};
-use parquet::basic::{Compression, Encoding, ZstdLevel};
-use parquet::file::metadata::SortingColumn;
-use parquet::file::properties::{EnabledStatistics, WriterProperties};
-use parquet::schema::types::ColumnPath;
+use std::collections::HashMap;
+
+use iceberg::spec::{
+    DataContentType, DataFile, DataFileBuilder, DataFileFormat, Datum, Literal, PrimitiveLiteral, Struct, Type,
+};
+use parquet::file::properties::WriterProperties;
+use timelake_format::file::{FileStats, FileWriter};
 
 use crate::contract::Contract;
 use crate::error::{Error, Result};
 use crate::schema::{UTC, align_batch};
-use crate::sort::{ASCENDING, columns, last_per_group, stable_sort_indices};
-use crate::storage::Uploads;
+use crate::sort::{columns, last_per_group, stable_sort_indices};
+use crate::storage::{DeferredWriter, Uploads};
 use crate::table::Table;
-
-/// ZSTD level for data files and last-value indexes: fast to write, close to the best ratio.
-pub(crate) const ZSTD_LEVEL: i32 = 3;
 
 /// Rows of one time partition (`None` for unpartitioned tables), sorted by the table's sort key.
 pub(crate) type PartitionRows = (Option<i32>, RecordBatch);
@@ -115,45 +112,10 @@ fn partition_values(batch: &RecordBatch, contract: &Contract) -> Result<Option<V
     Ok(Some(values))
 }
 
-/// Parquet settings for time-series data: ZSTD, page-level statistics and page index (for
-/// row-group and page pruning), delta encoding for timestamps, byte-stream-split for floats,
-/// dictionary encoding for everything else (series keys, tags), and the sort order recorded.
+/// Parquet settings for the table's data files (see `timelake_format::file::writer_properties`).
 pub(crate) fn writer_properties(table: &Table) -> Result<WriterProperties> {
-    let schema = table.schema();
-    let contract = table.contract();
-    let mut b = WriterProperties::builder()
-        .set_compression(Compression::ZSTD(ZstdLevel::try_new(ZSTD_LEVEL)?))
-        .set_max_row_group_row_count(Some(contract.row_group_rows))
-        .set_statistics_enabled(EnabledStatistics::Page)
-        .set_created_by(format!("timelake {}", env!("CARGO_PKG_VERSION")));
-    for f in schema.fields() {
-        let path = ColumnPath::from(f.name().as_str());
-        match f.data_type() {
-            DataType::Float32 | DataType::Float64 => {
-                b = b
-                    .set_column_dictionary_enabled(path.clone(), false)
-                    .set_column_encoding(path, Encoding::BYTE_STREAM_SPLIT);
-            }
-            DataType::Timestamp(_, _) if Some(f.name()) == contract.time_column.as_ref() => {
-                b = b
-                    .set_column_dictionary_enabled(path.clone(), false)
-                    .set_column_encoding(path, Encoding::DELTA_BINARY_PACKED);
-            }
-            _ => {}
-        }
-    }
-    let sorting = contract
-        .sort_columns()
-        .iter()
-        .map(|c| {
-            let column_idx = i32::try_from(schema.index_of(c)?).map_err(|_| Error::invalid("too many columns"))?;
-            Ok(SortingColumn { column_idx, descending: ASCENDING.descending, nulls_first: ASCENDING.nulls_first })
-        })
-        .collect::<Result<Vec<_>>>()?;
-    if !sorting.is_empty() {
-        b = b.set_sorting_columns(Some(sorting));
-    }
-    Ok(b.build())
+    let created_by = format!("timelake {}", env!("CARGO_PKG_VERSION"));
+    Ok(timelake_format::file::writer_properties(&table.schema(), table.contract(), &created_by)?)
 }
 
 /// Partition value of a data file written by Timelake (`None` if unpartitioned).
@@ -180,20 +142,19 @@ pub(crate) async fn write_partition(
     writer.finish().await
 }
 
-type ParquetFileWriter = <ParquetWriterBuilder as FileWriterBuilder>::R;
-
 /// Writes sorted batches of one partition as they come, rolling to a new file at the target size
-/// (see [`write_partition`]). Memory is the row group being written: files stream out as
-/// multipart uploads.
+/// (see [`write_partition`]). Files are encoded by the shared writer (`timelake_format::file`),
+/// columns in parallel, and stream out as multipart uploads, so memory is the row group being
+/// encoded.
 pub(crate) struct PartitionWriter<'a> {
     table: &'a Table,
     partition: Option<i32>,
-    builder: ParquetWriterBuilder,
+    props: WriterProperties,
     uploads: &'a Uploads,
     dir: String,
-    target: usize,
-    open: Option<ParquetFileWriter>,
-    files: Vec<iceberg::spec::DataFileBuilder>,
+    target: u64,
+    open: Option<(String, FileWriter, DeferredWriter)>,
+    files: Vec<DataFile>,
 }
 
 impl<'a> PartitionWriter<'a> {
@@ -204,15 +165,14 @@ impl<'a> PartitionWriter<'a> {
         uploads: &'a Uploads,
     ) -> Self {
         let contract = table.contract();
-        let builder = ParquetWriterBuilder::new(props.clone(), table.metadata().current_schema().clone());
         let dir = match (partition, &contract.time_column, contract.chunk) {
             (Some(v), Some(time_column), Some(chunk)) => {
                 format!("{}/data/{time_column}_{chunk}={}", table.location(), chunk.label(v))
             }
             _ => format!("{}/data", table.location()),
         };
-        let target = usize::try_from(contract.target_file_size).unwrap_or(usize::MAX);
-        Self { table, partition, builder, uploads, dir, target, open: None, files: vec![] }
+        let props = props.clone();
+        Self { table, partition, props, uploads, dir, target: contract.target_file_size, open: None, files: vec![] }
     }
 
     /// Writes rows that sort after every row written so far.
@@ -220,47 +180,78 @@ impl<'a> PartitionWriter<'a> {
         if batch.num_rows() == 0 {
             return Ok(());
         }
-        let mut writer = if let Some(w) = self.open.take() {
-            w
+        let (uri, mut writer, mut upload) = if let Some(open) = self.open.take() {
+            open
         } else {
             let uri = format!("{}/{}.parquet", self.dir, uuid::Uuid::now_v7());
-            let output = self.table.lake().storage().deferred_output_file(&uri, self.uploads);
-            self.builder.clone().build(output).await?
+            let writer = FileWriter::new(self.table.schema(), self.props.clone())?;
+            let upload = self.table.lake().storage().deferred_writer(&uri, self.uploads)?;
+            (uri, writer, upload)
         };
-        writer.write(batch).await?;
-        if writer.current_written_size() >= self.target {
-            self.files.extend(writer.close().await?);
+        writer.write(batch)?;
+        upload.put(writer.take()).await?;
+        if writer.size() >= self.target {
+            self.close(uri, writer, upload).await?;
         } else {
-            self.open = Some(writer);
+            self.open = Some((uri, writer, upload));
         }
+        Ok(())
+    }
+
+    async fn close(&mut self, uri: String, writer: FileWriter, mut upload: DeferredWriter) -> Result<()> {
+        let (rest, stats) = writer.finish()?;
+        upload.put(rest).await?;
+        upload.close();
+        self.files.push(data_file(self.table, uri, self.partition, &stats)?);
         Ok(())
     }
 
     /// Closes the last file; returns the files written.
     pub(crate) async fn finish(mut self) -> Result<Vec<DataFile>> {
-        if let Some(writer) = self.open.take() {
-            self.files.extend(writer.close().await?);
+        if let Some((uri, writer, upload)) = self.open.take() {
+            self.close(uri, writer, upload).await?;
         }
-        let metadata = self.table.metadata();
-        let spec_id = metadata.default_partition_spec().spec_id();
-        let sort_order_id = (!self.table.contract().sort_columns().is_empty())
-            .then(|| i32::try_from(metadata.default_sort_order_id()))
-            .transpose()
-            .map_err(|_| Error::invalid("sort order id out of range"))?;
-        let partition = self.partition;
-        self.files
-            .into_iter()
-            .map(|mut b| {
-                b.content(DataContentType::Data).partition(partition_struct(partition)).partition_spec_id(spec_id);
-                if let Some(id) = sort_order_id {
-                    b.sort_order_id(id);
-                }
-                b.build().map_err(|e| {
-                    iceberg::Error::new(iceberg::ErrorKind::Unexpected, "building data file").with_source(e).into()
-                })
-            })
-            .collect()
+        Ok(self.files)
     }
+}
+
+/// The Iceberg entry of a data file the shared writer wrote, with the statistics iceberg-rust's
+/// writer would record.
+fn data_file(table: &Table, uri: String, partition: Option<i32>, stats: &FileStats) -> Result<DataFile> {
+    let metadata = table.metadata();
+    let schema = metadata.current_schema();
+    let datums = |bounds: &std::collections::BTreeMap<i32, Vec<u8>>| -> Result<HashMap<i32, Datum>> {
+        let mut out = HashMap::new();
+        for (id, bytes) in bounds {
+            if let Some(Type::Primitive(ty)) = schema.field_by_id(*id).map(|f| f.field_type.as_ref()) {
+                out.insert(*id, Datum::try_from_bytes(bytes, ty.clone())?);
+            }
+        }
+        Ok(out)
+    };
+    let counts = |m: &std::collections::BTreeMap<i32, u64>| m.iter().map(|(k, v)| (*k, *v)).collect::<HashMap<_, _>>();
+    let mut b = DataFileBuilder::default();
+    b.content(DataContentType::Data)
+        .file_path(uri)
+        .file_format(DataFileFormat::Parquet)
+        .partition(partition_struct(partition))
+        .partition_spec_id(metadata.default_partition_spec().spec_id())
+        .record_count(stats.record_count)
+        .file_size_in_bytes(stats.file_size)
+        .column_sizes(counts(&stats.column_sizes))
+        .value_counts(counts(&stats.value_counts))
+        .null_value_counts(counts(&stats.null_counts))
+        .nan_value_counts(counts(&stats.nan_counts))
+        .lower_bounds(datums(&stats.lower_bounds)?)
+        .upper_bounds(datums(&stats.upper_bounds)?)
+        .split_offsets(Some(stats.split_offsets.clone()));
+    if !table.contract().sort_columns().is_empty() {
+        let id = i32::try_from(metadata.default_sort_order_id())
+            .map_err(|_| Error::invalid("sort order id out of range"))?;
+        b.sort_order_id(id);
+    }
+    b.build()
+        .map_err(|e| iceberg::Error::new(iceberg::ErrorKind::Unexpected, "building data file").with_source(e).into())
 }
 
 pub(crate) fn partition_struct(v: Option<i32>) -> Struct {
@@ -275,4 +266,48 @@ pub(crate) fn partition_struct(v: Option<i32>) -> Struct {
 pub(crate) fn row_groups(batch: RecordBatch, rows: usize) -> impl Iterator<Item = RecordBatch> {
     let n = batch.num_rows();
     (0..n).step_by(rows.max(1)).map(move |i| batch.slice(i, rows.min(n - i)))
+}
+
+#[cfg(test)]
+mod tests {
+    use iceberg::writer::file_writer::{FileWriter as _, FileWriterBuilder, ParquetWriterBuilder};
+
+    use super::*;
+    use crate::testing::{T0, batch, faulty_lake, opts, schema};
+
+    /// The shared writer records what iceberg-rust's writer records for the same rows, and writes
+    /// the same bytes.
+    #[tokio::test]
+    async fn shared_writer_matches_iceberg_rust() {
+        let (lake, _store) = faulty_lake();
+        let t = lake.create_table("iot.r", &schema(), opts()).await.unwrap();
+        let rows: Vec<(i64, i32, f64)> = (0..50_000)
+            .map(|i| (T0 + i64::from(i), i % 9, if i % 7 == 0 { f64::NAN } else { f64::from(i) / 3.0 }))
+            .collect();
+        let (partition, sorted) = sort_and_split(&t, &[batch(&rows)]).unwrap().remove(0);
+        let props = writer_properties(&t).unwrap();
+
+        let uploads = Uploads::default();
+        let ours = write_partition(&t, partition, [sorted.clone()], &props, &uploads).await.unwrap().remove(0);
+        uploads.send().await.unwrap();
+
+        let builder = ParquetWriterBuilder::new(props, t.metadata().current_schema().clone());
+        let uri = format!("{}/data/theirs.parquet", t.location());
+        let mut writer = builder.build(lake.storage().deferred_output_file(&uri, &uploads)).await.unwrap();
+        writer.write(&sorted).await.unwrap();
+        let theirs = writer.close().await.unwrap().remove(0).partition(partition_struct(partition)).build().unwrap();
+        uploads.send().await.unwrap();
+
+        assert_eq!(ours.record_count(), theirs.record_count());
+        assert_eq!(ours.file_size_in_bytes(), theirs.file_size_in_bytes());
+        assert_eq!(ours.column_sizes(), theirs.column_sizes());
+        assert_eq!(ours.value_counts(), theirs.value_counts());
+        assert_eq!(ours.null_value_counts(), theirs.null_value_counts());
+        assert_eq!(ours.nan_value_counts(), theirs.nan_value_counts());
+        assert_eq!(ours.lower_bounds(), theirs.lower_bounds());
+        assert_eq!(ours.upper_bounds(), theirs.upper_bounds());
+        assert_eq!(ours.split_offsets(), theirs.split_offsets());
+        let storage = lake.storage();
+        assert_eq!(storage.read(ours.file_path()).await.unwrap(), storage.read(theirs.file_path()).await.unwrap());
+    }
 }

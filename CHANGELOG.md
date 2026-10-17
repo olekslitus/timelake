@@ -21,6 +21,9 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
 - **Compaction streams.** Compaction merges its input files as sorted streams instead of loading a partition into
   memory, so its memory no longer grows with the partition. Full compaction of TSBS IoT (72 hourly files into 3 days):
   3.65 → 2.37 s, peak memory 1.95 → 0.53 GB, with identical files.
+- **Columns are encoded in parallel.** Timelake writes Parquet with its own writer (shared with the coming WebAssembly
+  writer), encoding each row group's columns on threads of their own. The files are the same, byte for byte. The
+  compaction above takes 1.17 s instead of 2.37 s; importing 11.7M rows 4.7 s instead of 6.0 s.
 
 ## 0.5.0 – 2026-10-17
 

@@ -82,7 +82,7 @@ What lives where, which technologies are used and why, and how a write and a que
 | `cache.rs` | Small bounded caches for files that never change once written (manifests, manifest lists, last-value indexes) and recently loaded table versions. |
 | `schema.rs` | Fits Arrow data to a table: types Iceberg can store on create (`normalize_schema`), columns matched by name and cast on write (`align_batch`). |
 | `sort.rs` | One sorting helper: sort by key columns keeping input order on ties, and keep the last row of each group. Used for writing, dedup, and the last-value index. |
-| `write.rs` | Turns batches into Parquet: `sort_and_split` (sort by partition, series, time), `writer_properties` (compression, encodings, statistics), `write_partition`. |
+| `write.rs` | Turns batches into Parquet: `sort_and_split` (sort by partition, series, time) and `PartitionWriter`, which writes sorted batches into files of the target size through the shared file writer (`timelake_format::file`: settings, columns encoded in parallel, and the statistics Iceberg records) and streams them out as multipart uploads. |
 | `lvi.rs` | The last-value index: the newest row per series, merged with the previous index, read and written as Parquet. |
 | `commit.rs` | The commit layer. A `SnapshotWriter` prepares manifests, the last-value index, and the manifest list, uploads them with the data files in one round, then commits the new metadata with `write_if_absent`; a lost race cleans up and retries (up to 10 times). Three kinds of change: append, replace (compaction) and delete (retention). |
 | `background.rs` | Writes a call doesn't wait for (the version hint and the head), and `flush`, which waits for them before a process exits. |
@@ -99,7 +99,7 @@ Tests live next to the code (`#[cfg(test)]` modules, with test storage in `testi
 `timelake append iot.readings day1.csv`, or `t.append(batch)` in Python, ends up in `Table::append` (`append.rs`):
 
 1. `sort_and_split` (`write.rs`): match columns to the table, compute each row's day, sort by day, series key, and time, and cut the batch into one piece per day.
-2. `write_partition` (`write.rs`): encode each day's rows as Parquet under `data/time_day=…/`, several days at a time. Each file comes back with its path, size, row count, and min/max per column; its upload waits in an `Uploads` queue (a large file's earlier parts are already sent).
+2. `write_partition` (`write.rs`): encode each day's rows as Parquet under `data/time_day=…/`, several days at a time, each row group's columns on threads of their own. Each file comes back with its path, size, row count, and min/max per column; its upload waits in an `Uploads` queue (a large file's earlier parts are already sent).
 3. `latest_per_series` (`lvi.rs`): the newest row of each series in the new data.
 4. `commit` (`commit.rs`): a `SnapshotWriter` prepares a manifest for the new files, the merged last-value index, and the manifest list, then uploads them and the data files at once. With more than eight manifests, the old ones are merged into one so reads stay quick.
 5. `publish` (`commit.rs`): `write_if_absent(vN+1.metadata.json)`. If the file already exists, another writer won: delete every file this attempt wrote, reload, and retry. On success, update `version-hint.text` and the head in the background (`background.rs`, `head/`).

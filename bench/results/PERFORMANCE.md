@@ -3,6 +3,20 @@
 Measurements for the steps of the performance plan ([SPEC.md §19.1](../../SPEC.md)), newest first. Each step is
 measured from a laptop (M1 Pro) over the internet, against the numbers before it.
 
+## Columns encoded in parallel (2026-10-17)
+
+Same machine, data and method as streaming compaction below. The shared file writer (`timelake_format::file`)
+encodes each row group's columns on scoped threads; files are byte-identical to iceberg-rust's writer (test
+`write::tests::shared_writer_matches_iceberg_rust`).
+
+| | Before (streaming merge) | Parallel columns |
+|---|---:|---:|
+| `maintain` (72 files → 3), 3 runs | 2.41, 2.37, 2.37 s | 1.21, 1.16, 1.17 s |
+| Peak RSS | 529–542 MB | 424–480 MB |
+| `import` of `readings.parquet` (11.7M rows, one append, `--no-maintain`), 2 runs | 6.25, 5.82 s (`d703958`) | 4.82, 4.62 s |
+
+User CPU for `maintain` stays about 3.2 s: the same work on more cores.
+
 ## Streaming compaction (2026-10-17, SPEC §10.1)
 
 Laptop (M1 Pro), local disk, release build. TSBS IoT readings (11,671,497 rows, 2026-01-01 to 01-03) split into 72

@@ -24,6 +24,8 @@ use std::fmt;
 
 pub mod bounds;
 pub mod contract;
+#[cfg(feature = "write")]
+pub mod file;
 #[cfg(feature = "head")]
 pub mod head;
 #[cfg(feature = "write")]
