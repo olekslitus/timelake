@@ -1103,12 +1103,20 @@ dependencies = [
 name = "timelake-format"
 version = "0.5.0"
 dependencies = [
+ "apache-avro",
+ "arrow-arith",
  "arrow-array",
+ "arrow-cast",
  "arrow-ipc",
  "arrow-json",
+ "arrow-ord",
+ "arrow-row",
  "arrow-schema",
  "arrow-select",
+ "bytes",
  "chrono",
+ "futures-util",
+ "parquet",
  "serde",
  "serde_json",
 ]
@@ -1121,6 +1129,7 @@ dependencies = [
  "arrow-arith",
  "arrow-array",
  "arrow-cast",
+ "arrow-ipc",
  "arrow-json",
  "arrow-ord",
  "arrow-row",
@@ -1138,6 +1147,7 @@ dependencies = [
  "thiserror",
  "timelake-format",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]
@@ -1147,6 +1157,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2c9d3793400a45f954c52e73d068316d76b6f4e36977e3fcebb13a2721e80237"
 dependencies = [
  "crunchy",
+]
+
+[[package]]
+name = "tokio"
+version = "1.53.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ce3335fa71841cda333a58d7615b03901380ecf09d59b3296d21f8bbac0dde4e"
+dependencies = [
+ "pin-project-lite",
 ]
 
 [[package]]
@@ -1210,6 +1229,17 @@ dependencies = [
  "rustversion",
  "wasm-bindgen-macro",
  "wasm-bindgen-shared",
+]
+
+[[package]]
+name = "wasm-bindgen-futures"
+version = "0.4.79"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3cbab34de2d982e9b48e18d216d04c4a6f641066ff19ffb699980f591ee3610e"
+dependencies = [
+ "js-sys",
+ "tokio",
+ "wasm-bindgen",
 ]
 
 [[package]]

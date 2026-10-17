@@ -100,6 +100,32 @@ export class Table {
 }
 
 /**
+ * Writes one table: keeps the version it last loaded or committed, so a steady writer doesn't
+ * reload the table before each append (a commit that loses to another writer reloads it).
+ */
+export class Writer {
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * Appends rows given as an Arrow IPC stream.
+     */
+    appendIpc(ipc: Uint8Array, options: any): Promise<any>;
+    /**
+     * Appends rows given as a JSON array of objects. Timestamps are epoch milliseconds or ISO
+     * strings (millisecond precision; use `appendIpc` for microseconds).
+     */
+    appendJson(rows_json: string, options: any): Promise<any>;
+    /**
+     * A writer of the table at `location` (its root URI) through `store`.
+     */
+    constructor(store: any, location: string);
+    /**
+     * The table's columns (name, type, required), loading the table if needed.
+     */
+    schema(): Promise<any>;
+}
+
+/**
  * Version of this crate.
  */
 export function version(): string;
@@ -111,6 +137,7 @@ export interface InitOutput {
     readonly __wbg_parquetfile_free: (a: number, b: number) => void;
     readonly __wbg_query_free: (a: number, b: number) => void;
     readonly __wbg_table_free: (a: number, b: number) => void;
+    readonly __wbg_writer_free: (a: number, b: number) => void;
     readonly parquetfile_addRange: (a: number, b: number, c: number, d: number) => [number, number];
     readonly parquetfile_footerLength: (a: number, b: number) => [number, number, number];
     readonly parquetfile_new: (a: number, b: number, c: number) => [number, number, number];
@@ -131,6 +158,10 @@ export interface InitOutput {
     readonly table_queryLastValues: (a: number, b: any) => [number, number, number, number];
     readonly table_version: (a: number) => [number, number];
     readonly version: () => [number, number];
+    readonly writer_appendIpc: (a: number, b: number, c: number, d: any) => any;
+    readonly writer_appendJson: (a: number, b: number, c: number, d: any) => any;
+    readonly writer_new: (a: any, b: number, c: number) => number;
+    readonly writer_schema: (a: number) => any;
     readonly rust_zstd_wasm_shim_calloc: (a: number, b: number) => number;
     readonly rust_zstd_wasm_shim_free: (a: number) => void;
     readonly rust_zstd_wasm_shim_malloc: (a: number) => number;
@@ -139,11 +170,14 @@ export interface InitOutput {
     readonly rust_zstd_wasm_shim_memmove: (a: number, b: number, c: number) => number;
     readonly rust_zstd_wasm_shim_memset: (a: number, b: number, c: number) => number;
     readonly rust_zstd_wasm_shim_qsort: (a: number, b: number, c: number, d: number) => void;
+    readonly wasm_bindgen_bedb11be96d84d49___convert__closures_____invoke___js_sys_b3794bb173fea9cc___Function_fn_wasm_bindgen_bedb11be96d84d49___JsValue_____wasm_bindgen_bedb11be96d84d49___sys__Undefined___js_sys_b3794bb173fea9cc___Function_fn_wasm_bindgen_bedb11be96d84d49___JsValue_____wasm_bindgen_bedb11be96d84d49___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;
+    readonly wasm_bindgen_bedb11be96d84d49___convert__closures_____invoke___wasm_bindgen_bedb11be96d84d49___JsValue__core_608f92abc48d28da___result__Result_____wasm_bindgen_bedb11be96d84d49___JsError___true_: (a: number, b: number, c: any) => [number, number];
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;
     readonly __externref_table_alloc: () => number;
     readonly __wbindgen_externrefs: WebAssembly.Table;
+    readonly __wbindgen_destroy_closure: (a: number, b: number) => void;
     readonly __externref_table_dealloc: (a: number) => void;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __externref_drop_slice: (a: number, b: number) => void;

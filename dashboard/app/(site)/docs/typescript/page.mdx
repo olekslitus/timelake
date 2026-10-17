@@ -2,7 +2,7 @@ export const metadata = { title: "TypeScript client" }
 
 # TypeScript client
 
-`@timelake/client` reads Timelake tables over HTTPS from the browser, Node, Bun, or serverless functions. A WebAssembly build of Timelake's reader (`crates/timelake-wasm`) parses the Iceberg metadata, prunes files and row groups, decodes Parquet, and computes aggregates. The package only fetches the byte ranges the reader asks for. There is no server and no query engine to run. Rows can be validated and typed with Zod.
+`@timelake/client` reads Timelake tables over HTTPS from the browser, Node, Bun, or serverless functions, and appends to them from the same places ([Writing](#writing)). A WebAssembly build of Timelake's reader (`crates/timelake-wasm`) parses the Iceberg metadata, prunes files and row groups, decodes Parquet, and computes aggregates. The package only fetches the byte ranges the reader asks for. There is no server and no query engine to run. Rows can be validated and typed with Zod.
 
 ```ts
 import { z } from "zod"
@@ -56,6 +56,30 @@ A warehouse served over plain HTTP(S), such as Vercel Blob, a public S3, R2 or G
 
 `series` is a value or a list of values of the first series-key column, or an object such as `{ device_id: ["a", "b"] }`. Times are `Date` objects, ISO strings, or epoch milliseconds. Durations are written like `500ms`, `30s`, `10m`, `1h`, `1d` or `1w`, or given as a number of milliseconds. Buckets are aligned to the Unix epoch.
 
+## Writing
+
+`TableWriter` appends to a table from JavaScript: a Cloudflare Worker, Node, Deno, Bun, or a browser. The WebAssembly module runs the engine's write path. It aligns rows to the table's schema, adds the insertion time, sorts by series and time, keeps the last of rows with the same series and time, and writes one Parquet file per time partition. Then it commits the way the engine does, and updates the last-value index and the head. The engine, DuckDB, and the reader above see the rows like any others.
+
+```ts
+import { TableWriter, r2Store } from "@timelake/client"
+
+export default {
+  async queue(batch, env) {
+    // An R2 binding LAKE on the bucket that holds s3://my-bucket/lake.
+    const writer = new TableWriter(r2Store(env.LAKE), "s3://my-bucket/lake", "iot.readings")
+    const rows = batch.messages.map((m) => m.body)          // { time, device, temp }
+    await writer.append(rows, { batchId: batch.messages[0].id })
+  },
+}
+```
+
+- **Store.** A writer reads and writes objects through a `Store`: `r2Store` for an R2 binding, `memoryStore` for tests, or your own (`get`, `getRange`, `put`, `putIfAbsent`, `list`, `delete`, and optionally `upload` for multipart uploads). `putIfAbsent` must be atomic, because commits rely on it. The second argument is the warehouse root as the table metadata records it. Keys are what follows the bucket.
+- **Rows.** Pass objects or an Arrow IPC stream. In objects, times are `Date`s, ISO strings, or epoch milliseconds (millisecond precision). Use Arrow IPC for microseconds. A column the table doesn't have, or a missing required one, is an error, and nothing is written.
+- **Commits.** A writer keeps the version it last committed, so a steady writer doesn't reload the table before each append. If another writer committed in between, the commit reloads and retries. A `batchId` makes retries safe: an append whose batch id is already in the table is skipped.
+- **One writer per table works best:** a Queues consumer or a Durable Object that collects rows into appends of a few thousand or more. Concurrent writers are safe, but each conflict costs a retry, and many small appends make many small files.
+- **Creating tables.** Create the table first with the CLI or Python. Writers can't create tables yet.
+- **Maintenance.** Appends from JavaScript don't compact yet. Run `timelake maintain` elsewhere until they do (SPEC §21.10).
+
 ## How a query runs
 
 1. Read the table's head object (`metadata/timelake-head`) and `version-hint.text` at the same time. The head holds the metadata, the files, and usually the last-value index and file footers, so a `latest` query needs no further request. A HEAD request for the next version runs alongside the query; if one exists, the result is dropped and the query reruns on the newest version. Tables without a head are read through the metadata, the manifest list, and the manifests. A loaded version is reused for `cacheMs`, and after that only checked for a newer one.
@@ -65,7 +89,7 @@ A warehouse served over plain HTTP(S), such as Vercel Blob, a public S3, R2 or G
 
 ## Limits
 
-- It is a reader: writes go through the CLI, the Python package, or the Rust library.
+- Writes are appends to existing tables (see [Writing](#writing)); creating tables and schema changes go through the CLI, the Python package, or the Rust library.
 - It answers time-series query shapes, not arbitrary SQL. For SQL, use the engine (CLI, Python) or plain DuckDB.
 - The WASM module is embedded as base64, about 8 MB of JavaScript (about 2 MB gzipped). That is fine on servers; in browsers, load it lazily.
 - Pruning works at the row-group level. Tables meant for web reads should use smaller row groups (the demo uses `timelake.row-group-rows=65536`).
