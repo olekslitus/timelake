@@ -4239,7 +4239,9 @@ dependencies = [
 name = "timelake-format"
 version = "0.5.0"
 dependencies = [
+ "arrow-arith",
  "arrow-array",
+ "arrow-cast",
  "arrow-ipc",
  "arrow-json",
  "arrow-ord",

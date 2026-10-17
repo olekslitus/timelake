@@ -15,11 +15,22 @@ categories = ["database-implementations"]
 head = ["dep:arrow-array", "dep:arrow-ipc", "dep:arrow-json", "dep:arrow-schema", "dep:arrow-select", "dep:serde", "dep:serde_json"]
 # Writing tables without I/O, shared by the engine and the WASM writer: Parquet files with their Iceberg
 # statistics, and the streaming merge of compaction.
-write = ["dep:arrow-array", "dep:arrow-ord", "dep:arrow-row", "dep:arrow-schema", "dep:arrow-select", "dep:parquet"]
+write = [
+    "dep:arrow-arith",
+    "dep:arrow-array",
+    "dep:arrow-cast",
+    "dep:arrow-ord",
+    "dep:arrow-row",
+    "dep:arrow-schema",
+    "dep:arrow-select",
+    "dep:parquet",
+]
 
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["alloc"] }
+arrow-arith = { version = "58", optional = true }
 arrow-array = { version = "58", optional = true }
+arrow-cast = { version = "58", optional = true }
 arrow-ipc = { version = "58", default-features = false, features = ["zstd"], optional = true }
 arrow-json = { version = "58", optional = true }
 arrow-ord = { version = "58", optional = true }

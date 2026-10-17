@@ -1,115 +1,33 @@
 //! The write path: align incoming Arrow data to the table schema, sort it by
 //! `(series_key…, time)`, split it by time partition, and write Parquet laid out for time series.
 
-use std::sync::Arc;
-
-use arrow::array::{Array, ArrayRef, Int32Array, RecordBatch, TimestampMicrosecondArray};
-use arrow::compute::kernels::zip::zip;
-use arrow::compute::{cast, concat_batches, is_not_null, take_record_batch};
-use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use std::collections::HashMap;
 
+use arrow::array::RecordBatch;
 use iceberg::spec::{
     DataContentType, DataFile, DataFileBuilder, DataFileFormat, Datum, Literal, PrimitiveLiteral, Struct, Type,
 };
 use parquet::file::properties::WriterProperties;
 use timelake_format::file::{FileStats, FileWriter};
 
-use crate::contract::Contract;
 use crate::error::{Error, Result};
-use crate::schema::{UTC, align_batch};
-use crate::sort::{columns, last_per_group, stable_sort_indices};
 use crate::storage::{DeferredWriter, Uploads};
 use crate::table::Table;
 
-/// Rows of one time partition (`None` for unpartitioned tables), sorted by the table's sort key.
-pub(crate) type PartitionRows = (Option<i32>, RecordBatch);
+pub(crate) use timelake_format::rows::PartitionRows;
 
 /// Concatenates, sorts by `(partition, series…, time)` with input order as the tiebreak, splits by
 /// partition and, when dedup is on, keeps the last of rows with the same `(series…, time)`: every
 /// file is then free of duplicates on its own, which dedup on read relies on.
 pub(crate) fn sort_and_split(table: &Table, batches: &[RecordBatch]) -> Result<Vec<PartitionRows>> {
-    let split = sort_and_split_all(table, batches)?;
-    let keys = table.contract().sort_columns();
-    if !table.contract().dedup || keys.is_empty() {
-        return Ok(split);
-    }
-    split.into_iter().map(|(p, rows)| Ok((p, last_per_group(&rows, &keys)?))).collect()
-}
-
-fn sort_and_split_all(table: &Table, batches: &[RecordBatch]) -> Result<Vec<PartitionRows>> {
-    let schema = table.schema();
     let now = chrono::Utc::now().timestamp_micros();
-    let ingest = table.contract().ingest_time_column.as_deref();
-    let aligned = batches
-        .iter()
-        .filter(|b| b.num_rows() > 0)
-        .map(|b| align_batch(&ingest.map_or_else(|| Ok(b.clone()), |c| with_ingest_time(b, c, now))?, &schema))
-        .collect::<Result<Vec<_>>>()?;
-    if aligned.is_empty() {
-        return Ok(vec![]);
-    }
-    let all = concat_batches(&schema, &aligned)?;
-    let partitions = partition_values(&all, table.contract())?;
-    let mut keys: Vec<ArrayRef> =
-        partitions.iter().map(|p| Arc::new(Int32Array::from(p.clone())) as ArrayRef).collect();
-    keys.extend(columns(&all, &table.contract().write_order())?);
-    if keys.is_empty() {
-        return Ok(vec![(None, all)]);
-    }
-    let order = stable_sort_indices(&keys, all.num_rows())?;
-    let sorted = take_record_batch(&all, &order)?;
-    let Some(partitions) = partitions else { return Ok(vec![(None, sorted)]) };
-
-    // Rows are now grouped by partition: slice out each run.
-    let sorted_partitions: Vec<i32> = order.values().iter().map(|&i| partitions[i as usize]).collect();
-    let mut out = vec![];
-    let mut offset = 0;
-    for run in sorted_partitions.chunk_by(|a, b| a == b) {
-        out.push((Some(run[0]), sorted.slice(offset, run.len())));
-        offset += run.len();
-    }
-    Ok(out)
+    Ok(timelake_format::rows::sort_and_split(&table.schema(), table.contract(), batches, now)?)
 }
 
-/// `batch` with its insertion-time `column` set to `now` (µs since the epoch) where it is missing or
-/// null; values a caller supplied (an import keeping arrival times) stay.
+/// `batch` with its insertion-time `column` set to `now` where it is missing or null.
+#[cfg(test)]
 pub(crate) fn with_ingest_time(batch: &RecordBatch, column: &str, now: i64) -> Result<RecordBatch> {
-    let n = batch.num_rows();
-    let fill = || Arc::new(TimestampMicrosecondArray::from_value(now, n).with_timezone(UTC)) as ArrayRef;
-    let schema = batch.schema();
-    let Ok(i) = schema.index_of(column) else {
-        let mut fields: Vec<_> = schema.fields().iter().cloned().collect();
-        fields.push(Arc::new(Field::new(column, DataType::Timestamp(TimeUnit::Microsecond, Some(UTC.into())), false)));
-        let mut columns = batch.columns().to_vec();
-        columns.push(fill());
-        return Ok(RecordBatch::try_new(Arc::new(Schema::new(fields)), columns)?);
-    };
-    if batch.column(i).null_count() == 0 {
-        return Ok(batch.clone());
-    }
-    let given = cast(batch.column(i), &DataType::Timestamp(TimeUnit::Microsecond, Some(UTC.into())))?;
-    let filled = zip(&is_not_null(&given)?, &given, &fill())?;
-    let mut fields: Vec<_> = schema.fields().iter().cloned().collect();
-    fields[i] = Arc::new(Field::new(column, filled.data_type().clone(), false));
-    let mut columns = batch.columns().to_vec();
-    columns[i] = filled;
-    Ok(RecordBatch::try_new(Arc::new(Schema::new(fields)), columns)?)
-}
-
-/// Partition value of every row (`None` for unpartitioned tables).
-fn partition_values(batch: &RecordBatch, contract: &Contract) -> Result<Option<Vec<i32>>> {
-    let (Some(time_column), Some(chunk)) = (&contract.time_column, contract.chunk) else { return Ok(None) };
-    let times =
-        cast(batch.column(batch.schema().index_of(time_column)?), &DataType::Timestamp(TimeUnit::Microsecond, None))?;
-    let Some(times) = times.as_any().downcast_ref::<TimestampMicrosecondArray>() else {
-        return Err(Error::invalid(format!("time column {time_column:?} is not a timestamp")));
-    };
-    if times.null_count() > 0 {
-        return Err(Error::invalid(format!("time column {time_column:?} contains nulls")));
-    }
-    let values = times.values().iter().map(|&t| chunk.value(t)).collect::<timelake_format::Result<_>>()?;
-    Ok(Some(values))
+    Ok(timelake_format::rows::with_ingest_time(batch, column, now)?)
 }
 
 /// Parquet settings for the table's data files (see `timelake_format::file::writer_properties`).

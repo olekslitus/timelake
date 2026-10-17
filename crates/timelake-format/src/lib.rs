@@ -25,11 +25,15 @@ use std::fmt;
 pub mod bounds;
 pub mod contract;
 #[cfg(feature = "write")]
+pub mod error;
+#[cfg(feature = "write")]
 pub mod file;
 #[cfg(feature = "head")]
 pub mod head;
 #[cfg(feature = "write")]
 pub mod merge;
+#[cfg(feature = "write")]
+pub mod rows;
 pub mod settings;
 pub mod version;
 
