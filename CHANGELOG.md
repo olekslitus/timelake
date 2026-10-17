@@ -13,8 +13,10 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
 - **Writes from JavaScript.** `TableWriter` in `@timelake/client` appends to tables from Cloudflare Workers, Node,
   Deno, Bun, or browsers, through a `Store` (`r2Store` for an R2 binding, `memoryStore`, or your own). The
   WebAssembly module runs the engine's write path: the same row preparation, Parquet files, commits with retries, last-value
-  index and head. Rows are objects or an Arrow IPC stream; `batchId` makes retries safe. Tables are created
-  with the CLI or Python, and appends from JavaScript don't compact yet (SPEC §21.10).
+  index and head. Rows are objects or an Arrow IPC stream; `batchId` makes retries safe. Appends run inline
+  maintenance like the engine's (size-tier and cold-partition compaction by streaming merge, within `maxCompactBytes`,
+  default 64 MiB; retention; snapshot expiry), and `writer.maintain()` runs a full pass. Tables are created with
+  the CLI or Python (SPEC §21.10).
 - **Version check interval.** The setting `version-check-interval` (table or session) says how long the Timelake
   reader uses a table version it loaded or checked before checking for a newer one. Within it, queries send no
   request for the table's version, and can miss commits by other processes; the process's own commits are seen at

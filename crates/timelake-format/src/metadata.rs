@@ -162,6 +162,69 @@ impl Metadata {
         self.0.get("last-updated-ms").and_then(Value::as_i64).unwrap_or(0)
     }
 
+    /// Every snapshot: id, timestamp (ms), manifest list, and last-value index.
+    pub fn snapshot_list(&self) -> Vec<SnapshotRef> {
+        self.snapshots()
+            .iter()
+            .filter_map(|s| {
+                Some(SnapshotRef {
+                    id: s.get("snapshot-id")?.as_i64()?,
+                    timestamp_ms: s.get("timestamp-ms").and_then(Value::as_i64).unwrap_or(0),
+                    manifest_list: s.get("manifest-list")?.as_str()?.to_string(),
+                    last_value_index: s
+                        .pointer("/summary/timelake.last-value-index")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                })
+            })
+            .collect()
+    }
+
+    /// Entries in the metadata log.
+    pub fn metadata_log_len(&self) -> usize {
+        self.0.get("metadata-log").and_then(Value::as_array).map_or(0, Vec::len)
+    }
+
+    /// This metadata without the snapshots `ids`, as iceberg-rust's builder removes them: refs to
+    /// them go, and the snapshot log keeps only what follows the last entry of a removed snapshot
+    /// (so it has no gaps). `previous` is recorded in the metadata log.
+    pub fn without_snapshots(&self, ids: &[i64], previous: &str, now_ms: i64) -> WriteResult<Self> {
+        let mut m = self.0.clone();
+        let obj = m.as_object_mut().ok_or_else(|| corrupt("not an object"))?;
+        let removed = |v: &Value| v.get("snapshot-id").and_then(Value::as_i64).is_some_and(|id| ids.contains(&id));
+        if let Some(Value::Array(snapshots)) = obj.get_mut("snapshots") {
+            snapshots.retain(|s| !removed(s));
+        }
+        if let Some(Value::Object(refs)) = obj.get_mut("refs") {
+            refs.retain(|_, r| !removed(r));
+        }
+        if let Some(Value::Array(log)) = obj.get_mut("snapshot-log") {
+            let mut kept = vec![];
+            for entry in log.drain(..) {
+                if removed(&entry) {
+                    kept.clear();
+                } else {
+                    kept.push(entry);
+                }
+            }
+            *log = kept;
+        }
+        push(obj, "metadata-log", json!({"metadata-file": previous, "timestamp-ms": self.last_updated_ms()}));
+        let keep = self
+            .properties()
+            .get("write.metadata.previous-versions-max")
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(PREVIOUS_VERSIONS_MAX)
+            .max(1);
+        if let Some(Value::Array(log)) = obj.get_mut("metadata-log")
+            && log.len() > keep
+        {
+            log.drain(..log.len() - keep);
+        }
+        obj.insert("last-updated-ms".into(), json!(now_ms));
+        Ok(Self(m))
+    }
+
     /// This metadata with `snapshot` added as the current snapshot of `main`, `previous` (this
     /// version's file) recorded in the metadata log, updated at `now_ms`.
     pub fn with_snapshot(&self, snapshot: &NewSnapshot, previous: &str, now_ms: i64) -> WriteResult<Self> {
@@ -210,6 +273,19 @@ fn push(obj: &mut Map<String, Value>, key: &str, value: Value) {
             obj.insert(key.into(), Value::Array(vec![value]));
         }
     }
+}
+
+/// A snapshot as expiry needs it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SnapshotRef {
+    /// Its id.
+    pub id: i64,
+    /// When it was made (ms since the epoch).
+    pub timestamp_ms: i64,
+    /// Its manifest list.
+    pub manifest_list: String,
+    /// Its last-value index.
+    pub last_value_index: Option<String>,
 }
 
 /// A snapshot to add (see [`Metadata::with_snapshot`]).

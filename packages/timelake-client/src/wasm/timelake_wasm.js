@@ -364,6 +364,16 @@ export class Writer {
         return ret;
     }
     /**
+     * Runs maintenance: retention, compaction (within `maxBytes` read, if given), and snapshot
+     * expiry, as the table's settings say.
+     * @param {any} options
+     * @returns {Promise<any>}
+     */
+    maintain(options) {
+        const ret = wasm.writer_maintain(this.__wbg_ptr, options);
+        return ret;
+    }
+    /**
      * A writer of the table at `location` (its root URI) through `store`.
      * @param {any} store
      * @param {string} location
@@ -744,7 +754,7 @@ function __wbg_get_imports() {
             return ret;
         },
         __wbindgen_generic_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 249, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 272, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen_bedb11be96d84d49___convert__closures_____invoke___wasm_bindgen_bedb11be96d84d49___JsValue__core_608f92abc48d28da___result__Result_____wasm_bindgen_bedb11be96d84d49___JsError___true_);
             return ret;
         },

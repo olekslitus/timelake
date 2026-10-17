@@ -42,6 +42,8 @@ pub mod host;
 #[cfg(feature = "write")]
 pub mod iceberg;
 #[cfg(feature = "write")]
+pub mod maintain;
+#[cfg(feature = "write")]
 pub mod merge;
 #[cfg(feature = "write")]
 pub mod metadata;

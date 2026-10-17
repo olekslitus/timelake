@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use timelake_format::append::{AppendOptions, append};
 use timelake_format::error::{WriteError, WriteResult};
 use timelake_format::host::{Host, Listed, Upload};
+use timelake_format::maintain::{MaintainOptions, MaintainReport, maintain};
 use timelake_format::table::TableState;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::{JsFuture, future_to_promise};
@@ -175,6 +176,10 @@ impl Host for JsHost {
     }
 }
 
+/// Bytes inline compaction reads after an append from JavaScript, unless the call says otherwise:
+/// keeps an append's CPU time within what a Worker request gets (SPEC §21.10).
+const DEFAULT_MAX_COMPACT_BYTES: u64 = 64 << 20;
+
 /// Options of an append, from JavaScript.
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -182,6 +187,60 @@ struct JsAppendOptions {
     batch_id: Option<String>,
     #[serde(default)]
     properties: HashMap<String, String>,
+    maintain: Option<bool>,
+    max_compact_bytes: Option<f64>,
+}
+
+/// Options of a maintenance run, from JavaScript.
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct JsMaintainOptions {
+    compact: Option<bool>,
+    retention: Option<bool>,
+    expire: Option<bool>,
+    max_bytes: Option<f64>,
+}
+
+/// What maintenance did, for JavaScript.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsMaintainReport {
+    partitions_compacted: usize,
+    files_rewritten: usize,
+    files_written: usize,
+    rows_rewritten: u64,
+    bytes_rewritten: u64,
+    duplicates_removed: u64,
+    more_to_compact: bool,
+    partitions_dropped: usize,
+    files_dropped: usize,
+    snapshots_expired: usize,
+    objects_deleted: usize,
+    version: u64,
+}
+
+impl JsMaintainReport {
+    fn new(r: &MaintainReport, version: u64) -> Self {
+        Self {
+            partitions_compacted: r.partitions_compacted,
+            files_rewritten: r.files_rewritten,
+            files_written: r.files_written,
+            rows_rewritten: r.rows_rewritten,
+            bytes_rewritten: r.bytes_rewritten,
+            duplicates_removed: r.duplicates_removed,
+            more_to_compact: r.more_to_compact,
+            partitions_dropped: r.partitions_dropped,
+            files_dropped: r.files_dropped,
+            snapshots_expired: r.snapshots_expired,
+            objects_deleted: r.objects_deleted,
+            version,
+        }
+    }
+}
+
+#[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a byte count from JavaScript")]
+fn byte_count(x: f64) -> u64 {
+    x.max(0.0) as u64
 }
 
 /// What an append did, for JavaScript.
@@ -196,6 +255,10 @@ struct JsAppendReport {
     snapshot_id: String,
     attempts: u64,
     duplicate: bool,
+    /// Inline maintenance, if it did something; an error message if it failed (the append is
+    /// committed either way).
+    maintenance: Option<JsMaintainReport>,
+    maintenance_error: Option<String>,
 }
 
 /// Writes one table: keeps the version it last loaded or committed, so a steady writer doesn't
@@ -233,6 +296,36 @@ impl Writer {
         self.run(options, move |_| rows_from_ipc(&ipc))
     }
 
+    /// Runs maintenance: retention, compaction (within `maxBytes` read, if given), and snapshot
+    /// expiry, as the table's settings say.
+    pub fn maintain(&self, options: JsValue) -> Promise {
+        let (host, location, state) = (self.host.clone(), self.location.clone(), self.state.clone());
+        future_to_promise(async move {
+            let o: JsMaintainOptions = if options.is_undefined() || options.is_null() {
+                JsMaintainOptions::default()
+            } else {
+                serde_wasm_bindgen::from_value(options).map_err(|e| JsValue::from_str(&format!("bad options: {e}")))?
+            };
+            let defaults = MaintainOptions::default();
+            let opts = MaintainOptions {
+                compact: o.compact.unwrap_or(defaults.compact),
+                retention: o.retention.unwrap_or(defaults.retention),
+                expire: o.expire.unwrap_or(defaults.expire),
+                max_bytes: o.max_bytes.map(byte_count),
+                ..defaults
+            };
+            // Maintenance works on the newest version.
+            let table = TableState::load(&host, &location).await.map_err(|e| to_js_err(&e))?;
+            let (table, report) = maintain(&host, table, &opts).await.map_err(|e| {
+                *state.borrow_mut() = None;
+                to_js_err(&e)
+            })?;
+            let report = JsMaintainReport::new(&report, table.version);
+            *state.borrow_mut() = Some(table);
+            serde_wasm_bindgen::to_value(&report).map_err(Into::into)
+        })
+    }
+
     /// The table's columns (name, type, required), loading the table if needed.
     pub fn schema(&self) -> Promise {
         let (host, location, state) = (self.host.clone(), self.location.clone(), self.state.clone());
@@ -262,7 +355,12 @@ impl Writer {
             };
             let table = current(&host, &location, &state).await.map_err(|e| to_js_err(&e))?;
             let batches = rows(table.schema.clone()).map_err(|e| to_js_err(&e))?;
-            let opts = AppendOptions { batch_id: options.batch_id, properties: options.properties };
+            let opts = AppendOptions {
+                batch_id: options.batch_id,
+                properties: options.properties,
+                maintain: options.maintain,
+                max_compact_bytes: Some(options.max_compact_bytes.map_or(DEFAULT_MAX_COMPACT_BYTES, byte_count)),
+            };
             let result = append(&host, table, &batches, &opts).await;
             let (table, report) = match result {
                 Ok(done) => done,
@@ -272,7 +370,13 @@ impl Writer {
                     return Err(to_js_err(&e));
                 }
             };
+            let version = table.version;
             *state.borrow_mut() = Some(table);
+            let (maintenance, maintenance_error) = match &report.maintenance {
+                Some(Ok(m)) => (Some(JsMaintainReport::new(m, version)), None),
+                Some(Err(e)) => (None, Some(e.clone())),
+                None => (None, None),
+            };
             let report = JsAppendReport {
                 rows: report.rows,
                 files: report.files,
@@ -281,6 +385,8 @@ impl Writer {
                 snapshot_id: report.commit.snapshot_id.to_string(),
                 attempts: report.commit.attempts,
                 duplicate: report.commit.duplicate,
+                maintenance,
+                maintenance_error,
             };
             serde_wasm_bindgen::to_value(&report).map_err(Into::into)
         })

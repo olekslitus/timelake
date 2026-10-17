@@ -78,7 +78,7 @@ export default {
 - **Commits.** A writer keeps the version it last committed, so a steady writer doesn't reload the table before each append. If another writer committed in between, the commit reloads and retries. A `batchId` makes retries safe: an append whose batch id is already in the table is skipped.
 - **One writer per table works best:** a Queues consumer or a Durable Object that collects rows into appends of a few thousand or more. Concurrent writers are safe, but each conflict costs a retry, and many small appends make many small files.
 - **Creating tables.** Create the table first with the CLI or Python. Writers can't create tables yet.
-- **Maintenance.** Appends from JavaScript don't compact yet. Run `timelake maintain` elsewhere until they do (SPEC §21.10).
+- **Maintenance.** After each append, the writer runs what the engine runs inline. It merges size tiers of small files in the partitions the append touched, and rewrites cold partitions whole. It also applies retention and expires snapshots in batches. Compaction is a streaming merge: memory is about one row group per file being merged, not the partition. One append's compaction reads at most `maxCompactBytes` (default 64 MiB), so it stays within a request's CPU time; what's left waits for the next append. `writer.maintain({ maxBytes })` runs a full pass, for example from a scheduled Worker. `timelake maintain` elsewhere is optional.
 
 ## How a query runs
 

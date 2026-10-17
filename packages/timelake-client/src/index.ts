@@ -22,7 +22,16 @@ import { ensureWasm } from "./init.js"
 import { ParquetFile, Query, Table as WasmTable, version as wasmVersion } from "./wasm/timelake_wasm.js"
 
 export { memoryStore, r2Store, TableWriter } from "./writer.js"
-export type { AppendReport, AppendRowsOptions, R2BucketLike, Store, StoredObject, Upload } from "./writer.js"
+export type {
+  AppendReport,
+  AppendRowsOptions,
+  MaintainOptions,
+  MaintainReport,
+  R2BucketLike,
+  Store,
+  StoredObject,
+  Upload,
+} from "./writer.js"
 
 /** Version of the embedded WASM reader. */
 export function readerVersion(): string {

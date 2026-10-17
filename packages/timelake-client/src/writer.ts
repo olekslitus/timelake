@@ -50,6 +50,38 @@ export interface AppendRowsOptions {
   batchId?: string
   /** Extra snapshot summary properties. */
   properties?: Record<string, string>
+  /** Run maintenance after the append (default: the table's `auto-maintain`, on unless turned off). */
+  maintain?: boolean
+  /** Bytes of files inline compaction may read after the append. Default 64 MiB, which keeps a Worker request well inside its CPU limit. */
+  maxCompactBytes?: number
+}
+
+export interface MaintainOptions {
+  /** Merge small files into sorted files of the target size (default true). */
+  compact?: boolean
+  /** Drop partitions past the table's retention (default true). */
+  retention?: boolean
+  /** Expire old snapshots and delete files only they used (default true). */
+  expire?: boolean
+  /** Stop compacting once this many bytes of files were read (at least one group is compacted); the next run continues. */
+  maxBytes?: number
+}
+
+export interface MaintainReport {
+  partitionsCompacted: number
+  filesRewritten: number
+  filesWritten: number
+  rowsRewritten: number
+  bytesRewritten: number
+  duplicatesRemoved: number
+  /** Compaction stopped at `maxBytes` with more to do. */
+  moreToCompact: boolean
+  partitionsDropped: number
+  filesDropped: number
+  snapshotsExpired: number
+  objectsDeleted: number
+  /** The table version after maintenance. */
+  version: number
 }
 
 export interface AppendReport {
@@ -66,6 +98,10 @@ export interface AppendReport {
   attempts: number
   /** The batch id was already committed; nothing was written. */
   duplicate: boolean
+  /** Inline maintenance after the append, if it did something. */
+  maintenance?: MaintainReport
+  /** Why inline maintenance failed; the append is committed either way. Don't retry the append. */
+  maintenanceError?: string
 }
 
 /** The part of a Cloudflare R2 binding (`R2Bucket`) the adapter uses. */
@@ -241,6 +277,15 @@ export class TableWriter {
         ? await this.#writer.appendIpc(rows, options)
         : await this.#writer.appendJson(rowsJson(rows), options)
     return report as AppendReport
+  }
+
+  /**
+   * Runs maintenance on the newest version: retention, compaction of small files (up to
+   * `maxBytes` read), and snapshot expiry, as the table's settings say. Appends already run it
+   * inline; call this from a scheduled Worker to catch up.
+   */
+  async maintain(options: MaintainOptions = {}): Promise<MaintainReport> {
+    return (await this.#writer.maintain(options)) as MaintainReport
   }
 
   /** The table's columns: name, Arrow type, and whether a value is required. */

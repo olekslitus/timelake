@@ -122,3 +122,22 @@ test("the memory store holds a table copied into it", async () => {
   expect(report.rows).toBe(1)
   expect(store.keys().some((k) => k.includes("time_day=2026-01-03"))).toBe(true)
 })
+
+test("appends compact small files inline, and maintain compacts the rest", async () => {
+  const schema = ["--schema", "time:timestamptz,device:int,temp:double"]
+  const props = ["--prop", "timelake.compact-min-files=3", "--prop", "timelake.snapshot-retention=0s"]
+  fx.cli("create", "iot.small", ...schema, "--time-column", "time", "--series-key", "device", ...props)
+  const writer = new TableWriter(dirStore(fx.dir), fx.url, "iot.small")
+  const t0 = Date.parse("2026-01-01T00:00:00Z")
+  let rewritten = 0
+  for (let i = 0; i < 4; i++) {
+    const rows = Array.from({ length: 20 }, (_, j) => ({ time: t0 + (i * 20 + j) * 1000, device: j % 4, temp: i }))
+    const report = await writer.append(rows)
+    rewritten += report.maintenance?.filesRewritten ?? 0
+  }
+  expect(rewritten).toBe(3)
+  const maintained = await writer.maintain()
+  expect(maintained).toMatchObject({ filesRewritten: 2, filesWritten: 1, moreToCompact: false })
+  expect(count("iot.small")).toBe(80)
+  expect(fx.sql("SELECT count(*) AS n FROM iot.small WHERE temp = 3")).toEqual([{ n: 20 }])
+})

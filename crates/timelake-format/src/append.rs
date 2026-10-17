@@ -2,7 +2,7 @@
 //! them ([`crate::rows`]), written with the shared Parquet writer ([`crate::file`]) and committed
 //! with the engine's protocol ([`crate::commit`]).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use arrow_array::RecordBatch;
 use parquet::file::metadata::{ParquetMetaData, ParquetMetaDataWriter};
@@ -12,6 +12,7 @@ use crate::error::WriteResult;
 use crate::file::{FileStats, FileWriter, writer_properties};
 use crate::host::{Host, Upload, uuid_v7};
 use crate::iceberg::DataFile;
+use crate::maintain::{MaintainOptions, MaintainReport, maintain};
 use crate::rows::{latest_per_series, sort_and_split};
 use crate::summary;
 use crate::table::TableState;
@@ -26,6 +27,11 @@ pub struct AppendOptions {
     pub batch_id: Option<String>,
     /// Extra snapshot summary properties.
     pub properties: HashMap<String, String>,
+    /// Override the table's `auto-maintain`.
+    pub maintain: Option<bool>,
+    /// Cap on the bytes inline compaction reads after this append (see
+    /// [`MaintainOptions::max_bytes`]).
+    pub max_compact_bytes: Option<u64>,
 }
 
 /// What [`append`] did.
@@ -39,6 +45,9 @@ pub struct AppendReport {
     pub bytes: u64,
     /// The commit.
     pub commit: CommitInfo,
+    /// Inline maintenance after the commit: `None` if it didn't run or had nothing to do. An
+    /// error here means the append is committed but maintenance failed: don't retry the append.
+    pub maintenance: Option<Result<MaintainReport, String>>,
 }
 
 /// Appends `batches` to `table` as one commit; returns the new version.
@@ -51,6 +60,7 @@ pub async fn append<H: Host>(
     let now_us = host.now_ms().saturating_mul(1000);
     let partitions = sort_and_split(&table.schema, &table.contract, batches, now_us)?;
     let rows = partitions.iter().map(|(_, b)| b.num_rows()).sum();
+    let touched: HashSet<Option<i32>> = partitions.iter().map(|(p, _)| *p).collect();
     let latest = latest_per_series(
         &table.schema,
         &table.contract,
@@ -93,7 +103,22 @@ pub async fn append<H: Host>(
     }
     table.footers.extend(footers);
     let _ = table.write_head(host).await;
-    Ok((table, AppendReport { rows, files: n_files, bytes, commit: info }))
+    let mut report = AppendReport { rows, files: n_files, bytes, commit: info, maintenance: None };
+    if !opts.maintain.unwrap_or(table.contract.auto_maintain) {
+        return Ok((table, report));
+    }
+    let mut maintain_opts = MaintainOptions::inline(&table, touched, host.now_ms());
+    maintain_opts.max_bytes = opts.max_compact_bytes;
+    match maintain(host, table.clone(), &maintain_opts).await {
+        Ok((maintained, done)) => {
+            report.maintenance = (!done.is_noop()).then_some(Ok(done));
+            Ok((maintained, report))
+        }
+        Err(e) => {
+            report.maintenance = Some(Err(e.to_string()));
+            Ok((table, report))
+        }
+    }
 }
 
 /// Writes the sorted rows of one partition as data files of the table's target size, each with its

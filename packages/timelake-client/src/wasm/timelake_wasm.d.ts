@@ -116,6 +116,11 @@ export class Writer {
      */
     appendJson(rows_json: string, options: any): Promise<any>;
     /**
+     * Runs maintenance: retention, compaction (within `maxBytes` read, if given), and snapshot
+     * expiry, as the table's settings say.
+     */
+    maintain(options: any): Promise<any>;
+    /**
      * A writer of the table at `location` (its root URI) through `store`.
      */
     constructor(store: any, location: string);
@@ -160,6 +165,7 @@ export interface InitOutput {
     readonly version: () => [number, number];
     readonly writer_appendIpc: (a: number, b: number, c: number, d: any) => any;
     readonly writer_appendJson: (a: number, b: number, c: number, d: any) => any;
+    readonly writer_maintain: (a: number, b: any) => any;
     readonly writer_new: (a: any, b: number, c: number) => number;
     readonly writer_schema: (a: number) => any;
     readonly rust_zstd_wasm_shim_calloc: (a: number, b: number) => number;
