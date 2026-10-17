@@ -13,15 +13,27 @@ the commit, the machine, every version, and every measurement; together they are
 uv sync && cargo build --release -p timelake-cli
 uv run timebench list                          # workloads, scales, systems and their readers
 uv run timebench run tsbs-iot --scale small    # every lake system on the local disk, a few minutes
+uv run timebench run iiot --systems reference,timelake   # a plant's data, answers checked against the reference
 uv run timebench report latest
 ```
 
-- **Workloads:** `tsbs-iot` (TSBS IoT, streamed in 5-minute batches) at `small`, `standard`, and `large` scale.
-- **Systems:** Timelake, Iceberg written by PyIceberg, S3 Tables, Lance, plain Parquet files, and TimescaleDB (any
-  server, set by `BENCH_TIMESCALEDB_DSN`).
+- **Workloads:**
+  - `tsbs-iot`: TSBS IoT, a truck fleet streamed in 5-minute batches, at `small`, `standard`, and `large` scale.
+  - `tsbs-devops`: TSBS's server CPU metrics, `small` and `standard` (4,000 hosts, 104M rows).
+  - `iiot`: industrial IoT, our own plant generator. History arrives in bulk with checkpoints after 1 and 7 days, then
+    the last day live, through gateways that go offline and send some rows twice. `small` (1,000 tags, 30 days) to
+    `xlarge` (1,000,000 tags).
+- **Systems:** Timelake, Iceberg written by PyIceberg, S3 Tables, Lance, plain Parquet files, and the databases
+  TimescaleDB, ClickHouse, QuestDB, and InfluxDB 3 Core, each in Docker at a pinned version (`bench/infra/servers.sh`).
+  InfluxDB 3 Core runs twice: as shipped, and with its 432-file query limit raised.
+- **Right answers:** a `reference` system keeps every row that arrived, once. Every other answer is checked against it
+  (row count and column sums), and a wrong one is marked next to its time.
+- **Also measured:** how fresh data is while it arrives, queries per second from 1, 4, and 16 clients at once, load
+  speed, storage, and, on S3, the requests each query sends and what they cost.
 - **Storage:** the local disk, or S3 through `bench/tools/s3proxy`, which counts requests and bytes. In front of AWS it
   signs each request for the real bucket; in front of a local object store it can add a fixed delay per request.
-- **Weekly run:** every Monday a GitHub workflow runs the same workloads on one fixed AWS instance and commits the
-  results, so the history shows how Timelake changes.
+- **Weekly runs:** a GitHub workflow runs the same profiles on one fixed AWS instance and commits the results, so the
+  history shows how Timelake changes: TSBS IoT and DevOps on the disk and on S3 on Mondays (`bench/profiles/weekly.toml`),
+  industrial IoT with every database on Thursdays (`bench/profiles/iiot.toml`).
 
 Setup, options, and how to add a workload or a system: [bench/README.md](https://github.com/polythings/timelake/tree/main/bench).

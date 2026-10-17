@@ -50,7 +50,7 @@ function RankingCard({ ranking }: { ranking: Ranking }) {
               >
                 {show(i)}
               </span>
-              <span className="col-span-2 flex items-center gap-2 sm:col-span-1">
+              <span className="col-span-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 sm:col-span-1">
                 <DotGrid
                   perRow={columns(r.value)}
                   segments={[{ count: columns(r.value) * 2, color: SYSTEM_COLORS[r.system] ?? "var(--chart-2)" }]}

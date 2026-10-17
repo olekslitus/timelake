@@ -254,6 +254,8 @@ export type BenchBar = {
   first: number
   best: number
   requests: number | null
+  /** Of the queries averaged, how many answers didn't match the reference. */
+  wrong: number
 }
 export type QueryRow = {
   query: string
@@ -292,6 +294,7 @@ export function panels(run: Run, workload: Workload): BenchPanel[] {
           first: gm(rs.map((r) => r.times[0])),
           best: gm(rs.map((r) => best(r.times))),
           requests: requests.every((n) => n !== undefined) ? requests.reduce((s, n) => s + n, 0) / rs.length : null,
+          wrong: rs.filter((r) => r.correct === false).length,
         }
       })
       const perQuery = allQueries.map((q) => ({
