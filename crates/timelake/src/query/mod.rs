@@ -32,6 +32,6 @@ pub use statement::{RollupStatement, Statement};
 /// Name of the lake's catalog in SQL.
 const CATALOG: &str = "timelake";
 
-/// How long a table version loaded for planning is reused by later planning in this process.
-/// Commits made by this process are visible immediately regardless.
-const PLAN_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(1);
+/// How long a table version the first lookup of a query found is reused by the rest of its
+/// planning, whatever `version-check-interval` says, so a query checks each table once.
+const PLANNING_REUSE: std::time::Duration = std::time::Duration::from_secs(1);

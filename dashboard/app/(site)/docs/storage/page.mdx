@@ -84,10 +84,11 @@ So about 7 PUTs and 2 GETs: at one append per second, about $3 a day on S3. Each
 | --- | --- | --- |
 | First query on a table in this process, `timelake_version_lookup=list` (default) | 1 GET (head) + 1 LIST | 1 |
 | First query, `timelake_version_lookup=hint`, or plain HTTPS (can’t list) | 2 GETs (head, version hint) + 1 HEAD | 2 |
-| Later queries (after 1 s) | 1 HEAD (a LIST with `timelake_freshness_check=list`) | 1, while the query is planned |
+| Later queries, after `version-check-interval` (1 s) | 1 HEAD (a LIST with `timelake_freshness_check=list`) | 1, while the query is planned |
+| Later queries within `version-check-interval` | none | none |
 | Table without a head | + GETs of the metadata, manifest list, and manifests | + 2 |
 
-Then each query reads its data: one GET per run of missing blocks, a few per file, none for footers the head carried, and none for blocks already in the [block cache](#block-cache). A dashboard that refreshes one table every 5 seconds sends about 17,000 checks a day plus its data reads: a few cents a day on S3.
+Then each query reads its data: one GET per run of missing blocks, a few per file, none for footers the head carried, and none for blocks already in the [block cache](#block-cache). A dashboard that refreshes one table every 5 seconds sends about 17,000 checks a day plus its data reads: a few cents a day on S3. With `version-check-interval = 1m` it sends 1,440.
 
 ### Request options: trade-offs
 
@@ -102,6 +103,12 @@ Then each query reads its data: one GET per run of missing blocks, a few per fil
 - `head` sends a HEAD for the next metadata file. It is the cheapest request on most stores and fast when the answer is “not found” (about 55 ms on S3).
 - `list` lists that exact name. It costs about 12× a HEAD on S3, but on Tigris a HEAD of a missing key takes about 285 ms and the LIST about 40 ms.
 - **Why the default is per store:** `head` everywhere, except Tigris, where `list` is about 245 ms faster on every check. Set `head` on Tigris to pay less per check and wait longer.
+
+**`version-check-interval`** (a [setting](/docs/settings) of a table or session, not a storage option). How long a reader uses a table version without checking for a newer one.
+
+- Within the interval a query sends no request for the table’s version: that saves one HEAD and its round trip (about 55 ms from a laptop to S3) on each query.
+- The price is freshness: a query can miss commits other processes made in the last interval. The process’s own commits are always seen, and writers always check, since a commit is a conditional write.
+- **Why the default is 1 second:** results then lag other writers by at most a second, as they did before the setting existed, and the queries of one dashboard refresh share one check. Raise it for dashboards that refresh often and can be that far behind.
 
 **`timelake_warm_connections`.** Opens connections early so data reads don’t wait for TCP and TLS setup.
 

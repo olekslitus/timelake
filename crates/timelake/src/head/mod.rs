@@ -561,6 +561,50 @@ mod tests {
         assert_eq!(count().await, 2);
     }
 
+    /// Within `version-check-interval` a reader uses its version without a request, and doesn't
+    /// see other processes' commits; a session's value overrides the table's.
+    #[tokio::test(start_paused = true)]
+    async fn version_check_interval_skips_the_check() {
+        const RTT: Duration = Duration::from_millis(100);
+        let (lake, store) = faulty_lake();
+        let o = with_properties(&[(property::VERSION_CHECK_INTERVAL, "1h")]);
+        let t = lake.create_table("iot.r", &schema(), o).await.unwrap();
+        let (t, _) = t.append(&[batch(&[(T0, 1, 1.0)])], no_maintenance()).await.unwrap();
+        crate::flush().await;
+        let session_with = |interval: Option<&str>| {
+            let mut config = Session::config();
+            if let Some(v) = interval {
+                config.options_mut().set("timelake.version_check_interval", v).unwrap();
+            }
+            Session::with_config(reopen(&store), config)
+        };
+        let count = |session: &Session| {
+            let session = session.clone();
+            async move {
+                let rows = session.sql("SELECT count(*) FROM iot.r").await.unwrap().collect().await.unwrap();
+                rows[0].column(0).as_any().downcast_ref::<Int64Array>().unwrap().value(0)
+            }
+        };
+        let (trusting, checking) = (session_with(None), session_with(Some("0s")));
+        assert_eq!((count(&trusting).await, count(&checking).await), (1, 1));
+
+        // Past the default second (wall-clock time): only the session with `0s` checks.
+        std::thread::sleep(Duration::from_millis(1100));
+        store.set_latency(RTT);
+        let round_trips = |session: Session| async move {
+            let started = tokio::time::Instant::now();
+            session.latest("iot.r").await.unwrap().collect().await.unwrap();
+            started.elapsed().as_millis() / RTT.as_millis()
+        };
+        assert_eq!(round_trips(trusting.clone()).await, 0);
+        assert_eq!(round_trips(checking.clone()).await, 1);
+
+        store.set_latency(Duration::ZERO);
+        t.append(&[batch(&[(T0 + 1, 2, 2.0)])], no_maintenance()).await.unwrap();
+        crate::flush().await;
+        assert_eq!((count(&trusting).await, count(&checking).await), (1, 2));
+    }
+
     /// Writers that finish out of order never move the head back.
     #[tokio::test]
     async fn head_never_moves_back() {

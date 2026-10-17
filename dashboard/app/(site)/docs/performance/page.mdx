@@ -12,14 +12,20 @@ Each version is a [tag on GitHub](https://github.com/polythings/timelake/tags): 
 
 | Version | Change | Commit | Effect |
 | --- | --- | --- | --- |
-| Unreleased | Block cache | `block-cache` | Repeat queries on S3 (TSBS IoT): 54 → 16 ms, no requests; 16 clients 288 → 398 queries/s |
+| Unreleased | Version check interval | | Queries within `version-check-interval` send no request: one round trip less per query (unit test) |
+| 0.5.0 | Block cache | `69c6ca5` | Repeat queries on S3 (TSBS IoT): 54 → 16 ms, no requests; 16 clients 288 → 398 queries/s |
 | 0.3.0 | Footers in the head, cold loads in one round trip | `4e8a1fa` | First query on S3: `latest` 314 → 240 ms, a filtered scan of one truck 823 → 560 ms |
 | 0.3.0 | Table state in one object (the head) | `cbe7e3a` | First `latest` query on S3: 502 → 314 ms; on Tigris 868 → 318 ms |
 | 0.2.0 | Two-step commit | `d2b80cd` | Commit p50 on S3: 483 → 243 ms; a 1,728-commit ingest 1,307 → 795 s |
 
 From 0.2.0 to 0.3.0, the first `latest` query on S3 went from about 510 ms to 240 ms, and on Tigris from about 810 ms to 210 ms. 0.1.0 is the baseline for 0.2.0’s commit numbers.
 
-## Unreleased: block cache
+## Unreleased: version check interval
+
+- **What changed:** a reader that already has a table version checks for a newer one only after the setting `version-check-interval` (default 1 second, as before). Set it longer, per table or session, to skip the check on queries in between.
+- **Effect:** with the block cache warm, a repeat query on S3 made one request, the check; within the interval it makes none. In the unit test with 100 ms per request, a warm `latest` went from one round trip to none. Not measured on S3 yet: the benchmark’s repeat runs follow each other within a second, where the check was already skipped.
+
+## 0.5.0: block cache
 
 - **What changed:** files a table never changes (data files, manifests, the last-value index) are cached in 1 MiB blocks: in memory by default, and on local disk, shared by processes, with `timelake_cache=disk`. See [Block cache](/docs/storage#block-cache).
 - **Measured** on the benchmark instance (c8gd.2xlarge, us-east-2) on S3, one run per setting (geometric means over the queries):

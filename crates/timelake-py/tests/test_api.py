@@ -248,6 +248,19 @@ def test_lake_settings_apply_to_every_session(tmp_path: Path) -> None:
     assert lake.sql("SHOW timelake.read_dedup").to_pylist() == [{"name": "timelake.read_dedup", "value": "false"}]
 
 
+def test_version_check_interval_trades_freshness_for_requests(tmp_path: Path) -> None:
+    location = str(tmp_path / "warehouse")
+    table = timelake.Lake(location).create_table("iot.readings", SCHEMA, time_column="time", series_key=["device"])
+    table.append(readings(), maintain=False)
+    trusting = timelake.Lake(location, settings={"version_check_interval": "1h"})
+    checking = timelake.Lake(location, settings={"version_check_interval": "0s"})
+    count = "SELECT count(*) AS n FROM iot.readings"
+    assert trusting.sql(count).to_pylist() == checking.sql(count).to_pylist() == [{"n": 300}]
+    table.append(readings(START + dt.timedelta(days=1)), maintain=False)
+    assert trusting.sql(count).to_pylist() == [{"n": 300}]
+    assert checking.sql(count).to_pylist() == [{"n": 600}]
+
+
 def test_inline_maintenance_is_reported(lake: timelake.Lake) -> None:
     table = lake.create_table("iot.busy", SCHEMA, time_column="time", properties={"timelake.compact-min-files": "2"})
     results = [table.append(readings(START + dt.timedelta(hours=1), minutes=1)) for _ in range(4)]

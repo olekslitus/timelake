@@ -27,6 +27,11 @@ impl SessionSettings {
     pub fn flag(&self, name: &str) -> Option<bool> {
         self.get(name).map(|v| v.eq_ignore_ascii_case("true"))
     }
+
+    /// The session's value of a duration setting.
+    pub fn duration(&self, name: &str) -> Option<std::time::Duration> {
+        self.get(name).and_then(|v| timelake_format::parse_duration(v).ok())
+    }
 }
 
 impl ConfigExtension for SessionSettings {

@@ -91,6 +91,8 @@ pub mod property {
     /// On a rollup: inline maintenance of the raw table refreshes the rollup once its last refresh
     /// is this old, or `off`.
     pub const ROLLUP_REFRESH_INTERVAL: &str = "timelake.rollup-refresh-interval";
+    /// How long the Timelake reader uses a table version without checking for a newer one.
+    pub const VERSION_CHECK_INTERVAL: &str = "timelake.version-check-interval";
 }
 
 /// Snapshot summary keys: Timelake's own, and the standard Iceberg counters Timelake maintains.

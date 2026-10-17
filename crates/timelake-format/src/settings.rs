@@ -374,6 +374,18 @@ pub static SETTINGS: &[Setting] = &[
         check: duration_or_off,
     },
     Setting {
+        name: "version-check-interval",
+        kind: "duration",
+        default: DefaultValue::Value("1s"),
+        levels: &[Level::Table, Level::Session],
+        since: "0.6.0",
+        description: "The Timelake reader uses a table version it loaded or checked this long before checking for a \
+                      newer one, so queries in that time send no request for it and can miss commits by other \
+                      processes. `0s` checks on every query. This process's own commits are seen at once, and \
+                      writers always check.",
+        check: duration,
+    },
+    Setting {
         name: "rollups",
         kind: "table names",
         default: DefaultValue::Unset("none"),
@@ -516,10 +528,11 @@ mod tests {
             property::ROLLUP_BUCKET,
             property::ROLLUP_AGGREGATES,
             property::ROLLUP_REFRESH_INTERVAL,
+            property::VERSION_CHECK_INTERVAL,
         ] {
             assert_eq!(find(key).map(Setting::property).as_deref(), Some(key));
         }
-        assert_eq!(SETTINGS.len(), 26, "a new setting needs a property constant and an entry above");
+        assert_eq!(SETTINGS.len(), 27, "a new setting needs a property constant and an entry above");
     }
 
     /// A stated default is what the contract uses when the property is unset.

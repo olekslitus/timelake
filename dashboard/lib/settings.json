@@ -253,6 +253,18 @@
   },
   {
     "default": {
+      "value": "1s"
+    },
+    "description": "The Timelake reader uses a table version it loaded or checked this long before checking for a newer one, so queries in that time send no request for it and can miss commits by other processes. `0s` checks on every query. This process's own commits are seen at once, and writers always check.",
+    "kind": "duration",
+    "levels": ["table", "session"],
+    "name": "version-check-interval",
+    "property": "timelake.version-check-interval",
+    "since": "0.6.0",
+    "sql": "timelake.version_check_interval"
+  },
+  {
+    "default": {
       "unset": "none"
     },
     "description": "On a raw table: its rollups, comma-separated. `CREATE` and `DROP MATERIALIZED ROLLUP` keep it.",

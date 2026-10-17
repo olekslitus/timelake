@@ -1117,7 +1117,7 @@ Open from v0:
 | Later | Computed metrics from user-defined Python functions (F4, §21.4) |
 
 ### 19.1 Performance plan (in progress)
-**Status:** P4 done (2026-10-13); P1–P3 done (2026-10-14, §19.2). P3 measured no clear gain and is off by default. P7's first version done (2026-10-16, §11.1.1); P5 done (2026-10-17, §19.3). Next: P6, P8, and the rest of P7. The history of each step and its effect is on the docs page "Performance history". The codebase and CI/CD cleanup it waited for is done (2026-10-13; the audit and plan are in git history at `2d66939`). Gains below are estimates until measured; measurements are in [`bench/results/PERFORMANCE.md`](bench/results/PERFORMANCE.md).
+**Status:** P4 done (2026-10-13); P1–P3 done (2026-10-14, §19.2). P3 measured no clear gain and is off by default. P7's first version done (2026-10-16, §11.1.1); P5 done (2026-10-17, §19.3). P6's staleness bound built (2026-10-17, below). Next: P8, the rest of P7, and P6's S3 Express pointer. The history of each step and its effect is on the docs page "Performance history". The codebase and CI/CD cleanup it waited for is done (2026-10-13; the audit and plan are in git history at `2d66939`). Gains below are estimates until measured; measurements are in [`bench/results/PERFORMANCE.md`](bench/results/PERFORMANCE.md).
 
 **Where time goes today** (Timelake reader, laptop → AWS S3 us-east-2, after maintenance, [`bench/results/S3.md`](bench/results/S3.md)):
 
@@ -1142,7 +1142,7 @@ Open from v0:
 | P3 | **Done.** **Connection pre-warm.** Open the scan's connections while the head object is in flight. | Measured at most about 20 ms on cold scans, nothing on point queries: off by default |
 | P4 | **Done.** **Two-step commit.** Upload data, manifest, index and manifest list in parallel (all are known locally), then make the one conditional write. Update the hint asynchronously. | Commit p50 483 ms → 243 ms measured (whole v0 ingest 1,307 s → 795 s) |
 | P5 | **Done (§19.3).** **Block cache**, in memory and optionally on local disk across processes, for data files, manifests and the last-value index (§12.2 item 6). | Repeat queries at best-run speed; measured: TSBS IoT repeats on S3 54 → 16 ms, 16 clients 288 → 398 queries/s |
-| P6 | **Optional staleness bound** (e.g. "at most 1 s old") to skip the per-query version check, and the head pointer on S3 Express where available. | Warm `last-loc` 68 ms → a few ms |
+| P6 | **Staleness bound built (2026-10-17):** setting `version-check-interval` (table, session; default 1 s, the planning cache's old lifetime). A reader uses a version it loaded or checked that long without the per-query check; writers always check, and a process sees its own commits at once. `0s` checks on every query (one query's lookups share one check). **Not built:** the head pointer on S3 Express. | One request and round trip less per warm query within the interval (unit test: warm `latest` 1 → 0 round trips); not measured on S3 yet |
 | P7 | **First version done (§11.1.1).** **Rollups (§11.1).** TSBS daily queries read hourly or daily rollups instead of raw data. | Likely 10–100× on bandwidth-bound dashboard queries; an hourly query over a week of 200 devices went 113 → 21 ms on a laptop (debug build) |
 | P8 | **Scan tuning:** late materialization (`pushdown_filters`, now off), Q4's hidden `_series_id`, fewer and larger parallel range reads. | Less data decoded and fetched on selective scans |
 
@@ -1427,8 +1427,9 @@ A setting declares which levels it allows: the time column and series key only a
 | `latest-by` | a column (`_ingest_ts`) | table | Which copy of a row is the latest write (§7.4, proposed) |
 | `as_of_inserted` | a timestamp, or none | session | Leave out rows inserted after it, before dedup (§7.4, proposed) |
 | `compact-cold-after` | a duration, or off (1h) | table, call | Full compaction of partitions whose time range has ended (§9.1) |
+| `version-check-interval` | a duration (1s) | table, session | How long the reader uses a table version without checking for a newer one (§19.1 P6), built |
 
-The existing `timelake.*` properties become registry entries unchanged. Hard-coded behaviour moves into settings as it's touched: compaction tiers, the small-file ratio, scan parallelism, the planning cache's lifetime.
+The existing `timelake.*` properties become registry entries unchanged. Hard-coded behaviour moves into settings as it's touched: compaction tiers, the small-file ratio, scan parallelism. The planning cache's lifetime became `version-check-interval`.
 
 **Decided 2026-10-16:**
 - **Names in SQL** use underscores (`SET timelake.read_dedup = off`); every spelling (dashes, underscores, with or without `timelake.`) names the same setting.

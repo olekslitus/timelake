@@ -8,6 +8,14 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
 
 ## Unreleased
 
+### Added
+
+- **Version check interval.** The setting `version-check-interval` (table or session) says how long the Timelake
+  reader uses a table version it loaded or checked before checking for a newer one. Within it, queries send no
+  request for the table's version, and can miss commits by other processes; the process's own commits are seen at
+  once, and writers always check. The default, 1 second, is the old fixed behaviour; `0s` checks on every query
+  (`SET timelake.version_check_interval = '30s'`, `--set`, `Lake(settings=…)`, or `timelake alter --set`).
+
 ## 0.5.0 – 2026-10-17
 
 ### Added

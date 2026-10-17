@@ -354,13 +354,23 @@ impl Lake {
         }
     }
 
-    /// Like [`Lake::table`], but reuses a version loaded or committed by this process within
-    /// `max_age`. Query planning uses it so one query loads each table once, and so prefetching
-    /// all of a query's tables concurrently pays off. A version read from the head may still be
-    /// checked for freshness (see `Lake::load_for_query`).
-    pub(crate) async fn table_recent(&self, name: &TableName, max_age: Duration) -> Result<Table> {
+    /// Like [`Lake::table`], but for the Timelake reader: reuses a version this process loaded,
+    /// checked or committed within the table's `version-check-interval` (or `interval`, a
+    /// session's value), and at least within `at_least`. Query planning passes a short `at_least`
+    /// after its first lookup, so one query checks each table once. A reused version may still
+    /// be checked for freshness (see `Lake::load_for_query`).
+    pub(crate) async fn table_recent(
+        &self,
+        name: &TableName,
+        interval: Option<Duration>,
+        at_least: Duration,
+    ) -> Result<Table> {
         match self.caches().tables.get(name) {
-            Some((at, table)) if at.elapsed() <= max_age => Ok(table),
+            Some((at, table))
+                if at.elapsed() <= interval.unwrap_or(table.contract().version_check_interval).max(at_least) =>
+            {
+                Ok(table)
+            }
             _ => self.load_for_query(name).await,
         }
     }

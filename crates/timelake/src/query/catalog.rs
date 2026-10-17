@@ -2,12 +2,13 @@
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, PoisonError, RwLock};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use datafusion::catalog::{CatalogProvider, SchemaProvider, TableProvider};
 use datafusion::error::Result as DfResult;
 
-use super::PLAN_CACHE_TTL;
+use super::PLANNING_REUSE;
 use super::provider::TimelakeProvider;
 use crate::error::{Error, Result};
 use crate::lake::Lake;
@@ -18,6 +19,9 @@ pub(super) const INFORMATION_SCHEMA: &str = "information_schema";
 /// Namespace → table names, as of the last listing.
 type Listing = RwLock<BTreeMap<String, Vec<String>>>;
 
+/// The session's `version-check-interval`, if it sets one, as of the query being planned.
+type Interval = Arc<RwLock<Option<Duration>>>;
+
 /// DataFusion asks for schema and table names synchronously (for `information_schema` and `SHOW
 /// TABLES`), so listing can't do I/O there: [`Session`](super::Session) lists the lake
 /// asynchronously first, and these callbacks answer from that snapshot.
@@ -25,11 +29,18 @@ type Listing = RwLock<BTreeMap<String, Vec<String>>>;
 pub(super) struct LakeCatalog {
     lake: Lake,
     listing: Arc<Listing>,
+    interval: Interval,
 }
 
 impl LakeCatalog {
     pub(super) fn new(lake: Lake) -> Self {
-        Self { lake, listing: Arc::default() }
+        Self { lake, listing: Arc::default(), interval: Interval::default() }
+    }
+
+    /// Sets the session's `version-check-interval` for the lookups of the query about to be
+    /// planned (DataFusion's lookups don't see the session's settings).
+    pub(super) fn set_interval(&self, interval: Option<Duration>) {
+        *self.interval.write().unwrap_or_else(PoisonError::into_inner) = interval;
     }
 
     /// Lists namespaces and tables for the synchronous callbacks.
@@ -52,8 +63,8 @@ impl CatalogProvider for LakeCatalog {
     }
 
     fn schema(&self, name: &str) -> Option<Arc<dyn SchemaProvider>> {
-        let listing = self.listing.clone();
-        Some(Arc::new(NamespaceSchema { lake: self.lake.clone(), namespace: name.to_string(), listing }))
+        let (listing, interval) = (self.listing.clone(), self.interval.clone());
+        Some(Arc::new(NamespaceSchema { lake: self.lake.clone(), namespace: name.to_string(), listing, interval }))
     }
 }
 
@@ -63,6 +74,7 @@ struct NamespaceSchema {
     lake: Lake,
     namespace: String,
     listing: Arc<Listing>,
+    interval: Interval,
 }
 
 #[async_trait]
@@ -74,7 +86,8 @@ impl SchemaProvider for NamespaceSchema {
 
     async fn table(&self, name: &str) -> DfResult<Option<Arc<dyn TableProvider>>> {
         let Ok(name) = TableName::new(&self.namespace, name) else { return Ok(None) };
-        match self.lake.table_recent(&name, PLAN_CACHE_TTL).await {
+        let interval = *self.interval.read().unwrap_or_else(PoisonError::into_inner);
+        match self.lake.table_recent(&name, interval, PLANNING_REUSE).await {
             Ok(t) => Ok(Some(Arc::new(TimelakeProvider::data(t)))),
             Err(Error::NotFound(_)) => Ok(None),
             Err(e) => Err(e.into()),

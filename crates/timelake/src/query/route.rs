@@ -8,6 +8,7 @@
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, PoisonError, RwLock};
+use std::time::Duration;
 
 use arrow::datatypes::{DataType, TimeUnit};
 use datafusion::common::tree_node::{Transformed, TreeNode};
@@ -21,7 +22,7 @@ use datafusion::logical_expr::{
 use datafusion::optimizer::{OptimizerConfig, OptimizerRule};
 use datafusion::prelude::ident;
 
-use super::PLAN_CACHE_TTL;
+use super::PLANNING_REUSE;
 use super::provider::{Kind, TimelakeProvider};
 use super::rollup::{aggregate_of, bucket_width, is_time, unalias};
 use super::settings::SessionSettings;
@@ -57,9 +58,10 @@ pub(super) type RouteMap = Arc<RwLock<HashMap<TableName, Arc<Routes>>>>;
 
 /// Works out the routes of raw table `name` for the next query, or forgets them when it has no
 /// rollups to route to. The table version is confirmed current first, so the rule only routes a
-/// version that won't be replaced while it is scanned.
-pub(super) async fn prepare(lake: &Lake, name: &TableName, routes: &RouteMap) {
-    let prepared = routes_for(lake, name).await;
+/// version that won't be replaced while it is scanned. `interval` is the session's
+/// `version-check-interval`, if it sets one.
+pub(super) async fn prepare(lake: &Lake, name: &TableName, interval: Option<Duration>, routes: &RouteMap) {
+    let prepared = routes_for(lake, name, interval).await;
     let mut map = routes.write().unwrap_or_else(PoisonError::into_inner);
     match prepared {
         Some(r) => map.insert(name.clone(), Arc::new(r)),
@@ -67,8 +69,8 @@ pub(super) async fn prepare(lake: &Lake, name: &TableName, routes: &RouteMap) {
     };
 }
 
-async fn routes_for(lake: &Lake, name: &TableName) -> Option<Routes> {
-    let mut raw = lake.table_recent(name, PLAN_CACHE_TTL).await.ok()?;
+async fn routes_for(lake: &Lake, name: &TableName, interval: Option<Duration>) -> Option<Routes> {
+    let mut raw = lake.table_recent(name, interval, PLANNING_REUSE).await.ok()?;
     if raw.contract().rollups.is_empty() || !raw.contract().rollup_routing {
         return None;
     }
@@ -80,7 +82,7 @@ async fn routes_for(lake: &Lake, name: &TableName) -> Option<Routes> {
     let mut rollups = vec![];
     for rollup_name in &raw.contract().rollups {
         let Ok(rollup_name) = rollup_name.parse::<TableName>() else { continue };
-        let Ok(rollup) = lake.table_recent(&rollup_name, PLAN_CACHE_TTL).await else { continue };
+        let Ok(rollup) = lake.table_recent(&rollup_name, interval, PLANNING_REUSE).await else { continue };
         let Ok(def) = Definition::of(&rollup) else { continue };
         let Some(recorded) = recorded_sequence(&rollup) else { continue };
         if def.source != *name || !in_history(&raw, &rollup) {
