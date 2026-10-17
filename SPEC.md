@@ -581,6 +581,29 @@ A logical delete hides data but is not erasure: the bytes still exist in the ori
 
 These tasks can be triggered by a schedule, by commit events (catalog events, S3 notifications), or inline from the writer for small deployments. The core is concurrency-safe via Iceberg optimistic commits and conflict-aware retries.
 
+### 10.1 Streaming compaction (decided 2026-10-17, in progress)
+
+**Why.** Compaction read every file of a run into memory, concatenated, sorted, and deduplicated it, so its memory grew with the partition: fine on a server, too much for a 128 MB Cloudflare Worker (F10), and wasteful everywhere.
+
+**Design.** Every data file Timelake writes is sorted by the write order `(series…, time, insertion time)` and free of duplicates on its own (§9.1). Compaction becomes a k-way merge of its input files:
+- Each input is read as a stream of small batches; the merge keeps the next batch of each input and emits rows in write order. Inputs are taken in commit order, so among rows with the same `(series…, time)` the later commit wins, then the later insertion time, as before.
+- Duplicates are dropped as they meet: the last row of each `(series…, time)` is kept when dedup is on.
+- Memory is one batch per input, the row group being written, and one upload part, whatever the partition's size. Outputs larger than an upload part go up as multipart uploads.
+- An input not sorted in the table's order (written by another engine, or before the table declared one) is sorted on its own first: memory is then bounded by the largest such file, not the partition.
+- The merge is a state machine with no I/O (it says which input needs its next batch, and takes batches as they come), so the engine (async, object store) and the WASM writer (JS store) run the same code.
+
+**Optimizations to try, kept if measured faster:**
+- Runs, not rows: where the current batch of one input ends before the next key of every other input, the whole run is emitted as a slice, without comparing rows one by one (found by binary search on row-encoded keys). Time-series files mostly cover different series or times, so most of a merge should be runs.
+- Copy without decoding: a whole row group, or a whole file, whose key range overlaps no other input is copied to the output as encoded column chunks. This needs each file's (or row group's) first and last composite key; the per-column bounds in Iceberg metadata are too weak for a multi-column series key. If it pays off, the format gains them (below).
+- Parallel decoding of inputs on native targets.
+- Smaller read batches and row groups where memory is tight (WASM), as settings.
+
+**Format extensions considered** (added to the table format only if a measurement needs them; readers that don't know them ignore them):
+- In each data file's Parquet key-value metadata: `timelake.sort` (the write order) and `timelake.unique = true` (no two rows share `(series…, time)`), so compaction and dedup on read can trust a file without the table's history.
+- Per data file in the head (and per row group in the footer metadata): the first and last composite key, for copying non-overlapping inputs without decoding.
+
+**Limits per run.** A setting caps the bytes one maintenance run rewrites (needed on Workers, where a request has at most 5 minutes of CPU; useful anywhere inline maintenance shouldn't hold up appends). A run that stops at the cap commits what it rewrote; the next run continues.
+
 ---
 
 ## 11. Materialized rollups and the function library (R5)
@@ -1264,6 +1287,7 @@ New product features beyond the original requirements, recorded on 2026-10-13. N
 | F7 | Edge gateway: local endpoints for data, metrics, logs and blobs, plus a local cache | R25 | Ingest (§13), reader | 6 |
 | F8 | Server mode: Timelake as a database on local disk, the bucket as the durable copy (experiment first) | R26 | Reader, hot tier (§8), F7 | Experiment after §17.6 |
 | F9 | Settings: every engine feature can be turned on or off or tuned, per table, per session or per call | — | Table properties (§7.1) | Now (design for review) |
+| F10 | Writes from WebAssembly: append and maintain tables from Cloudflare Workers and other JS runtimes | — | `@timelake/client`, streaming compaction (§10.1) | Now |
 
 ### 21.1 F1: Agent access with permission sets (R19)
 
@@ -1442,3 +1466,22 @@ The existing `timelake.*` properties become registry entries unchanged. Hard-cod
 - Session level: every setting the registry allows there can be `SET`, shown with `SHOW`, passed with `--set`, or given to Python's `Lake(settings=…)`. The CLI's `--set` no longer panics on a bad key.
 - `timelake settings [table] [--json]` lists them; the docs page "Settings" renders the same list (`dashboard/lib/settings.json`, checked by a test).
 - Changes from the proposal: `dedup` is fixed at creation (files written with it off may hold copies, which dedup on read assumes they don't). `append-dedup` isn't built for the same reason: an append that keeps copies would need its files marked for the reader. `format-version` is managed by Timelake (create, upgrade) and can't be set by hand. `latest-by` and `as_of_inserted` wait for §7.4. Storage options (`timelake_freshness_check`, …) stay lake options, documented on the Storage page.
+
+### 21.10 F10: Writes from WebAssembly (decided 2026-10-17, in progress)
+
+**Goal.** Append to Timelake tables, and keep them maintained, from JavaScript runtimes where the Rust engine can't run: Cloudflare Workers first, then browsers, Deno, Bun, and Node. Workers run JavaScript and WebAssembly; Python Workers can't load the native Python package.
+
+**Limits it is designed for** (Cloudflare, October 2026): 128 MB of memory per isolate, WebAssembly included; CPU time 10 ms per request on the free plan, 30 s by default and up to 5 minutes on paid plans; 64 MiB per Worker uncompressed. The read bundle is 8.9 MB.
+
+**Design.**
+- **Who does what.** The WASM module builds every file and decides every step; it does no I/O. The TypeScript client (`@timelake/client`) sends the requests through a store: an R2 binding, a local directory (Node, tests), memory (tests), or one the application supplies (`get`, `getRange`, `put`, `putIfAbsent`, `delete`, `list`).
+- **Append.** The same path as the engine: rows (JavaScript objects, or Arrow IPC) are aligned to the table's schema, given `_ingest_ts`, sorted by `(partition, series…, time)`, deduplicated within the append, and written as Parquet with the engine's settings (ZSTD, page statistics, delta and byte-stream-split encodings, the sort order). Then the manifest, manifest list, updated last-value index and head.
+- **Commit.** The two-step commit (P4): upload everything in parallel, then make the one conditional write of `vN+1.metadata.json` (R2 and S3 support create-if-absent). On a conflict, the WASM side rebases onto the new version and retries, reusing the data files. The version hint and head are written after.
+- **Iceberg metadata in our own code.** iceberg-rust pulls in tokio, reqwest and ring and doesn't build for `wasm32-unknown-unknown`, so the shared core writes manifests, manifest lists and table metadata itself, as the WASM reader already reads them. Tests keep the two writers equivalent: the engine (iceberg-rust) loads tables the WASM writer wrote and the other way round, plain DuckDB reads them, and the same input gives the same rows.
+- **One core for both.** Writing files (sort, split, dedup, Parquet settings, last-value index, head) and the streaming merge (§10.1) move to a crate without I/O that the engine and `timelake-wasm` both use, so they can't drift.
+- **Inline maintenance.** After an append, the same thresholds as the engine (`auto-maintain`, `compact-min-files`, `compact-cold-after`) run streaming compaction within the per-run byte cap, then retention and snapshot expiry with file cleanup. `timelake maintain` elsewhere is optional, not required.
+- **Not in the first version:** rollup refresh (it needs the SQL engine; rollups stay correct, since changed buckets are read from the raw table, and are refreshed by the next engine append or `timelake maintain`), schema changes, and request signing for S3 from the client (applications pass a store that signs).
+
+**Recommended deployment.** One writer per table: a Queues consumer or a Durable Object that batches incoming rows into appends of a few thousand rows or more. Concurrent writers are safe (optimistic commits), but each conflict costs a retry, and many tiny appends make many tiny files.
+
+**Measured before it ships:** peak memory and CPU time per append and per maintenance run in workerd, for appends of 1k, 10k and 100k rows and compaction of 8 small files and of a cold partition, to set the defaults (byte cap, batch and row-group sizes).

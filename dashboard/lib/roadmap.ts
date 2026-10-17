@@ -21,6 +21,17 @@ export const NOW: RoadmapItem[] = [
     status: "next",
   },
   {
+    title: "Write from Cloudflare Workers",
+    description:
+      "Append to tables and keep them compacted from Workers and other JavaScript runtimes, with the WebAssembly library.",
+    status: "next",
+  },
+  {
+    title: "Compaction in fixed memory",
+    description: "Compaction merges sorted files as streams, so its memory no longer grows with the partition.",
+    status: "next",
+  },
+  {
     title: "Install from crates.io, PyPI, and npm",
     description: "Every release on the usual registries, with installers and binaries for Linux, macOS, and Windows.",
     status: "done",
