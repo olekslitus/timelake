@@ -20,6 +20,7 @@ object_store.workspace = true
 tokio.workspace = true
 futures.workspace = true
 bytes.workspace = true
+blake3.workspace = true
 async-trait.workspace = true
 typetag.workspace = true
 serde.workspace = true

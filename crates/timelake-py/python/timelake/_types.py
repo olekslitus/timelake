@@ -54,6 +54,15 @@ class MaintainReport(TypedDict):
     seconds: float
 
 
+class CacheStats(TypedDict):
+    """What a lake's block cache did since it was opened: blocks from memory or disk, and blocks fetched."""
+
+    memory_hits: int
+    disk_hits: int
+    misses: int
+    bytes_fetched: int
+
+
 class UpgradeReport(TypedDict):
     """What ``Table.upgrade()`` did, or would do with ``dry_run``.
 

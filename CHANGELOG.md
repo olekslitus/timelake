@@ -44,6 +44,14 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
   `last_value`. `timelake maintain` and `Table.maintain()` report `rollups_refreshed` and `rollup_rows`
   (`--no-rollups`, `rollups=False` to skip). The docs have a new page, "Rollups".
 
+- **Block cache.** Reads of files a table never changes (data files, manifests, manifest lists, last-value index
+  files) go through a cache of 1 MiB blocks, in memory by default on object stores and HTTPS (256 MiB), and on local
+  disk with `timelake_cache=disk`, shared by every process on the machine (4 GiB). A query still checks for a newer
+  table version, so answers are as fresh as before. Storage options `timelake_cache`, `timelake_cache_dir`,
+  `timelake_cache_memory_bytes`, `timelake_cache_disk_bytes` and `timelake_cache_block_bytes`; `Lake.cache_stats()`
+  in Python and `Storage::cache_stats()` in Rust count hits and misses. On S3, TSBS IoT repeat queries went from
+  54 to 16 ms with no requests, and 16 clients from 288 to 398 queries per second.
+
 ### Changed
 
 - **Settings are checked.** Creating or altering a table with an unknown `timelake.*` property, a bad value, or a
@@ -60,6 +68,9 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
   table's columns are fixed at creation for now).
 - With dedup on, rows with the same `(series, time)` within one append keep only the last, so the append's `rows`
   counts them once. Files written by earlier versions may still hold such copies until compaction.
+- Benchmarks: Timelake's repeat runs on object storage now read from its memory cache, so their times drop from
+  this version on; first runs, in a fresh process, are unaffected. `timebench run --reuse` also runs the concurrent
+  dashboards, and `TIMEBENCH_TIMELAKE_OPTIONS` passes storage options to Timelake's readers.
 - The TypeScript client's WebAssembly reader is about 4% smaller (6.7 MB), built with Rust 1.99.
 
 ### Fixed

@@ -24,6 +24,7 @@ object_store = { version = "0.13.2", features = ["aws", "gcp", "azure", "http"] 
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
 bytes = "1"
+blake3 = "1.8"
 async-trait = "0.1"
 typetag = "0.2"
 serde = { version = "1", features = ["derive"] }

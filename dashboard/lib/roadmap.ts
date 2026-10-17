@@ -59,6 +59,12 @@ export const NOW: RoadmapItem[] = [
     status: "next",
   },
   {
+    title: "Local cache",
+    description:
+      "Repeat queries read their data from memory or local disk instead of the bucket: about 3× faster on S3.",
+    status: "done",
+  },
+  {
     title: "Rollups",
     description:
       "Hourly and daily summaries that stay up to date as data lands. Matching queries read them, with the same answer as the raw data.",
@@ -97,7 +103,6 @@ export const COMING_UP: RoadmapItem[] = [
   },
   { title: "Seconds-fresh data", description: "New rows visible within a second, before they are committed." },
   { title: "Ingestion with rules", description: "MQTT, HTTP, and Kafka in, with rules and alerts as data arrives." },
-  { title: "Local cache", description: "Repeat queries served from disk instead of the bucket." },
   { title: "DuckDB extension", description: "Timelake's speedups and functions inside DuckDB." },
 ]
 

@@ -10,16 +10,24 @@ use timelake::arrow::compute::{cast, sum};
 use timelake::arrow::datatypes::{DataType, Float64Type, TimeUnit};
 
 /// Runs `sql` 1 + `runs` times and prints `{"times": [...], "rows": n, "sums": [...], "setup_s": s}` as JSON,
-/// with request and byte counts per run when an s3proxy admin address is given.
+/// with block cache hits and misses per run when the cache is on, and request and byte counts per run when an
+/// s3proxy admin address is given.
 pub(crate) async fn run(session: &Session, sql: &str, runs: usize, setup_s: f64, proxy: Option<&str>) -> Result<()> {
     let (mut times, mut requests, mut bytes, mut rows, mut check) = (vec![], vec![], vec![], 0usize, vec![]);
+    let (mut hits, mut misses) = (vec![], vec![]);
+    let cache = || session.lake().storage().cache_stats();
     for _ in 0..=runs {
         let before = proxy.map(proxy_stats).transpose()?;
+        let cache_before = cache();
         let started = Instant::now();
         let batches = session.sql(sql).await?.collect().await?;
         times.push(started.elapsed().as_secs_f64());
         rows = batches.iter().map(RecordBatch::num_rows).sum();
         check = sums(&batches);
+        if let (Some(c0), Some(c1)) = (cache_before, cache()) {
+            hits.push(c1.memory_hits + c1.disk_hits - c0.memory_hits - c0.disk_hits);
+            misses.push(c1.misses - c0.misses);
+        }
         if let (Some((r0, b0)), Some(p)) = (before, proxy) {
             let (r1, b1) = proxy_stats(p)?;
             requests.push(r1 - r0);
@@ -27,6 +35,10 @@ pub(crate) async fn run(session: &Session, sql: &str, runs: usize, setup_s: f64,
         }
     }
     let mut out = serde_json::json!({ "times": times, "rows": rows, "sums": check, "setup_s": setup_s });
+    if !hits.is_empty() {
+        out["cache_hits"] = hits.into();
+        out["cache_misses"] = misses.into();
+    }
     if proxy.is_some() {
         out["requests"] = requests.into();
         out["bytes"] = bytes.into();

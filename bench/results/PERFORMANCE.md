@@ -3,6 +3,35 @@
 Measurements for the steps of the performance plan ([SPEC.md §19.1](../../SPEC.md)), newest first. Each step is
 measured from a laptop (M1 Pro) over the internet, against the numbers before it.
 
+## P5: block cache (2026-10-17)
+
+Measured on the benchmark instance (c8gd.2xlarge, us-east-2) on the S3 tables of the weekly run of 2026-10-16, with
+`timebench run … --reuse --checkpoints maintained --runs 3 --concurrency 1,4,16` and `TIMEBENCH_TIMELAKE_OPTIONS`
+setting the cache; one run per setting, commit `7e38163` (branch `block-cache`). Geometric means over the queries,
+requests over all queries:
+
+| TSBS IoT, S3 | Cache off | Memory (default, 1 MiB blocks) | 256 KiB blocks | Disk, second process |
+|---|---:|---:|---:|---:|
+| First run (new process) | 151 ms, 279 requests | 150 ms, 251 | 150 ms, 279 | 71 ms, 58 |
+| Repeat runs | 54 ms, 221 requests | 16 ms, 0 | 16 ms, 0 | 16 ms, 0 |
+| Queries/s, 1 / 4 / 16 clients | 22 / 94 / 288 | 133 / 339 / 398 | 133 / 345 / 395 | 136 / 345 / 395 |
+
+| TSBS DevOps, S3 | Cache off | Memory (1 MiB) | 256 KiB blocks |
+|---|---:|---:|---:|
+| First run | 203 ms, 295 requests | 171 ms, 295 | 262 ms, 430 |
+| Repeat runs | 85 ms, 261 requests | 27 ms, 0 | 26 ms, 0 |
+| Queries/s, 1 / 4 / 16 clients | 9 / 19 / 21 | 18 / 22 / 21 | 18 / 22 / 21 |
+
+- Repeat runs read nothing from S3: the data comes from memory, and a repeat within a second of the last query reuses
+  the table version without the freshness check (as before). Examples: `one-truck-last-hour` 36 → 4 ms,
+  `cpu-max-all-8` 133 → 13 ms, `single-groupby-1-8-1` 55 → 8 ms.
+- DevOps at 16 clients stays at 21 queries/s: its dashboard queries are limited by computation, not reads.
+- 256 KiB blocks: no gain on repeats, and more requests on first runs (DevOps `cpu-max-all-8` 10 → 83 requests,
+  1,016 ms), since runs of missing blocks break up more often. 1 MiB stays the default.
+- First runs vary: `one-truck-last-hour` took 170 ms with the memory cache against 74 ms without it, in one run each,
+  with the same 6 requests; a 1 MiB block reads more bytes than the ranges it covers. Worth more runs.
+- A second process with the disk cache warm: first runs 151 → 71 ms, requests 279 → 58.
+
 ## P2 + P3: footers in the head, connections opened early (2026-10-14)
 
 - **P2:** the head also carries the Parquet footers (with page indexes) of the newest files, in what the last-value

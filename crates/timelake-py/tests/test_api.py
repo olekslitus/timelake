@@ -336,3 +336,16 @@ def test_rollups_from_sql(lake: timelake.Lake, table: timelake.Table) -> None:
     assert (report["rollups_refreshed"], report["rollup_rows"]) == (1, 2)
     assert lake.sql("DROP MATERIALIZED ROLLUP iot.hourly").num_rows == 1
     assert lake.tables() == ["iot.readings"]
+
+
+def test_cache_stats(tmp_path: Path, table: timelake.Table) -> None:
+    table.append(readings())
+    lake = timelake.Lake(table.location.rsplit("/iot/", 1)[0], storage_options={"timelake_cache": "memory"})
+    assert lake.cache_stats() == {"memory_hits": 0, "disk_hits": 0, "misses": 0, "bytes_fetched": 0}
+    query = "SELECT sum(value) AS s FROM iot.readings"
+    assert lake.sql(query).to_pylist() == lake.sql(query).to_pylist() == [{"s": 9150.0}], "5 devices × (1 + … + 60)"
+    stats = lake.cache_stats()
+    assert stats is not None
+    assert stats["misses"] > 0
+    assert stats["memory_hits"] > 0
+    assert timelake.Lake(str(tmp_path / "other")).cache_stats() is None, "off on local disk"

@@ -1117,7 +1117,7 @@ Open from v0:
 | Later | Computed metrics from user-defined Python functions (F4, §21.4) |
 
 ### 19.1 Performance plan (in progress)
-**Status:** P4 done (2026-10-13); P1–P3 done (2026-10-14, §19.2). P3 measured no clear gain and is off by default. P7's first version done (2026-10-16, §11.1.1). Next: P5, P6, P8, and the rest of P7. The history of each step and its effect is on the docs page "Performance history". The codebase and CI/CD cleanup it waited for is done (2026-10-13; the audit and plan are in git history at `2d66939`). Gains below are estimates until measured; measurements are in [`bench/results/PERFORMANCE.md`](bench/results/PERFORMANCE.md).
+**Status:** P4 done (2026-10-13); P1–P3 done (2026-10-14, §19.2). P3 measured no clear gain and is off by default. P7's first version done (2026-10-16, §11.1.1); P5 done (2026-10-17, §19.3). Next: P6, P8, and the rest of P7. The history of each step and its effect is on the docs page "Performance history". The codebase and CI/CD cleanup it waited for is done (2026-10-13; the audit and plan are in git history at `2d66939`). Gains below are estimates until measured; measurements are in [`bench/results/PERFORMANCE.md`](bench/results/PERFORMANCE.md).
 
 **Where time goes today** (Timelake reader, laptop → AWS S3 us-east-2, after maintenance, [`bench/results/S3.md`](bench/results/S3.md)):
 
@@ -1141,7 +1141,7 @@ Open from v0:
 | P2 | **Done.** **Footers in the head object.** Store the Parquet footers and page indexes of live files next to the file list, so scans skip the footer round trip. | Cold scans 2 round trips instead of 3; Tigris `one-truck-history` 1,187 → 522 ms (with P1) |
 | P3 | **Done.** **Connection pre-warm.** Open the scan's connections while the head object is in flight. | Measured at most about 20 ms on cold scans, nothing on point queries: off by default |
 | P4 | **Done.** **Two-step commit.** Upload data, manifest, index and manifest list in parallel (all are known locally), then make the one conditional write. Update the hint asynchronously. | Commit p50 483 ms → 243 ms measured (whole v0 ingest 1,307 s → 795 s) |
-| P5 | **Local disk cache across processes** for metadata, footers and recent data (§12.2 item 6). | Repeat queries at best-run speed |
+| P5 | **Done (§19.3).** **Block cache**, in memory and optionally on local disk across processes, for data files, manifests and the last-value index (§12.2 item 6). | Repeat queries at best-run speed; measured: TSBS IoT repeats on S3 54 → 16 ms, 16 clients 288 → 398 queries/s |
 | P6 | **Optional staleness bound** (e.g. "at most 1 s old") to skip the per-query version check, and the head pointer on S3 Express where available. | Warm `last-loc` 68 ms → a few ms |
 | P7 | **First version done (§11.1.1).** **Rollups (§11.1).** TSBS daily queries read hourly or daily rollups instead of raw data. | Likely 10–100× on bandwidth-bound dashboard queries; an hourly query over a week of 200 devices went 113 → 21 ms on a laptop (debug build) |
 | P8 | **Scan tuning:** late materialization (`pushdown_filters`, now off), Q4's hidden `_series_id`, fewer and larger parallel range reads. | Less data decoded and fetched on selective scans |
@@ -1185,7 +1185,45 @@ Open from v0:
 
 **TypeScript client and WASM reader.** The client GETs the head and the hint together; the WASM reader decodes heads written with the built-in codecs (the codecs and header live in `timelake-format` under its `head` feature, shared with the engine). A HEAD for `vN+1` runs alongside the query's data reads; if a newer version exists, the result is dropped and the query reruns on the metadata chain from `vN+1`. `latest` answers from the inline index without a request, and scans open files from inline footers.
 
-### 19.3 Versions, releases and demos
+### 19.3 Block cache (P5)
+
+**Status:** built 2026-10-17. Measured on the benchmark instance on S3 (`bench/results/PERFORMANCE.md`, "P5"):
+repeat runs of TSBS IoT 54 → 16 ms (geometric mean) with no requests, 1 / 4 / 16 clients 22 / 94 / 288 → 133 / 339 /
+398 queries/s; TSBS DevOps repeats 85 → 27 ms. A second process with the disk cache warm: IoT first runs 151 → 71 ms.
+256 KiB blocks gained nothing and cost more requests on first runs, so 1 MiB is the default.
+
+**Why.** Within one process, table metadata, manifests and footers are already cached in memory, but every repeat
+query on object storage fetches its data again. In the weekly run of 2026-10-16 on S3, repeat runs took 32 ms
+(`one-truck-last-hour`, 4 requests) against 3 ms on local disk, and 135 ms (`cpu-max-all-8`, 8 requests) against
+14 ms; 16 clients on S3 reached about half the local throughput. One request per query remains either way: the check
+for a newer table version, which P6 addresses.
+
+**Design.**
+- A caching layer wraps the object store, so every read goes through it: DataFusion's Parquet reads, manifests,
+  manifest lists, the last-value index and footers.
+- Only immutable objects are cached: `*.parquet` and `*.avro` (data files, manifests, manifest lists, last-value
+  index files), whose names carry a UUID and which Timelake never rewrites. The version hint, the head, table
+  listings, `vN.metadata.json` and `timelake-tables.json` always go to the store, so freshness is as before.
+- Objects are cached in aligned blocks (`timelake_cache_block_bytes`, default 1 MiB). A read takes the blocks it
+  covers; missing blocks next to each other are fetched in one ranged GET, and concurrent reads of the same missing
+  block share one fetch. The store's answer also gives the object's size, recorded with its blocks; a block whose
+  length doesn't fit that size is treated as missing.
+- Writes of cacheable objects put their blocks in the cache too, so a process reads what it just wrote without a
+  request. Deleting an object drops its blocks.
+- Two levels: memory (least recently used blocks evicted past `timelake_cache_memory_bytes`, default 256 MiB), and
+  optionally local disk, shared by every process on the machine (`timelake_cache_disk_bytes`, default 4 GiB, in
+  `timelake_cache_dir`, default the OS cache directory). Disk blocks are written to a temporary name and renamed into
+  place; a process that finds the directory over its cap deletes the least recently used blocks (by modification
+  time, refreshed on use at most once a minute). A block deleted while another process reads it is fetched again.
+- `timelake_cache = off | memory | disk`: memory by default for object stores and HTTPS, off for local disk.
+- Hits, misses and bytes fetched are counted per lake (`Storage::cache_stats`, `Lake.cache_stats()` in Python, and
+  per run in the benchmark output).
+- Not covered: the WASM reader and the TypeScript client (the browser has its own HTTP cache).
+
+**Measure:** the S3 query-only runs and the 16-client test on the benchmark instance, and a new CLI process running
+`one-truck-last-hour` against a warm disk cache, before and after; block sizes of 256 KiB and 1 MiB.
+
+### 19.4 Versions, releases and demos
 
 **Decided 2026-10-14:**
 - **One version for everything** (crates, CLI, Python package, WASM reader, TypeScript client, website), following [Cargo's semver rules](https://doc.rust-lang.org/cargo/reference/semver.html). `cargo-semver-checks` runs on the library crates in the release script (`scripts/release.py`) against the previous tag. Every version is a git tag `vX.Y.Z` with a GitHub release, so performance claims name a version that can be checked out and re-measured. 0.1.0 (before the performance work) and 0.2.0 (two-step commit) were tagged after the fact; 0.3.0 is the first release cut with the script.

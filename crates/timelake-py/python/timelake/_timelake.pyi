@@ -10,6 +10,7 @@ from timelake._types import (
     ArrowArrayExportable,
     ArrowSchemaExportable,
     ArrowStreamExportable,
+    CacheStats,
     HasArrowSchema,
     MaintainReport,
     TableInfo,
@@ -102,6 +103,12 @@ class Lake:
 
         Raises:
             RuntimeError: The query failed to plan or run.
+        """
+
+    def cache_stats(self) -> CacheStats | None:
+        """What the block cache did since the lake was opened, or ``None`` with the cache off.
+
+        The cache is on by default for object stores (``timelake_cache`` in ``storage_options``).
         """
 
     def latest(self, table: str) -> pa.Table:

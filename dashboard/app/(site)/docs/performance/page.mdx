@@ -12,11 +12,27 @@ Each version is a [tag on GitHub](https://github.com/polythings/timelake/tags): 
 
 | Version | Change | Commit | Effect |
 | --- | --- | --- | --- |
+| Unreleased | Block cache | `block-cache` | Repeat queries on S3 (TSBS IoT): 54 → 16 ms, no requests; 16 clients 288 → 398 queries/s |
 | 0.3.0 | Footers in the head, cold loads in one round trip | `4e8a1fa` | First query on S3: `latest` 314 → 240 ms, a filtered scan of one truck 823 → 560 ms |
 | 0.3.0 | Table state in one object (the head) | `cbe7e3a` | First `latest` query on S3: 502 → 314 ms; on Tigris 868 → 318 ms |
 | 0.2.0 | Two-step commit | `d2b80cd` | Commit p50 on S3: 483 → 243 ms; a 1,728-commit ingest 1,307 → 795 s |
 
 From 0.2.0 to 0.3.0, the first `latest` query on S3 went from about 510 ms to 240 ms, and on Tigris from about 810 ms to 210 ms. 0.1.0 is the baseline for 0.2.0’s commit numbers.
+
+## Unreleased: block cache
+
+- **What changed:** files a table never changes (data files, manifests, the last-value index) are cached in 1 MiB blocks: in memory by default, and on local disk, shared by processes, with `timelake_cache=disk`. See [Block cache](/docs/storage#block-cache).
+- **Measured** on the benchmark instance (c8gd.2xlarge, us-east-2) on S3, one run per setting (geometric means over the queries):
+
+| | Cache off | Memory cache | Disk cache, second process |
+| --- | ---: | ---: | ---: |
+| TSBS IoT first run | 151 ms | 150 ms | 71 ms |
+| TSBS IoT repeat runs | 54 ms | 16 ms | 16 ms |
+| TSBS IoT queries per second (1 / 4 / 16 clients) | 22 / 94 / 288 | 133 / 339 / 398 | 136 / 345 / 395 |
+| TSBS DevOps repeat runs | 85 ms | 27 ms | |
+
+- Repeat runs send no requests. DevOps at 16 clients stays at 21 queries/s with or without the cache: those queries are limited by computation.
+- **Tried:** 256 KiB blocks. Repeats were the same, and first runs sent more requests (one DevOps query 10 → 83), so 1 MiB is the default.
 
 ## 0.3.0: footers in the head, cold loads in one round trip
 

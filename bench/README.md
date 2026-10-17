@@ -73,6 +73,9 @@ uv run timebench history --workload tsbs-iot                  # one line per run
   stops it after, so one server uses the machine at a time; the run file records each server's version.
 - **Targets** (`--target`): `local` (tables under `data/lakes/`), or S3 through `tools/s3proxy` on `localhost:59100`:
   `s3` for a local RustFS, `aws-s3` / `aws-s3x` for real buckets (`infra/`). TimescaleDB ignores the target.
+- **Reusing tables** (`--reuse`): query the tables an earlier run left on the target, at the given checkpoints, and run
+  the concurrent dashboards if asked, without ingesting. `TIMEBENCH_TIMELAKE_OPTIONS=key=value,...` adds storage
+  options to Timelake's readers, to compare settings on the same tables (`timelake_cache=off`).
 - **Adding a workload or system:** subclass `Workload` or `System` and register it in its package's `__init__.py`.
   Queries go in `queries/<suite>/queries.sql` with the dialect placeholders of `timebench/queries.py`.
 

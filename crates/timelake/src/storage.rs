@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::ops::Range;
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -29,6 +30,8 @@ use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 use url::Url;
 
+pub use crate::block_cache::CacheStats;
+use crate::block_cache::{CacheConfig, Cached, CachedStore};
 use crate::error::{Error, Result};
 
 /// A store rooted at one URL authority (`s3://bucket`, `file://`, ...). Paths handed to Timelake and
@@ -48,6 +51,8 @@ pub struct Storage {
     warm_connections: usize,
     /// A cold table load lists the metadata files to find the newest version (else reads the hint).
     list_on_load: bool,
+    /// The block cache under `store`, if on.
+    cache: Option<Arc<CachedStore>>,
 }
 
 /// A store's raw-prefix listing.
@@ -77,6 +82,23 @@ pub const VERSION_LOOKUP_OPTION: &str = "timelake_version_lookup";
 /// with small HEAD requests (P3). Off by default: measured on S3 and Tigris it saved at most
 /// about 20 ms on cold scans and nothing on point queries.
 pub const WARM_CONNECTIONS_OPTION: &str = "timelake_warm_connections";
+
+/// Storage option choosing the block cache (SPEC §19.3): `off`, `memory` (the default for object
+/// stores and HTTPS) or `disk` (memory and a directory shared by every process on the machine).
+pub const CACHE_OPTION: &str = "timelake_cache";
+/// Storage option: the disk cache's directory (default: `timelake` in the OS cache directory).
+pub const CACHE_DIR_OPTION: &str = "timelake_cache_dir";
+/// Storage option: the memory cache's budget in bytes (default 256 MiB).
+pub const CACHE_MEMORY_BYTES_OPTION: &str = "timelake_cache_memory_bytes";
+/// Storage option: the disk cache's budget in bytes (default 4 GiB).
+pub const CACHE_DISK_BYTES_OPTION: &str = "timelake_cache_disk_bytes";
+/// Storage option: the cache's block size in bytes (default 1 MiB, at least 4 KiB).
+pub const CACHE_BLOCK_BYTES_OPTION: &str = "timelake_cache_block_bytes";
+
+const DEFAULT_CACHE_MEMORY_BYTES: u64 = 256 << 20;
+const DEFAULT_CACHE_DISK_BYTES: u64 = 4 << 30;
+const DEFAULT_CACHE_BLOCK_BYTES: u64 = 1 << 20;
+const MIN_CACHE_BLOCK_BYTES: u64 = 4 << 10;
 
 /// How [`Storage::check_exists`] asks whether an object exists. A HEAD request is the cheapest
 /// on most stores; on some (Tigris) a HEAD of a missing key is slow while a LIST of its exact
@@ -110,28 +132,8 @@ impl Storage {
     /// of a missing key is slow). `list` needs S3, GCS or Azure.
     pub fn open(url: &Url, mut options: HashMap<String, String>) -> Result<Self> {
         let local_root = options.remove(LOCAL_ROOT_OPTION);
-        let check = match options.remove(FRESHNESS_CHECK_OPTION).as_deref().map(str::to_ascii_lowercase).as_deref() {
-            None => None,
-            Some("head") => Some(false),
-            Some("list") => Some(true),
-            Some(other) => {
-                return Err(Error::config(format!("{FRESHNESS_CHECK_OPTION} must be head or list, got {other:?}")));
-            }
-        };
-        let list_on_load =
-            match options.remove(VERSION_LOOKUP_OPTION).as_deref().map(str::to_ascii_lowercase).as_deref() {
-                None | Some("list") => true,
-                Some("hint") => false,
-                Some(other) => {
-                    return Err(Error::config(format!("{VERSION_LOOKUP_OPTION} must be list or hint, got {other:?}")));
-                }
-            };
-        let warm_connections = match options.remove(WARM_CONNECTIONS_OPTION) {
-            Some(n) => n.trim().parse().map_err(|_| {
-                Error::config(format!("{WARM_CONNECTIONS_OPTION} must be a non-negative integer, got {n:?}"))
-            })?,
-            None => 0,
-        };
+        let (check, list_on_load, warm_connections) = read_options(&mut options)?;
+        let cache = cache_config(&mut options, url.scheme())?;
         let scheme = url.scheme();
         let authority = url.host_str().unwrap_or_default();
         let base = match scheme {
@@ -200,7 +202,9 @@ impl Storage {
             other => return Err(Error::config(format!("unsupported storage scheme {other:?}"))),
         };
         let listable = !matches!(scheme, "http" | "https");
+        let (store, cached) = with_cache(store, &base, &options, cache);
         let mut storage = Self::new(store, base, listable)?;
+        storage.cache = cached;
         storage.check = match (&lister, check) {
             (Some(_), Some(true)) | (Some((_, true)), None) => FreshnessCheck::List,
             (None, Some(true)) => {
@@ -227,7 +231,13 @@ impl Storage {
             check: FreshnessCheck::Head,
             warm_connections: 0,
             list_on_load: true,
+            cache: None,
         })
+    }
+
+    /// What the block cache did since the store was opened (`None` with the cache off).
+    pub fn cache_stats(&self) -> Option<CacheStats> {
+        self.cache.as_ref().map(|c| c.stats())
     }
 
     /// A listable store addressed as `base` (`scheme://authority`).
@@ -704,6 +714,96 @@ impl FileWrite for ObjectWrite {
             None => w.shutdown().await.map_err(ice_err),
         }
     }
+}
+
+/// The read options from the storage options (removed from `options`): the freshness check
+/// (`None`: the store's default), whether a cold load lists, and connections to warm up.
+fn read_options(options: &mut HashMap<String, String>) -> Result<(Option<bool>, bool, usize)> {
+    let check = match options.remove(FRESHNESS_CHECK_OPTION).as_deref().map(str::to_ascii_lowercase).as_deref() {
+        None => None,
+        Some("head") => Some(false),
+        Some("list") => Some(true),
+        Some(other) => {
+            return Err(Error::config(format!("{FRESHNESS_CHECK_OPTION} must be head or list, got {other:?}")));
+        }
+    };
+    let list_on_load = match options.remove(VERSION_LOOKUP_OPTION).as_deref().map(str::to_ascii_lowercase).as_deref() {
+        None | Some("list") => true,
+        Some("hint") => false,
+        Some(other) => {
+            return Err(Error::config(format!("{VERSION_LOOKUP_OPTION} must be list or hint, got {other:?}")));
+        }
+    };
+    let warm_connections = match options.remove(WARM_CONNECTIONS_OPTION) {
+        Some(n) => n.trim().parse().map_err(|_| {
+            Error::config(format!("{WARM_CONNECTIONS_OPTION} must be a non-negative integer, got {n:?}"))
+        })?,
+        None => 0,
+    };
+    Ok((check, list_on_load, warm_connections))
+}
+
+/// `store` under the block cache, if on (and the cache, for its statistics).
+fn with_cache(
+    store: Arc<dyn ObjectStore>,
+    base: &str,
+    options: &HashMap<String, String>,
+    config: Option<CacheConfig>,
+) -> (Arc<dyn ObjectStore>, Option<Arc<CachedStore>>) {
+    let Some(config) = config else { return (store, None) };
+    // Two stores never share disk blocks: the scope names the endpoint as well as the bucket.
+    let endpoint = ["aws_endpoint", "endpoint", "aws_endpoint_url"].iter().find_map(|k| options.get(*k));
+    let scope = endpoint.map_or_else(|| base.to_string(), |e| format!("{base}@{e}"));
+    let cache = Arc::new(CachedStore::new(store, scope, config));
+    (Arc::new(Cached(cache.clone())), Some(cache))
+}
+
+/// The block cache's settings from the storage options (removed from `options`); `None` when off.
+fn cache_config(options: &mut HashMap<String, String>, scheme: &str) -> Result<Option<CacheConfig>> {
+    let bytes = |options: &mut HashMap<String, String>, key: &str, default: u64| -> Result<u64> {
+        options.remove(key).map_or(Ok(default), |v| {
+            v.trim().parse().map_err(|_| Error::config(format!("{key} must be a number of bytes, got {v:?}")))
+        })
+    };
+    let memory = bytes(options, CACHE_MEMORY_BYTES_OPTION, DEFAULT_CACHE_MEMORY_BYTES)?;
+    let disk_bytes = bytes(options, CACHE_DISK_BYTES_OPTION, DEFAULT_CACHE_DISK_BYTES)?;
+    let block = bytes(options, CACHE_BLOCK_BYTES_OPTION, DEFAULT_CACHE_BLOCK_BYTES)?;
+    if block < MIN_CACHE_BLOCK_BYTES {
+        return Err(Error::config(format!("{CACHE_BLOCK_BYTES_OPTION} must be at least {MIN_CACHE_BLOCK_BYTES}")));
+    }
+    let dir = options.remove(CACHE_DIR_OPTION).map(PathBuf::from);
+    let remote = !matches!(scheme, "file" | "memory");
+    let mode = options.remove(CACHE_OPTION).map(|m| m.trim().to_ascii_lowercase());
+    let disk = match mode.as_deref() {
+        None if remote => false,
+        None | Some("off") => return Ok(None),
+        Some("memory") => false,
+        Some("disk") => true,
+        Some(other) => return Err(Error::config(format!("{CACHE_OPTION} must be off, memory or disk, got {other:?}"))),
+    };
+    let disk = if disk {
+        let dir = dir.or_else(default_cache_dir).ok_or_else(|| {
+            Error::config(format!("{CACHE_OPTION}=disk: no cache directory found; set {CACHE_DIR_OPTION}"))
+        })?;
+        Some((dir, disk_bytes))
+    } else {
+        None
+    };
+    Ok(Some(CacheConfig { block, memory, disk }))
+}
+
+/// `timelake` in the OS cache directory: `~/Library/Caches` on macOS, `%LOCALAPPDATA%` on Windows,
+/// else `$XDG_CACHE_HOME` or `~/.cache`.
+fn default_cache_dir() -> Option<PathBuf> {
+    let env = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from);
+    let base = if cfg!(target_os = "macos") {
+        env("HOME").map(|h| h.join("Library").join("Caches"))
+    } else if cfg!(windows) {
+        env("LOCALAPPDATA")
+    } else {
+        env("XDG_CACHE_HOME").or_else(|| env("HOME").map(|h| h.join(".cache")))
+    };
+    base.map(|b| b.join("timelake"))
 }
 
 /// Normalizes a warehouse location: absolute and relative local paths become `file://` URLs.
