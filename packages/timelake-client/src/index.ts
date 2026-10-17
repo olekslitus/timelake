@@ -5,7 +5,7 @@
  * `@timelake/client/workers` with the `.wasm` file instead.
  */
 
-import { setEmbedded } from "./init.js"
+import { setEmbedded } from "./init.ts"
 import { wasmBase64 } from "./wasm/inline.js"
 
 setEmbedded(() => {
@@ -15,4 +15,16 @@ setEmbedded(() => {
   return bytes
 })
 
-export * from "./client.js"
+export {
+  Lake,
+  TableHandle,
+  TableWriter,
+  initWasm,
+  memoryStore,
+  r2Store,
+  readerVersion,
+  wasmHeapPeakBytes,
+  wasmMemoryBytes,
+  zodSource,
+} from "./client.ts"
+export type * from "./client.ts"

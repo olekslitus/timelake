@@ -18,7 +18,7 @@
 
 import type { z } from "zod"
 
-import { ensureWasm } from "./init.js"
+import { ensureWasm } from "./init.ts"
 import {
   ParquetFile,
   Query,
@@ -28,8 +28,8 @@ import {
   version as wasmVersion,
 } from "./wasm/timelake_wasm.js"
 
-export { initWasm } from "./init.js"
-export { memoryStore, r2Store, TableWriter } from "./writer.js"
+export { initWasm } from "./init.ts"
+export { memoryStore, r2Store, TableWriter } from "./writer.ts"
 export type {
   AppendReport,
   AppendRowsOptions,
@@ -39,7 +39,7 @@ export type {
   Store,
   StoredObject,
   Upload,
-} from "./writer.js"
+} from "./writer.ts"
 
 /** Bytes of memory the WebAssembly module has grown to: the peak of what reads and writes used so far. */
 export function wasmMemoryBytes(): number {

@@ -12,7 +12,7 @@
  * ```
  */
 
-import { ensureWasm } from "./init.js"
+import { ensureWasm } from "./init.ts"
 import { Writer as WasmWriter } from "./wasm/timelake_wasm.js"
 
 /** An object in a store, as {@link Store.list} returns it. */
