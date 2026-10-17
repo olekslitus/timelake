@@ -8,6 +8,8 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
 
 ## Unreleased
 
+## 0.5.0 – 2026-10-17
+
 ### Added
 
 - **Dedup on read.** In tables with dedup on, the Timelake reader (CLI, Python, Rust) returns only the latest write of
