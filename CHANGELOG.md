@@ -8,6 +8,8 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
 
 ## Unreleased
 
+## 0.6.0 – 2026-10-17
+
 ### Added
 
 - **Writes from JavaScript.** `TableWriter` in `@timelake/client` appends to tables from Cloudflare Workers, Node,
