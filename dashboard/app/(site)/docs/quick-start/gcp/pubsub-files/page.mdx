@@ -1,0 +1,53 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "Google Cloud: Pub/Sub to Cloud Storage" }
+
+# Pub/Sub to Cloud Storage
+
+Do the [Google Cloud setup](/docs/quick-start/gcp/setup) first.
+
+<IngestFlow
+  nodes={[
+    { label: "Devices", sub: "publish" },
+    { label: "Pub/Sub topic" },
+    { label: "Landing bucket", sub: ".jsonl files" },
+    { label: "Cloud Run function", sub: "ingest_gcs", accent: true },
+    { label: "Lake bucket", sub: "Iceberg tables" },
+  ]}
+  edges={["SDK", "every minute", "Eventarc", "commit"]}
+/>
+
+Devices publish readings to a topic. A Cloud Storage subscription writes the waiting messages to the landing bucket as one file per interval (1 to 10 minutes), one message per line. The function from [Files to Cloud Storage](/docs/quick-start/gcp/files) appends each file, so each interval becomes one commit, however many devices publish. Set up [Files to Cloud Storage](/docs/quick-start/gcp/files) first.
+
+```bash
+gcloud pubsub topics create timelake-readings
+PUBSUB_AGENT=service-$(gcloud projects describe $PROJECT --format='value(projectNumber)')@gcp-sa-pubsub.iam.gserviceaccount.com
+for role in roles/storage.objectCreator roles/storage.legacyBucketReader; do
+  gcloud storage buckets add-iam-policy-binding gs://$LANDING --member=serviceAccount:$PUBSUB_AGENT --role=$role
+done
+gcloud pubsub subscriptions create timelake-files --topic=timelake-readings \
+  --cloud-storage-bucket=$LANDING --cloud-storage-file-prefix=pubsub- --cloud-storage-file-suffix=.jsonl \
+  --cloud-storage-max-duration=1m --cloud-storage-output-format=text
+```
+
+With text output, the files hold only the message bodies, which `read_file` reads as JSON lines. A longer `--cloud-storage-max-duration` means fewer, larger commits; `--cloud-storage-max-bytes` closes a file early when it gets large.
+
+Try it:
+
+```bash
+gcloud pubsub topics publish timelake-readings \
+  --message='{"time": "2026-01-05T10:05:00Z", "device_id": "pump-1", "temp": 62.0, "humidity": 41}'
+```
+
+From a device or gateway with the Pub/Sub client:
+
+```python
+import json
+
+from google.cloud import pubsub_v1
+
+publisher = pubsub_v1.PublisherClient()
+topic = publisher.topic_path("my-project", "timelake-readings")
+for r in readings:
+    publisher.publish(topic, json.dumps(r).encode())
+```

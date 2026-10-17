@@ -1,0 +1,29 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "Vercel: Files, appended by cron" }
+
+# Files, appended by cron
+
+Do the [Vercel setup](/docs/quick-start/vercel/setup) first.
+
+<IngestFlow
+  nodes={[
+    { label: "Gateways", sub: "CSV / Parquet / JSON" },
+    { label: "Tigris landing/" },
+    { label: "Cron job", sub: "/api/cron/landing", accent: true },
+    { label: "Tigris bucket", sub: "Iceberg tables" },
+  ]}
+  edges={["S3 PUT", "every minute", "commit"]}
+/>
+
+Gateways upload files under `landing/` in the bucket with any S3 client, using an access key of their own (create one in the Tigris console). Once a minute a cron job lists the files, appends each one with its key as the batch id, and deletes it. Give every file a unique key, such as the gateway and the time, and send corrections as new files.
+
+Try it:
+
+```bash
+cat > readings.csv <<'EOF'
+time,device_id,temp,humidity
+2026-01-05T10:15:00Z,pump-1,64.0,40
+EOF
+aws s3 cp readings.csv s3://timelake/landing/gateway-1-20260105T1015.csv
+```

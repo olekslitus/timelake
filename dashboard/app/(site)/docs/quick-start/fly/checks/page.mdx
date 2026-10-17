@@ -1,0 +1,33 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "Fly.io: checks and maintenance" }
+
+# Fly.io: checks and maintenance
+
+Do the [Fly.io setup](/docs/quick-start/fly/setup) first.
+
+## Scheduled checks on recent data
+
+<IngestFlow
+  nodes={[
+    { label: "jobs Machine", sub: "every 5 minutes", accent: true },
+    { label: "Tigris lake/", sub: "iot.readings" },
+    { label: "Webhook", sub: "Slack, Teams, …" },
+  ]}
+  edges={["query", "alert"]}
+/>
+
+Every 5 minutes, `check` asks two questions of the table and posts to a webhook when either has an answer:
+
+- Which pumps averaged above 80° over the last 10 minutes? A SQL query over recent data. The time filter skips every file whose time range lies outside the window, before any data is read.
+- Which pumps have sent nothing for 15 minutes? `lake.latest()` answers from the last-value index, without scanning the table.
+
+```bash
+fly secrets set --app $APP ALERT_WEBHOOK="<incoming webhook URL>"
+```
+
+The message body is `{"text": "…"}`, which Slack's incoming webhooks accept; change it for another service. Change the SQL to check anything the table holds: a rate of change, a counter that stopped increasing, readings outside a band per site. Over longer windows, a [rollup](/docs/rollups) keeps the query small.
+
+## Maintenance
+
+Each append already merges small files and removes duplicates. Once an hour, `jobs` also runs `maintain`: it sorts each finished day into one file, applies retention, and deletes files no version needs. Nothing to set up.

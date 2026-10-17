@@ -1,0 +1,49 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "AWS: SQS" }
+
+# SQS
+
+Do the [AWS setup](/docs/quick-start/aws/setup) first.
+
+<IngestFlow
+  nodes={[
+    { label: "Devices", sub: "SendMessage" },
+    { label: "SQS queue" },
+    { label: "Lambda", sub: "ingest_sqs", accent: true },
+    { label: "S3 lake bucket", sub: "Iceberg tables" },
+  ]}
+  edges={["SDK / HTTP", "batch", "commit"]}
+/>
+
+Devices send messages to a queue, each one reading or a list of readings. Lambda collects up to 10,000 messages or 30 seconds' worth per call and commits them at once. A message that keeps failing moves to a dead-letter queue after 5 tries.
+
+```bash
+DLQ_URL=$(aws sqs create-queue --queue-name timelake-readings-dlq --query QueueUrl --output text)
+DLQ_ARN=$(aws sqs get-queue-attributes --queue-url $DLQ_URL --attribute-names QueueArn \
+  --query Attributes.QueueArn --output text)
+cat > queue.json <<EOF
+{"VisibilityTimeout": "720", "RedrivePolicy": "{\"deadLetterTargetArn\":\"$DLQ_ARN\",\"maxReceiveCount\":\"5\"}"}
+EOF
+QUEUE_URL=$(aws sqs create-queue --queue-name timelake-readings --attributes file://queue.json \
+  --query QueueUrl --output text)
+
+aws iam attach-role-policy --role-name timelake \
+  --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole
+lambda_function timelake-sqs ingest_sqs
+aws lambda create-event-source-mapping --function-name timelake-sqs \
+  --event-source-arn arn:aws:sqs:$AWS_REGION:${ACCOUNT}:timelake-readings \
+  --batch-size 10000 --maximum-batching-window-in-seconds 30 --scaling-config MaximumConcurrency=2
+```
+
+The visibility timeout (720 s) is six times the function timeout, as AWS recommends, so a message isn't handed out again while a function still holds it. `MaximumConcurrency=2` caps the functions committing at once.
+
+Try it:
+
+```bash
+aws sqs send-message --queue-url $QUEUE_URL \
+  --message-body '[{"time": "2026-01-05T10:10:00Z", "device_id": "pump-1", "temp": 63.1, "humidity": 41},
+                   {"time": "2026-01-05T10:10:00Z", "device_id": "pump-2", "temp": 60.2, "humidity": 44}]'
+```
+
+Devices without the AWS SDK can send over HTTPS: an API Gateway HTTP API has a built-in SQS integration (`SQS-SendMessage`) that puts each request body on the queue. Give the route an authorizer, such as a JWT authorizer, so only your devices can send.

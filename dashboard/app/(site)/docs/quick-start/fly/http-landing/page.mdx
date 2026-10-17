@@ -1,0 +1,26 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "Fly.io: HTTP intake to landing objects" }
+
+# HTTP intake to landing objects
+
+Do the [Fly.io setup](/docs/quick-start/fly/setup) first.
+
+<IngestFlow
+  nodes={[
+    { label: "Devices", sub: "POST /readings" },
+    { label: "web Machine" },
+    { label: "Tigris landing/" },
+    { label: "jobs Machine", sub: "every minute", accent: true },
+    { label: "Tigris lake/", sub: "Iceberg tables" },
+  ]}
+  edges={["HTTPS", "PUT", "list, read", "commit"]}
+/>
+
+With `INTAKE=landing`, the `web` process writes each request to `landing/` in Tigris before it answers `202`, so a crash loses nothing the device was told was received. Every minute the `jobs` process lists `landing/`, appends every object in one commit, and deletes them. Readings reach queries within about a minute.
+
+```bash
+fly secrets set --app $APP INTAKE=landing
+```
+
+Each request costs one Tigris PUT, and each `jobs` run a LIST, a GET per object, and a delete. For many devices sending often, have them batch readings into fewer requests. Try it with the `curl` command from [HTTP intake, buffered](/docs/quick-start/fly/http-buffered), then wait a minute.

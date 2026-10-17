@@ -1,0 +1,19 @@
+export const metadata = { title: "Local setup" }
+
+# Local setup
+
+## Install
+
+Install the `timelake` command as in [Quick start](/docs/quick-start#1-install). It goes to `~/.cargo/bin`.
+
+## Create the table
+
+Create the table once, with the columns the files will have. Each file then only appends.
+
+```console
+$ mkdir -p ~/timelake-ingest/incoming ~/timelake-ingest/done && cd ~/timelake-ingest
+$ export TIMELAKE_WAREHOUSE=./warehouse
+$ timelake create iot.readings --schema "time:timestamptz,device_id:string,temp:double,humidity:int" \
+    --time-column time --series-key device_id
+created iot.readings at file:///…/timelake-ingest/warehouse/iot/readings
+```

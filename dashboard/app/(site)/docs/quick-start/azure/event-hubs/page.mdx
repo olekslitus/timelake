@@ -1,0 +1,57 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "Azure: Event Hubs" }
+
+# Event Hubs
+
+Do the [Azure setup](/docs/quick-start/azure/setup) first.
+
+<IngestFlow
+  nodes={[
+    { label: "Devices", sub: "send_batch" },
+    { label: "Event hub" },
+    { label: "Azure Function", sub: "ingest_event_hub", accent: true },
+    { label: "lake container", sub: "Iceberg tables" },
+  ]}
+  edges={["AMQP / Kafka", "batch", "commit"]}
+/>
+
+Devices send events to an event hub, with the device id as the partition key so each device's readings stay in order. The function reads each partition in batches: one batch at a time per partition, one commit per batch. The hub keeps events for a day on the Basic tier, so a broken function can catch up.
+
+```bash
+export EH_NAMESPACE=timelake-$RANDOM
+az eventhubs namespace create -g $RG -n $EH_NAMESPACE -l $LOCATION --sku Basic
+az eventhubs eventhub create -g $RG --namespace-name $EH_NAMESPACE -n readings --partition-count 4
+export EH_SCOPE=$(az eventhubs namespace show -g $RG -n $EH_NAMESPACE --query id -o tsv)
+az role assignment create --role "Azure Event Hubs Data Receiver" --scope $EH_SCOPE \
+  --assignee-object-id $PRINCIPAL --assignee-principal-type ServicePrincipal
+az functionapp config appsettings set -g $RG -n $APP --settings \
+  EventHubConnection__fullyQualifiedNamespace=$EH_NAMESPACE.servicebus.windows.net
+```
+
+The function moves on to the next batch even when a call fails. The retry policy in `function_app.py` (`@app.retry`) holds the partition and retries the batch up to 10 times, with growing delays. A batch that still fails after that is skipped, so check the function's logs for errors. Four partitions mean at most four functions commit at once.
+
+Try it, sending as a device would (give yourself the sender role first):
+
+```bash
+az role assignment create --role "Azure Event Hubs Data Sender" --scope $EH_SCOPE \
+  --assignee $(az ad signed-in-user show --query id -o tsv)
+pip install azure-eventhub azure-identity
+```
+
+```python
+import json
+import os
+
+from azure.eventhub import EventData, EventHubProducerClient
+from azure.identity import DefaultAzureCredential
+
+readings = [{"time": "2026-01-05T10:05:00Z", "device_id": "pump-1", "temp": 62.0, "humidity": 41}]
+producer = EventHubProducerClient(
+    fully_qualified_namespace=f"{os.environ['EH_NAMESPACE']}.servicebus.windows.net",
+    eventhub_name="readings",
+    credential=DefaultAzureCredential(),
+)
+with producer:
+    producer.send_batch([EventData(json.dumps(r)) for r in readings], partition_key="pump-1")
+```

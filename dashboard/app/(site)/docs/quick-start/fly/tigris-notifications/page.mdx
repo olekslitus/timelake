@@ -1,0 +1,40 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "Fly.io: Tigris notifications" }
+
+# Tigris notifications
+
+Do the [Fly.io setup](/docs/quick-start/fly/setup) first.
+
+<IngestFlow
+  nodes={[
+    { label: "Gateways", sub: "CSV / Parquet / JSON" },
+    { label: "Tigris uploads/" },
+    { label: "web Machine", sub: "POST /tigris", accent: true },
+    { label: "Tigris lake/", sub: "Iceberg tables" },
+  ]}
+  edges={["PUT", "webhook", "commit"]}
+/>
+
+Gateways upload files to `uploads/` in the bucket, with an access key you create for them or with presigned URLs. Tigris POSTs a notification for each new object to the app, which reads the file and appends it, with the key as the batch id. Tigris delivers each notification at least once and retries any response other than `2xx`, or one that takes longer than 10 seconds ([object notifications](https://www.tigrisdata.com/docs/buckets/object-notifications/)).
+
+Notifications are set up in the Tigris dashboard (`fly storage dashboard $BUCKET`): in the bucket's settings, add an object notification webhook with
+
+- URL `https://<app>.fly.dev/tigris`,
+- token authentication with the value of `$INGEST_TOKEN`,
+- the filter ``WHERE `key` REGEXP "^uploads/"``, so Timelake's own writes under `lake/` don't trigger it.
+
+Try it:
+
+```bash
+cat > readings.csv <<'EOF'
+time,device_id,temp,humidity
+2026-01-05T10:10:00Z,pump-1,63.1,41
+2026-01-05T10:10:00Z,pump-2,60.2,44
+EOF
+tigris cp readings.csv t3://$BUCKET/uploads/gateway-1/20260105T1010.csv
+fly logs --app $APP --no-tail | tail -3     # the append result
+timelake latest iot.readings
+```
+
+Give every upload a unique key, such as the gateway and the time, and send corrections as new files: a key that was already loaded is skipped.

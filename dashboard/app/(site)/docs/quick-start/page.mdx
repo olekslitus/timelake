@@ -281,21 +281,21 @@ The same few designs appear on every platform, under different service names:
 
 | Design | AWS | Azure | Google Cloud |
 | --- | --- | --- | --- |
-| Files, appended on upload | S3 + Lambda | Blob Storage + Event Grid | Cloud Storage + Eventarc |
-| Stream or queue, in batches | Kinesis or SQS | Event Hubs or Service Bus | Pub/Sub, pulled |
-| Platform batches into files | Firehose | Event Hubs Capture (outline) | Pub/Sub to Cloud Storage |
-| MQTT | IoT Core | IoT Hub | your own broker |
-| HTTP intake | API Gateway + SQS | Service Bus over HTTPS | — |
-| Scheduled checks | EventBridge + Lambda | a timer function | Cloud Scheduler |
+| Files, appended on upload | [S3 + Lambda](/docs/quick-start/aws/files) | [Blob Storage + Event Grid](/docs/quick-start/azure/files) | [Cloud Storage + Eventarc](/docs/quick-start/gcp/files) |
+| Stream or queue, in batches | [Kinesis](/docs/quick-start/aws/kinesis) or [SQS](/docs/quick-start/aws/sqs) | [Event Hubs](/docs/quick-start/azure/event-hubs) or [Service Bus](/docs/quick-start/azure/service-bus) | [Pub/Sub, pulled](/docs/quick-start/gcp/pubsub-pull) |
+| Platform batches into files | [Firehose](/docs/quick-start/aws/firehose) | Event Hubs Capture ([outline](/docs/quick-start/azure#other-designs)) | [Pub/Sub to Cloud Storage](/docs/quick-start/gcp/pubsub-files) |
+| MQTT | [IoT Core](/docs/quick-start/aws/iot-core) | [IoT Hub](/docs/quick-start/azure/iot-hub) | your own broker ([outline](/docs/quick-start/gcp#other-designs)) |
+| HTTP intake | API Gateway + SQS ([outline](/docs/quick-start/aws/sqs)) | Service Bus over HTTPS ([outline](/docs/quick-start/azure/service-bus)) | — |
+| Scheduled checks | [EventBridge + Lambda](/docs/quick-start/aws/checks) | [a timer function](/docs/quick-start/azure/checks) | [Cloud Scheduler](/docs/quick-start/gcp/checks) |
 
 | Design | Cloudflare | Fly.io | Vercel |
 | --- | --- | --- | --- |
-| Files, appended on upload | R2 notifications | Tigris notifications | a Cron Job polls |
-| Stream or queue, in batches | Queues, pulled | — | Vercel Queues |
+| Files, appended on upload | [R2 notifications](/docs/quick-start/cloudflare/notifications) | [Tigris notifications](/docs/quick-start/fly/tigris-notifications) | [a Cron Job polls](/docs/quick-start/vercel/files-cron) |
+| Stream or queue, in batches | [Queues, pulled](/docs/quick-start/cloudflare/queues) | — | [Vercel Queues](/docs/quick-start/vercel/queues-cron) |
 | Platform batches into files | — | — | — |
-| MQTT | — | an MQTT worker | — |
-| HTTP intake | a Worker | the app itself | a function |
-| Scheduled checks | cron | the `jobs` process | a Cron Job |
+| MQTT | — | [an MQTT worker](/docs/quick-start/fly/mqtt) | — |
+| HTTP intake | [a Worker](/docs/quick-start/cloudflare/files) | [the app itself](/docs/quick-start/fly/http-landing) | [a function](/docs/quick-start/vercel/http-direct) |
+| Scheduled checks | [cron](/docs/quick-start/cloudflare/checks) | [the `jobs` process](/docs/quick-start/fly/checks) | [a Cron Job](/docs/quick-start/vercel/checks) |
 
 ### Which to choose
 

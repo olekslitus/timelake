@@ -1,0 +1,269 @@
+export const metadata = { title: "Vercel setup" }
+
+# Vercel setup
+
+Do this once for every design. The commands use the [Vercel CLI](https://vercel.com/docs/cli), the AWS CLI, and the `timelake` command ([install](/docs/quick-start#1-install)).
+
+## The bucket and the table
+
+In the [Tigris console](https://console.tigris.dev), create a bucket named `timelake` and an access key with Editor access to it. Tigris is also listed in the Vercel Marketplace; if you connect it that way, use the keys it gives you below. Then create the table from your machine:
+
+```bash
+export AWS_ACCESS_KEY_ID="<access key id>" AWS_SECRET_ACCESS_KEY="<secret access key>"
+export AWS_ENDPOINT_URL=https://t3.storage.dev AWS_REGION=auto
+export TIMELAKE_WAREHOUSE=s3://timelake/warehouse
+timelake create iot.readings --schema "time:timestamptz,device_id:string,temp:double,humidity:int" \
+  --time-column time --series-key device_id
+```
+
+## The project
+
+```
+pyproject.toml
+vercel.json
+lake.py              the table, shared by every route
+app.py               the FastAPI app: intake routes and cron jobs
+queues/readings.py   the queue subscriber of Vercel Queues, pushed
+```
+
+`pyproject.toml`:
+
+```toml
+[project]
+name = "timelake-ingest"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = ["timelake==0.4.0", "fastapi", "vercel-queue", "boto3"]
+
+[[tool.vercel.subscribers]]
+entrypoint = "queues.readings"
+```
+
+Run `uv lock` to pin every dependency in `uv.lock`, which Vercel installs from. The packages take about 370 MB installed, within the 500 MB limit for a Python function.
+
+`lake.py`:
+
+```python
+"""The Timelake table and the readers every route shares."""
+
+import functools
+import io
+import os
+
+import pyarrow as pa
+import pyarrow.csv as csv
+import pyarrow.json as pj
+import pyarrow.parquet as pq
+import timelake
+
+# Vercel may set AWS_* variables of its own in functions; they aren't credentials for your store.
+os.environ.pop("AWS_SESSION_TOKEN", None)
+
+
+def store():
+    return {
+        "aws_access_key_id": os.environ["TIMELAKE_S3_ACCESS_KEY_ID"],
+        "aws_secret_access_key": os.environ["TIMELAKE_S3_SECRET_ACCESS_KEY"],
+        "aws_endpoint": os.environ["TIMELAKE_S3_ENDPOINT"],
+        "aws_region": os.environ["TIMELAKE_S3_REGION"],
+    }
+
+
+# Opened on first use, not on import: Vercel imports the subscriber modules at build time.
+@functools.cache
+def lake():
+    return timelake.Lake(os.environ["TIMELAKE_WAREHOUSE"], storage_options=store())
+
+
+@functools.cache
+def table():
+    return lake().table(os.environ["TIMELAKE_TABLE"])
+
+
+def read_file(name, body):
+    if name.endswith(".parquet"):
+        return pq.read_table(io.BytesIO(body))
+    if name.endswith(".csv"):
+        return csv.read_csv(io.BytesIO(body))
+    return pj.read_json(io.BytesIO(body))  # newline-delimited JSON
+
+
+def read_messages(messages):
+    """Readings from JSON values, each one reading or a list of readings."""
+    rows = []
+    for message in messages:
+        rows.extend(message if isinstance(message, list) else [message])
+    return pa.Table.from_pylist(rows)
+```
+
+The store's credentials come from variables named `TIMELAKE_S3_*` and are passed to Timelake directly. Vercel's docs note that `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_SESSION_TOKEN` may appear in functions without being usable credentials, so the code doesn't rely on them.
+
+`app.py` (each design below explains its routes):
+
+```python
+"""Timelake on Vercel: HTTP intake, queue producers, and the cron jobs."""
+
+import asyncio
+import datetime as dt
+import functools
+import json
+import os
+import time
+import urllib.request
+
+import boto3
+from fastapi import Body, FastAPI, Header, HTTPException, Request
+from vercel.queue import ALL_DEPLOYMENTS, QueueClient, send
+
+from lake import lake, read_file, read_messages, store, table
+
+app = FastAPI()
+polled = QueueClient(region="iad1", deployment=ALL_DEPLOYMENTS)
+
+
+def require(request: Request, secret: str):
+    if request.headers.get("authorization") != f"Bearer {os.environ[secret]}":
+        raise HTTPException(status_code=401)
+
+
+# HTTP, appended directly: append each request.
+@app.post("/api/readings")
+def append_readings(request: Request, readings: list[dict] | dict = Body(), idempotency_key: str | None = Header(None)):
+    require(request, "INGEST_TOKEN")
+    # A retried request with the same Idempotency-Key header loads nothing twice.
+    return table().append(read_messages([readings]), batch_id=idempotency_key)
+
+
+# Vercel Queues, pushed: one queue message per request, appended by the subscriber in queues/readings.py.
+@app.post("/api/batches")
+async def enqueue_batch(request: Request):
+    require(request, "INGEST_TOKEN")
+    return {"messageId": await send("gateway-batches", await request.json())}
+
+
+# Vercel Queues, drained by cron: many small messages, drained in batches by a cron job.
+@app.post("/api/readings/queue")
+async def enqueue_reading(request: Request):
+    require(request, "INGEST_TOKEN")
+    return {"messageId": await polled.send("readings", await request.json())}
+
+
+@app.get("/api/cron/drain")
+async def drain(request: Request):
+    require(request, "CRON_SECRET")
+    messages, deadline = [], time.monotonic() + 50
+    while time.monotonic() < deadline and len(messages) < 10_000:
+        claimed = [d.accept() async for d in polled.poll("readings", "timelake", limit=10, lease_duration=120)]
+        if not claimed:
+            break
+        messages += claimed
+    if not messages:
+        return {"messages": 0}
+    # Redelivered messages come back in other batches, so a batch has no stable id; deduplication
+    # keeps one row per device and time instead.
+    result = await asyncio.to_thread(table().append, read_messages(m.payload for m in messages))
+    for m in messages:
+        await polled.acknowledge(m)
+    return {"messages": len(messages), **result}
+
+
+@functools.cache
+def s3():
+    s = store()
+    return boto3.client(
+        "s3",
+        endpoint_url=s["aws_endpoint"],
+        region_name=s["aws_region"],
+        aws_access_key_id=s["aws_access_key_id"],
+        aws_secret_access_key=s["aws_secret_access_key"],
+    )
+
+
+# Files, appended by cron: files uploaded to landing/, appended by a cron job.
+@app.get("/api/cron/landing")
+def landing(request: Request):
+    require(request, "CRON_SECRET")
+    bucket, loaded = os.environ["TIMELAKE_LANDING_BUCKET"], {}
+    for page in s3().get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix="landing/"):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            body = s3().get_object(Bucket=bucket, Key=key)["Body"].read()
+            # The object key is the batch id: if the job stops before the delete, the next run skips the file.
+            loaded[key] = table().append(read_file(key, body), batch_id=key)
+            s3().delete_object(Bucket=bucket, Key=key)
+    return loaded
+
+
+@app.get("/api/cron/check")
+def check(request: Request):
+    """Alert on pumps running hot over the last 10 minutes and on pumps silent for 15."""
+    require(request, "CRON_SECRET")
+    hot = lake().sql("""
+        SELECT device_id, avg(temp) AS avg_temp, max(temp) AS max_temp
+        FROM iot.readings
+        WHERE time > now() - INTERVAL '10 minutes'
+        GROUP BY device_id
+        HAVING avg(temp) > 80
+    """).to_pylist()
+    now = dt.datetime.now(dt.timezone.utc)
+    latest = lake().latest("iot.readings").to_pylist()
+    silent = [r["device_id"] for r in latest if now - r["time"] > dt.timedelta(minutes=15)]
+    if hot or silent:
+        body = json.dumps({"text": f"Timelake check: hot {hot}, silent {silent}"}, default=str).encode()
+        alert = urllib.request.Request(os.environ["ALERT_WEBHOOK_URL"], body, {"content-type": "application/json"})
+        urllib.request.urlopen(alert, timeout=10)
+    return {"hot": hot, "silent": silent}
+
+
+@app.get("/api/cron/maintain")
+def maintain(request: Request):
+    require(request, "CRON_SECRET")
+    return {name: lake().table(name).maintain() for name in lake().tables()}
+```
+
+Messages are JSON, one reading or a list of readings, with the table's columns:
+
+```json
+{"time": "2026-01-05T10:00:00Z", "device_id": "pump-1", "temp": 61.2, "humidity": 40}
+```
+
+`vercel.json` (on Hobby, keep only the `maintain` job, scheduled once a day):
+
+```json
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": { "app.py": { "maxDuration": 120 } },
+  "crons": [
+    { "path": "/api/cron/drain", "schedule": "* * * * *" },
+    { "path": "/api/cron/landing", "schedule": "* * * * *" },
+    { "path": "/api/cron/check", "schedule": "*/5 * * * *" },
+    { "path": "/api/cron/maintain", "schedule": "0 * * * *" }
+  ]
+}
+```
+
+The configuration is `vercel.json` rather than `vercel.ts` because `vercel.ts` needs a Node.js package (`@vercel/config`) in an otherwise Python project. Vercel sends `CRON_SECRET` as a bearer token on every cron request, and `require` checks it.
+
+## Variables and deploy
+
+```bash
+vercel link
+printf %s s3://timelake/warehouse | vercel env add TIMELAKE_WAREHOUSE production
+printf %s iot.readings | vercel env add TIMELAKE_TABLE production
+printf %s timelake | vercel env add TIMELAKE_LANDING_BUCKET production
+printf %s "$AWS_ACCESS_KEY_ID" | vercel env add TIMELAKE_S3_ACCESS_KEY_ID production
+printf %s "$AWS_SECRET_ACCESS_KEY" | vercel env add TIMELAKE_S3_SECRET_ACCESS_KEY production
+printf %s https://t3.storage.dev | vercel env add TIMELAKE_S3_ENDPOINT production
+printf %s auto | vercel env add TIMELAKE_S3_REGION production
+export INGEST_TOKEN=$(openssl rand -hex 32)    # give this to your devices
+printf %s "$INGEST_TOKEN" | vercel env add INGEST_TOKEN production
+export CRON_SECRET=$(openssl rand -hex 32)
+printf %s "$CRON_SECRET" | vercel env add CRON_SECRET production
+printf %s https://hooks.example.com/your-webhook | vercel env add ALERT_WEBHOOK_URL production
+vercel deploy --prod
+export URL="https://<your project>.vercel.app"
+```
+
+**Another store.** For S3, set `TIMELAKE_S3_ENDPOINT` to `https://s3.<region>.amazonaws.com`, `TIMELAKE_S3_REGION` to the bucket's region, and use an IAM user's keys. For R2, use `https://<account id>.r2.cloudflarestorage.com` and `auto`, and run the conditional-write check in the [Cloudflare guide](/docs/quick-start/cloudflare) first.
+
+**Retries and concurrency.** HTTP clients, queues, and cron jobs may all deliver the same data more than once. Where data has a stable name (an `Idempotency-Key` header, a queue message id, a file key), it is the batch id, and a repeat is skipped. Batch ids are remembered while their commits are kept: by default the last hour, and at most 100 commits. Beyond that, deduplication keeps one row per device and time. Commits to one table happen one at a time: when two functions commit together, one retries.

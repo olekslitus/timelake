@@ -1,0 +1,31 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "Vercel: Vercel Queues, drained by cron" }
+
+# Vercel Queues, drained by cron
+
+Do the [Vercel setup](/docs/quick-start/vercel/setup) first.
+
+<IngestFlow
+  nodes={[
+    { label: "Devices", sub: "one reading each" },
+    { label: "Vercel function", sub: "POST /api/readings/queue" },
+    { label: "Vercel Queues", sub: "readings" },
+    { label: "Cron job", sub: "/api/cron/drain", accent: true },
+    { label: "Tigris bucket", sub: "Iceberg tables" },
+  ]}
+  edges={["HTTPS", "send", "every minute", "commit"]}
+/>
+
+When every device sends its own readings, one commit per message would be too many. Here nothing is pushed: once a minute a cron job claims messages, up to 10 per request, for at most 50 seconds or 10,000 messages. It appends them all in one commit, then acknowledges them. If the append fails, nothing is acknowledged, and the messages return to the queue when their 120-second lease runs out.
+
+Two settings on the `polled` client matter. Messages can only be received in the region they were sent to, so the client names a fixed region (`iad1`). And topics are separate per deployment by default; `ALL_DEPLOYMENTS` lets the cron job of a new deployment drain what an earlier deployment received.
+
+Try it:
+
+```bash
+curl -X POST $URL/api/readings/queue -H "authorization: Bearer $INGEST_TOKEN" -H "content-type: application/json" \
+  -d '{"time": "2026-01-05T10:10:00Z", "device_id": "pump-3", "temp": 60.1, "humidity": 42}'
+```
+
+The reading reaches the table at the next minute.

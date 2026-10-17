@@ -1,0 +1,28 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "Vercel: HTTP, appended directly" }
+
+# HTTP, appended directly
+
+Do the [Vercel setup](/docs/quick-start/vercel/setup) first.
+
+<IngestFlow
+  nodes={[
+    { label: "Gateways", sub: "JSON" },
+    { label: "Vercel function", sub: "POST /api/readings", accent: true },
+    { label: "Tigris bucket", sub: "Iceberg tables" },
+  ]}
+  edges={["HTTPS", "commit"]}
+/>
+
+The route appends each request body as one commit. It is the shortest path, but each request is a commit: keep it to a few requests a minute per table. At one request per second, the store's requests alone cost about $3 a day, and commits, which happen one at a time, begin to wait on each other. A request body can be up to 4.5 MB.
+
+Try it:
+
+```bash
+curl -X POST $URL/api/readings -H "authorization: Bearer $INGEST_TOKEN" -H "idempotency-key: gateway-1-000001" \
+  -H "content-type: application/json" \
+  -d '[{"time": "2026-01-05T10:00:00Z", "device_id": "pump-1", "temp": 61.2, "humidity": 40}]'
+```
+
+Send the same `Idempotency-Key` when retrying a request; a new batch gets a new key.

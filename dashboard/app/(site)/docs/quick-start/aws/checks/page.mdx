@@ -1,0 +1,60 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "AWS: checks and maintenance" }
+
+# AWS: checks and maintenance
+
+Do the [AWS setup](/docs/quick-start/aws/setup) first.
+
+## Scheduled checks on recent data
+
+<IngestFlow
+  nodes={[
+    { label: "EventBridge", sub: "rate(5 minutes)" },
+    { label: "Lambda", sub: "check", accent: true },
+    { label: "S3 lake bucket", sub: "iot.readings" },
+    { label: "SNS topic", sub: "email, SMS, chat" },
+  ]}
+  edges={["invoke", "query", "alert"]}
+/>
+
+The `check` entry point runs every 5 minutes. It asks two questions of the table and publishes to an SNS topic when either has an answer:
+
+- Which pumps averaged above 80° over the last 10 minutes? A SQL query over recent data. The time filter skips every file whose time range lies outside the window, before any data is read.
+- Which pumps have sent nothing for 15 minutes? `lake.latest()` answers from the last-value index, without scanning the table.
+
+```bash
+TOPIC=$(aws sns create-topic --name timelake-alerts --query TopicArn --output text)
+aws sns subscribe --topic-arn $TOPIC --protocol email --notification-endpoint you@example.com   # confirm the email
+aws iam put-role-policy --role-name timelake --policy-name alerts --policy-document '{
+  "Version": "2012-10-17",
+  "Statement": [{"Effect": "Allow", "Action": "sns:Publish", "Resource": "'$TOPIC'"}]
+}'
+lambda_function timelake-check check
+aws lambda update-function-configuration --function-name timelake-check \
+  --environment "Variables={TIMELAKE_WAREHOUSE=s3://$LAKE/warehouse,TIMELAKE_TABLE=iot.readings,ALERT_TOPIC=$TOPIC}"
+
+aws events put-rule --name timelake-check --schedule-expression "rate(5 minutes)"
+aws lambda add-permission --function-name timelake-check --statement-id every-5-minutes \
+  --action lambda:InvokeFunction --principal events.amazonaws.com \
+  --source-arn arn:aws:events:$AWS_REGION:${ACCOUNT}:rule/timelake-check
+aws events put-targets --rule timelake-check \
+  --targets Id=1,Arn=arn:aws:lambda:$AWS_REGION:${ACCOUNT}:function:timelake-check
+```
+
+Change the SQL to check anything the table holds: a rate of change, a counter that stopped increasing, readings outside a band per site (join a devices table). Over longer windows, a [rollup](/docs/rollups) keeps the query small. A check that also wants a record of what it found can append its findings to another Timelake table.
+
+## Maintenance
+
+Each append already merges small files and removes duplicates. An hourly `maintain` also sorts each finished day into one file, applies retention, and deletes files no version needs:
+
+```bash
+lambda_function timelake-maintain maintain
+aws lambda update-function-configuration --function-name timelake-maintain --memory-size 2048 --timeout 900
+aws events put-rule --name timelake-maintain --schedule-expression "rate(1 hour)"
+aws lambda add-permission --function-name timelake-maintain --statement-id hourly \
+  --action lambda:InvokeFunction --principal events.amazonaws.com \
+  --source-arn arn:aws:events:$AWS_REGION:${ACCOUNT}:rule/timelake-maintain
+aws events put-targets --rule timelake-maintain \
+  --targets Id=1,Arn=arn:aws:lambda:$AWS_REGION:${ACCOUNT}:function:timelake-maintain
+```

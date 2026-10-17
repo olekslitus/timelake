@@ -1,0 +1,184 @@
+export const metadata = { title: "AWS setup" }
+
+# AWS setup
+
+Do this once for every design. The commands use the AWS CLI, Docker, and the `timelake` command ([install](/docs/quick-start#1-install)).
+
+```bash
+export AWS_REGION=us-east-2
+export ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+export LANDING=$ACCOUNT-timelake-landing LAKE=$ACCOUNT-timelake-lake
+export REPO=$ACCOUNT.dkr.ecr.$AWS_REGION.amazonaws.com/timelake
+```
+
+Timelake reads credentials from the `AWS_*` environment variables, not from `~/.aws/config`. To use a profile or an SSO login on your machine, export its credentials first:
+
+```bash
+eval "$(aws configure export-credentials --format env)"
+```
+
+## The lake bucket and the table
+
+```bash
+aws s3 mb s3://$LAKE
+export TIMELAKE_WAREHOUSE=s3://$LAKE/warehouse
+timelake create iot.readings --schema "time:timestamptz,device_id:string,temp:double,humidity:int" \
+  --time-column time --series-key device_id
+```
+
+## The function code
+
+One `handler.py` has an entry point per design. Each function picks its own with `--image-config Command=handler.<name>`.
+
+```python
+"""Timelake on AWS Lambda: append from S3, Kinesis, or SQS; maintain the tables; check recent data."""
+
+import base64
+import datetime as dt
+import io
+import json
+import os
+from urllib.parse import unquote_plus
+
+import boto3
+import pyarrow as pa
+import pyarrow.csv as csv
+import pyarrow.json as pj
+import pyarrow.parquet as pq
+import timelake
+
+s3 = boto3.client("s3")
+lake = timelake.Lake(os.environ["TIMELAKE_WAREHOUSE"])
+table = lake.table(os.environ["TIMELAKE_TABLE"])
+
+
+def read_file(name, body):
+    if name.endswith(".parquet"):
+        return pq.read_table(io.BytesIO(body))
+    if name.endswith(".csv"):
+        return csv.read_csv(io.BytesIO(body))
+    return pj.read_json(io.BytesIO(body))  # newline-delimited JSON, as Firehose writes it
+
+
+def read_messages(payloads):
+    """Readings from JSON messages, each one reading or a list of readings."""
+    rows = []
+    for payload in payloads:
+        try:
+            message = json.loads(payload)
+        except ValueError:
+            print("skipped, not JSON:", payload[:200])
+            continue
+        rows.extend(message if isinstance(message, list) else [message])
+    return pa.Table.from_pylist(rows)
+
+
+def ingest_s3(event, context):
+    for record in event["Records"]:
+        bucket = record["s3"]["bucket"]["name"]
+        key = unquote_plus(record["s3"]["object"]["key"])
+        body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
+        # The object key is the batch id: a redelivered event loads nothing twice.
+        print(key, table.append(read_file(key, body), batch_id=key))
+
+
+def ingest_kinesis(event, context):
+    records = event["Records"]
+    data = read_messages(base64.b64decode(r["kinesis"]["data"]) for r in records)
+    # The shard and the sequence numbers name the batch: a retried batch loads nothing twice.
+    batch_id = f"{records[0]['eventID']}-{records[-1]['kinesis']['sequenceNumber']}"
+    if data.num_rows:
+        print(batch_id, table.append(data, batch_id=batch_id))
+
+
+def ingest_sqs(event, context):
+    # SQS regroups messages when it redelivers them, so a batch has no stable id. Deduplication
+    # keeps one row per device and time instead.
+    data = read_messages(r["body"] for r in event["Records"])
+    if data.num_rows:
+        print(len(event["Records"]), "messages", table.append(data))
+
+
+def maintain(event, context):
+    for name in lake.tables():
+        print(name, lake.table(name).maintain())
+
+
+def check(event, context):
+    """Alert on pumps running hot over the last 10 minutes and on pumps silent for 15."""
+    hot = lake.sql("""
+        SELECT device_id, avg(temp) AS avg_temp, max(temp) AS max_temp
+        FROM iot.readings
+        WHERE time > now() - INTERVAL '10 minutes'
+        GROUP BY device_id
+        HAVING avg(temp) > 80
+    """).to_pylist()
+    now = dt.datetime.now(dt.timezone.utc)
+    latest = lake.latest("iot.readings").to_pylist()
+    silent = [r["device_id"] for r in latest if now - r["time"] > dt.timedelta(minutes=15)]
+    print({"hot": hot, "silent": silent})
+    if hot or silent:
+        boto3.client("sns").publish(
+            TopicArn=os.environ["ALERT_TOPIC"],
+            Subject="Timelake check",
+            Message=json.dumps({"hot": hot, "silent": silent}, default=str, indent=2),
+        )
+```
+
+Messages are JSON, one reading or a list of readings, with the table's columns:
+
+```json
+{"time": "2026-01-05T10:00:00Z", "device_id": "pump-1", "temp": 61.2, "humidity": 40}
+```
+
+`Dockerfile`:
+
+```dockerfile
+FROM public.ecr.aws/lambda/python:3.13-arm64
+RUN pip install --no-cache-dir timelake boto3
+COPY handler.py ${LAMBDA_TASK_ROOT}/
+CMD ["handler.ingest_s3"]
+```
+
+The functions are deployed as a container image because `timelake` and `pyarrow` together are larger than the 250 MB limit for a zip upload ([#98](https://github.com/polythings/timelake/issues/98)).
+
+## The image and the role
+
+```bash
+aws ecr create-repository --repository-name timelake
+aws ecr get-login-password | docker login --username AWS --password-stdin ${REPO%%/*}
+docker build --platform linux/arm64 --provenance=false -t ${REPO}:latest .
+docker push ${REPO}:latest
+
+aws iam create-role --role-name timelake --assume-role-policy-document '{
+  "Version": "2012-10-17",
+  "Statement": [{"Effect": "Allow", "Principal": {"Service": "lambda.amazonaws.com"}, "Action": "sts:AssumeRole"}]
+}'
+aws iam attach-role-policy --role-name timelake \
+  --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+aws iam put-role-policy --role-name timelake --policy-name lake --policy-document '{
+  "Version": "2012-10-17",
+  "Statement": [
+    {"Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload"],
+     "Resource": "arn:aws:s3:::'$LAKE'/*"},
+    {"Effect": "Allow", "Action": "s3:ListBucket", "Resource": "arn:aws:s3:::'$LAKE'"}
+  ]
+}'
+```
+
+A shell function creates each Lambda function from the image (it works in bash and zsh):
+
+```bash
+lambda_function() {   # lambda_function <name> <entry point> [more create-function options]
+  name=$1 entry=$2; shift 2
+  aws lambda create-function --function-name $name --package-type Image --code ImageUri=${REPO}:latest \
+    --image-config Command=handler.$entry --architectures arm64 --role arn:aws:iam::${ACCOUNT}:role/timelake \
+    --memory-size 1024 --timeout 120 \
+    --environment "Variables={TIMELAKE_WAREHOUSE=s3://$LAKE/warehouse,TIMELAKE_TABLE=iot.readings}" "$@"
+  aws lambda wait function-active-v2 --function-name $name
+}
+```
+
+Lambda supplies credentials and the region in environment variables, which Timelake reads.
+
+**Retries and concurrency.** Every event source here delivers at least once. Where a batch has a stable name (an S3 key, a Kinesis sequence range), it is the batch id, and a repeat is skipped. Batch ids are remembered while their commits are kept: by default the last hour, and at most 100 commits. Beyond that, and for SQS, deduplication keeps one row per device and time. Commits to one table happen one at a time: when two functions commit together, one retries. Each design caps its concurrency at a few functions, so those retries stay rare.

@@ -1,0 +1,27 @@
+export const metadata = { title: "Local: Appending from Python" }
+
+# Appending from Python
+
+Do the [Local setup](/docs/quick-start/local/setup) first.
+
+## Appending from Python
+
+When readings come from code (an MQTT client, a Modbus poller), skip the files: collect readings in memory and append every few seconds.
+
+```python
+import time
+
+import pyarrow as pa
+import timelake
+
+table = timelake.Lake("./warehouse").table("iot.readings")
+buffer, last = [], time.monotonic()
+while True:
+    buffer.extend(poll())  # your code: a list of dicts with time, device_id, temp, humidity
+    if buffer and time.monotonic() - last >= 10:
+        table.append(pa.Table.from_pylist(buffer))
+        buffer, last = [], time.monotonic()
+    time.sleep(1)
+```
+
+Each append is one commit, so appending every 10 seconds rather than on every reading keeps the number of files and requests low.

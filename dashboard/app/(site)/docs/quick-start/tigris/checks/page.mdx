@@ -1,0 +1,17 @@
+export const metadata = { title: "Tigris: checks and maintenance" }
+
+# Tigris: checks and maintenance
+
+Do the [Tigris setup](/docs/quick-start/tigris/setup) first.
+
+## Scheduled checks
+
+A check that reads recent data and alerts runs as a cron job next to the poller, or as a scheduled job on your compute platform. The [check on the AWS page](/docs/quick-start/aws/checks) works unchanged on Tigris. Replace its SNS call with a POST to your chat or paging webhook.
+
+## Maintenance
+
+Each append already merges small files and removes duplicates. Run `timelake maintain` once an hour from cron to also sort each finished day into one file, apply retention, and delete files no version needs:
+
+```
+0 * * * * cd $HOME/timelake && set -a && . ./timelake.env && set +a && $HOME/.cargo/bin/timelake maintain >> maintain.log 2>&1
+```

@@ -1,0 +1,36 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "Azure: checks and maintenance" }
+
+# Azure: checks and maintenance
+
+Do the [Azure setup](/docs/quick-start/azure/setup) first.
+
+## Scheduled checks on recent data
+
+<IngestFlow
+  nodes={[
+    { label: "Timer", sub: "every 5 minutes" },
+    { label: "Azure Function", sub: "check", accent: true },
+    { label: "lake container", sub: "iot.readings" },
+    { label: "Webhook", sub: "Slack, Teams, …" },
+  ]}
+  edges={["invoke", "query", "alert"]}
+/>
+
+The `check` function runs every 5 minutes. It asks two questions of the table and posts to a webhook when either has an answer:
+
+- Which pumps averaged above 80° over the last 10 minutes? A SQL query over recent data. The time filter skips every file whose time range lies outside the window, before any data is read.
+- Which pumps have sent nothing for 15 minutes? `lake.latest()` answers from the last-value index, without scanning the table.
+
+Point it at any URL that takes a JSON POST, such as a Slack incoming webhook (which reads the `text` field) or a Logic App with an HTTP trigger that sends email:
+
+```bash
+az functionapp config appsettings set -g $RG -n $APP --settings ALERT_WEBHOOK=https://hooks.slack.com/services/…
+```
+
+Change the SQL to check anything the table holds: a rate of change, a counter that stopped increasing, readings outside a band per site (join a devices table). Over longer windows, a [rollup](/docs/rollups) keeps the query small. A check that also wants a record of what it found can append its findings to another Timelake table.
+
+## Maintenance
+
+Each append already merges small files and removes duplicates. The `maintain` timer runs at the start of every hour: it also sorts each finished day into one file, applies retention, and deletes files no version needs. Remove it from `function_app.py` if you don't need it.

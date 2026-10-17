@@ -1,0 +1,64 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "Cloudflare: Queue with a pull consumer" }
+
+# Queue with a pull consumer
+
+Do the [Cloudflare setup](/docs/quick-start/cloudflare/setup) first.
+
+<IngestFlow
+  nodes={[
+    { label: "Devices", sub: "JSON readings" },
+    { label: "Worker", sub: "POST /readings" },
+    { label: "Queue" },
+    { label: "Writer", sub: "writer.py queue", accent: true },
+    { label: "R2 lake/", sub: "Iceberg tables" },
+  ]}
+  edges={["HTTPS", "send", "pull, ack", "commit"]}
+/>
+
+Devices post readings to the Worker, which puts each request on a Cloudflare Queue. The queue has an HTTP pull consumer instead of a consumer Worker: every minute the writer pulls up to 1,000 messages over the Cloudflare API (100 per request), appends them as one commit, and acknowledges them. Messages it doesn't acknowledge within the 2-minute lease come back. After 5 failed deliveries a message moves to a dead-letter queue.
+
+```bash
+npx wrangler queues create timelake-readings-dlq
+npx wrangler queues create timelake-readings
+npx wrangler queues consumer http add timelake-readings \
+  --batch-size 100 --message-retries 5 --visibility-timeout-secs 120 --dead-letter-queue timelake-readings-dlq
+npx wrangler queues info timelake-readings      # note the queue ID
+```
+
+Create an API token with **Account → Queues → Edit** (pulling and acknowledging need write access), and add it to `timelake.env`:
+
+```bash
+cat >> timelake.env <<'EOF'
+export CF_ACCOUNT_ID="<account id>" CF_QUEUES_TOKEN="<queues api token>" READINGS_QUEUE_ID="<queue id>"
+EOF
+```
+
+Bind the queue to the Worker in `wrangler.jsonc`, then run `npx wrangler deploy` again:
+
+```json
+{
+  "name": "timelake-intake",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-01",
+  "r2_buckets": [{ "binding": "LAKE", "bucket_name": "timelake" }],
+  "queues": { "producers": [{ "binding": "READINGS", "queue": "timelake-readings" }] }
+}
+```
+
+The cron line:
+
+```
+* * * * * cd $HOME/timelake && . ./timelake.env && flock -n queue.lock $HOME/.local/bin/uv run --with timelake --with boto3 writer.py queue >> writer.log 2>&1
+```
+
+Try it:
+
+```bash
+curl -X POST -H "authorization: Bearer <token>" "https://timelake-intake.<your subdomain>.workers.dev/readings" \
+  --data '[{"time": "2026-01-05T10:05:00Z", "device_id": "pump-1", "temp": 62.0, "humidity": 41},
+           {"time": "2026-01-05T10:05:00Z", "device_id": "pump-2", "temp": 59.4, "humidity": 43}]'
+```
+
+A message holds up to 128 KB. For readings sooner than once a minute, run `writer.py queue` in a loop with a short sleep instead of from cron.

@@ -1,0 +1,52 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "AWS: IoT Core" }
+
+# IoT Core
+
+Do the [AWS setup](/docs/quick-start/aws/setup) first.
+
+<IngestFlow
+  nodes={[
+    { label: "Devices", sub: "MQTT" },
+    { label: "IoT Core rule" },
+    { label: "Kinesis stream" },
+    { label: "Lambda", sub: "ingest_kinesis", accent: true },
+    { label: "S3 lake bucket", sub: "Iceberg tables" },
+  ]}
+  edges={["devices/+/readings", "put", "batch", "commit"]}
+/>
+
+Devices with IoT Core certificates publish readings over MQTT to `devices/<device id>/readings`. A topic rule adds the device id from the topic and puts each message on the Kinesis stream from [Kinesis Data Streams](/docs/quick-start/aws/kinesis), so the rest is the same. (A rule can send to the SQS queue from [SQS](/docs/quick-start/aws/sqs) instead.) Registering devices and their certificates is covered in the [IoT Core docs](https://docs.aws.amazon.com/iot/latest/developerguide/iot-gs.html).
+
+```bash
+aws iam create-role --role-name timelake-iot-rule --assume-role-policy-document '{
+  "Version": "2012-10-17",
+  "Statement": [{"Effect": "Allow", "Principal": {"Service": "iot.amazonaws.com"}, "Action": "sts:AssumeRole"}]
+}'
+aws iam put-role-policy --role-name timelake-iot-rule --policy-name kinesis --policy-document '{
+  "Version": "2012-10-17",
+  "Statement": [{"Effect": "Allow", "Action": "kinesis:PutRecord",
+                 "Resource": "arn:aws:kinesis:'$AWS_REGION:$ACCOUNT':stream/timelake-readings"}]
+}'
+cat > rule.json <<EOF
+{
+  "sql": "SELECT *, topic(2) AS device_id FROM 'devices/+/readings'",
+  "awsIotSqlVersion": "2016-03-23",
+  "actions": [{"kinesis": {
+    "streamName": "timelake-readings",
+    "partitionKey": "\${topic(2)}",
+    "roleArn": "arn:aws:iam::${ACCOUNT}:role/timelake-iot-rule"
+  }}]
+}
+EOF
+aws iot create-topic-rule --rule-name timelake_readings --topic-rule-payload file://rule.json
+```
+
+Try it, publishing as a device would:
+
+```bash
+aws iot-data publish --topic devices/pump-1/readings --cli-binary-format raw-in-base64-out \
+  --endpoint-url https://$(aws iot describe-endpoint --endpoint-type iot:Data-ATS --query endpointAddress --output text) \
+  --payload '{"time": "2026-01-05T10:15:00Z", "temp": 64.0, "humidity": 40}'
+```

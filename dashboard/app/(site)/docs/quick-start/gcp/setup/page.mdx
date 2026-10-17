@@ -1,0 +1,183 @@
+export const metadata = { title: "Google Cloud setup" }
+
+# Google Cloud setup
+
+Do this once for every design. The commands use the `gcloud` CLI and the `timelake` command ([install](/docs/quick-start#1-install)).
+
+```bash
+export PROJECT=$(gcloud config get-value project) REGION=us-central1
+export LANDING=${PROJECT}-timelake-landing LAKE=${PROJECT}-timelake-lake
+export SA=timelake@${PROJECT}.iam.gserviceaccount.com
+gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com \
+  eventarc.googleapis.com pubsub.googleapis.com cloudscheduler.googleapis.com secretmanager.googleapis.com
+```
+
+## The lake bucket and the table
+
+```bash
+gcloud storage buckets create gs://$LAKE --location=$REGION --uniform-bucket-level-access
+gcloud auth application-default login          # credentials Timelake reads on your machine
+export TIMELAKE_WAREHOUSE=gs://$LAKE/warehouse
+timelake create iot.readings --schema "time:timestamptz,device_id:string,temp:double,humidity:int" \
+  --time-column time --series-key device_id
+```
+
+## The service account
+
+Every function runs as this account. It may read and write the lake bucket, receive events, and be called by Cloud Scheduler:
+
+```bash
+gcloud iam service-accounts create timelake
+gcloud storage buckets add-iam-policy-binding gs://$LAKE --member=serviceAccount:$SA --role=roles/storage.objectUser
+for role in roles/eventarc.eventReceiver roles/run.invoker; do
+  gcloud projects add-iam-policy-binding $PROJECT --member=serviceAccount:$SA --role=$role
+done
+```
+
+## The function code
+
+In a new folder, one `main.py` has an entry point per design. Each Cloud Run function picks its own with `--function`.
+
+```python
+"""Timelake on Cloud Run functions: append from Cloud Storage or Pub/Sub; maintain the tables; check recent data."""
+
+import datetime as dt
+import io
+import json
+import os
+import time
+import urllib.request
+
+import functions_framework
+import pyarrow as pa
+import pyarrow.csv as csv
+import pyarrow.parquet as pq
+import timelake
+from google.cloud import pubsub_v1, storage
+
+gcs = storage.Client()
+subscriber = pubsub_v1.SubscriberClient()
+lake = timelake.Lake(os.environ["TIMELAKE_WAREHOUSE"])
+table = lake.table(os.environ["TIMELAKE_TABLE"])
+
+
+def read_messages(payloads):
+    """Readings from JSON messages, each one reading or a list of readings."""
+    rows = []
+    for payload in payloads:
+        try:
+            message = json.loads(payload)
+        except ValueError:
+            print("skipped, not JSON:", payload[:200])
+            continue
+        rows.extend(message if isinstance(message, list) else [message])
+    return pa.Table.from_pylist(rows)
+
+
+def read_file(name, body):
+    if name.endswith(".parquet"):
+        return pq.read_table(io.BytesIO(body))
+    if name.endswith(".csv"):
+        return csv.read_csv(io.BytesIO(body))
+    return read_messages(body.splitlines())  # one JSON message per line, as Pub/Sub writes them
+
+
+@functions_framework.cloud_event
+def ingest_gcs(event):
+    bucket, name = event.data["bucket"], event.data["name"]
+    body = gcs.bucket(bucket).blob(name).download_as_bytes()
+    data = read_file(name, body)
+    # The object name is the batch id: a redelivered event loads nothing twice.
+    if data.num_rows:
+        print(name, table.append(data, batch_id=name))
+
+
+@functions_framework.http
+def pull(request):
+    """Pulls the waiting messages for up to 30 seconds, appends them in one commit, then acknowledges them."""
+    subscription = os.environ["SUBSCRIPTION"]
+    payloads, ack_ids, deadline = [], [], time.monotonic() + 30
+    while time.monotonic() < deadline:
+        response = subscriber.pull(subscription=subscription, max_messages=1000, timeout=10)
+        if not response.received_messages:
+            break
+        for received in response.received_messages:
+            payloads.append(received.message.data)
+            ack_ids.append(received.ack_id)
+    data = read_messages(payloads)
+    if data.num_rows:
+        print(len(payloads), "messages", table.append(data))
+    for i in range(0, len(ack_ids), 1000):
+        subscriber.acknowledge(subscription=subscription, ack_ids=ack_ids[i : i + 1000])
+    return "ok"
+
+
+@functions_framework.http
+def maintain(request):
+    for name in lake.tables():
+        print(name, lake.table(name).maintain())
+    return "ok"
+
+
+@functions_framework.http
+def check(request):
+    """Alerts on pumps running hot over the last 10 minutes and on pumps silent for 15."""
+    hot = lake.sql("""
+        SELECT device_id, avg(temp) AS avg_temp, max(temp) AS max_temp
+        FROM iot.readings
+        WHERE time > now() - INTERVAL '10 minutes'
+        GROUP BY device_id
+        HAVING avg(temp) > 80
+    """).to_pylist()
+    now = dt.datetime.now(dt.timezone.utc)
+    latest = lake.latest("iot.readings").to_pylist()
+    silent = [r["device_id"] for r in latest if now - r["time"] > dt.timedelta(minutes=15)]
+    print({"hot": hot, "silent": silent})
+    if hot or silent:
+        text = "Timelake check\n" + json.dumps({"hot": hot, "silent": silent}, default=str, indent=2)
+        urllib.request.urlopen(
+            urllib.request.Request(
+                os.environ["ALERT_WEBHOOK"],
+                data=json.dumps({"text": text}).encode(),
+                headers={"Content-Type": "application/json; charset=UTF-8"},
+            )
+        )
+    return "ok"
+```
+
+`requirements.txt`:
+
+```
+functions-framework
+google-cloud-pubsub
+google-cloud-storage
+timelake
+```
+
+Messages are JSON, one reading or a list of readings, with the table's columns:
+
+```json
+{"time": "2026-01-05T10:00:00Z", "device_id": "pump-1", "temp": 61.2, "humidity": 40}
+```
+
+## Two shell helpers
+
+`run_function` deploys a Cloud Run function from the folder; `schedule` calls one on a schedule from Cloud Scheduler. Both work in bash and zsh.
+
+```bash
+run_function() {   # run_function <name> <entry point> [more gcloud run deploy options]
+  name=$1 entry=$2; shift 2
+  gcloud run deploy $name --source . --function $entry --base-image python313 --region $REGION \
+    --service-account $SA --no-allow-unauthenticated --memory 1Gi --timeout 120 \
+    --set-env-vars TIMELAKE_WAREHOUSE=gs://${LAKE}/warehouse,TIMELAKE_TABLE=iot.readings "$@"
+}
+schedule() {   # schedule <function> <cron>
+  url=$(gcloud run services describe $1 --region $REGION --format='value(status.url)')
+  gcloud scheduler jobs create http $1 --location $REGION --schedule "$2" --uri $url --http-method POST \
+    --oidc-service-account-email $SA --oidc-token-audience $url
+}
+```
+
+On Cloud Run, Timelake gets the service account's credentials from the metadata server.
+
+**Retries and concurrency.** Eventarc and Pub/Sub deliver at least once. Where a batch has a stable name (an object name), it is the batch id, and a repeat is skipped. Batch ids are remembered while their commits are kept: by default the last hour, and at most 100 commits. Beyond that, and for pulled messages, deduplication keeps one row per device and time. Commits to one table happen one at a time: when two functions commit together, one retries. Each design caps its instances at a few, so those retries stay rare.

@@ -1,0 +1,49 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "Vercel: Vercel Queues, pushed" }
+
+# Vercel Queues, pushed
+
+Do the [Vercel setup](/docs/quick-start/vercel/setup) first.
+
+<IngestFlow
+  nodes={[
+    { label: "Gateways", sub: "batches" },
+    { label: "Vercel function", sub: "POST /api/batches" },
+    { label: "Vercel Queues", sub: "gateway-batches" },
+    { label: "Subscriber", sub: "append_batch", accent: true },
+    { label: "Tigris bucket", sub: "Iceberg tables" },
+  ]}
+  edges={["HTTPS", "send", "push", "commit"]}
+/>
+
+The intake route puts each request on a queue topic and answers at once. Vercel then calls the subscriber once per message, at most two at a time, and retries a message until the subscriber returns without an error. Each message is one commit, so this fits gateways that send a batch of readings every few seconds or minutes.
+
+`queues/readings.py`:
+
+```python
+"""Vercel Queues, pushed: append each gateway batch from the queue, one commit per message."""
+
+import asyncio
+
+from vercel.queue import Message, subscribe
+
+from lake import read_messages, table
+
+
+@subscribe(topic="gateway-batches", max_concurrency=2)
+async def append_batch(message: Message[list[dict[str, object]]]) -> None:
+    # A redelivered message keeps its id, so it loads nothing twice.
+    data = read_messages([message.payload])
+    print(await asyncio.to_thread(table().append, data, batch_id=message.message_id))
+```
+
+The `[[tool.vercel.subscribers]]` entry in `pyproject.toml` makes Vercel build this module into its own queue-triggered function. Messages are kept for 24 hours by default.
+
+Try it:
+
+```bash
+curl -X POST $URL/api/batches -H "authorization: Bearer $INGEST_TOKEN" -H "content-type: application/json" \
+  -d '[{"time": "2026-01-05T10:05:00Z", "device_id": "pump-1", "temp": 62.0, "humidity": 41},
+       {"time": "2026-01-05T10:05:00Z", "device_id": "pump-2", "temp": 59.4, "humidity": 43}]'
+```

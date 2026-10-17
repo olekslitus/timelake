@@ -1,0 +1,30 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "Fly.io: MQTT worker" }
+
+# MQTT worker
+
+Do the [Fly.io setup](/docs/quick-start/fly/setup) first.
+
+<IngestFlow
+  nodes={[
+    { label: "Devices", sub: "MQTT" },
+    { label: "MQTT broker" },
+    { label: "worker Machine", sub: "buffer, 10 s", accent: true },
+    { label: "Tigris bucket", sub: "lake/" },
+  ]}
+  edges={["devices/+/readings", "subscribe", "commit"]}
+/>
+
+Devices publish JSON readings to `devices/<device id>/readings` on an MQTT broker: a hosted one, or one you run, for example Mosquitto in another Fly app. The `worker` process subscribes over TLS, takes the device id from the topic, and appends every 10 seconds, like [HTTP intake, buffered](/docs/quick-start/fly/http-buffered). For a broker in the same Fly organization, connect over the private network instead (its `.internal` or `.flycast` address); change the port and drop `tls_set()` if that broker doesn't use TLS.
+
+```bash
+fly secrets set --app $APP MQTT_HOST="<broker host>" MQTT_USERNAME="<user>" MQTT_PASSWORD="<password>"
+```
+
+The client acknowledges each message when it arrives, so readings waiting in the buffer are lost on a crash, as in [HTTP intake, buffered](/docs/quick-start/fly/http-buffered). Try it with any MQTT client, such as Mosquitto's:
+
+```bash
+mosquitto_pub -h "<broker host>" -p 8883 -u "<user>" -P "<password>" -t devices/pump-1/readings \
+  -m '{"time": "2026-01-05T10:05:00Z", "temp": 62.0, "humidity": 41}'
+```

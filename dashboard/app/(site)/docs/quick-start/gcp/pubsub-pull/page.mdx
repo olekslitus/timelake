@@ -1,0 +1,35 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "Google Cloud: Pub/Sub, pulled every minute" }
+
+# Pub/Sub, pulled every minute
+
+Do the [Google Cloud setup](/docs/quick-start/gcp/setup) first.
+
+<IngestFlow
+  nodes={[
+    { label: "Devices", sub: "publish" },
+    { label: "Pub/Sub topic" },
+    { label: "Cloud Run function", sub: "pull", accent: true },
+    { label: "Lake bucket", sub: "Iceberg tables" },
+  ]}
+  edges={["SDK", "every minute", "commit"]}
+/>
+
+Cloud Scheduler calls the `pull` function every minute. It pulls up to 1,000 messages at a time for up to 30 seconds, appends them all in one commit, and only then acknowledges them. If the function fails before the acknowledgement, Pub/Sub delivers the messages again.
+
+```bash
+gcloud pubsub topics create timelake-readings          # skip if Pub/Sub to Cloud Storage created it
+gcloud pubsub subscriptions create timelake-pull --topic=timelake-readings --ack-deadline=120
+gcloud pubsub subscriptions add-iam-policy-binding timelake-pull --member=serviceAccount:$SA \
+  --role=roles/pubsub.subscriber
+
+run_function timelake-pull pull --max-instances 2
+gcloud run services update timelake-pull --region $REGION \
+  --update-env-vars SUBSCRIPTION=projects/${PROJECT}/subscriptions/timelake-pull
+schedule timelake-pull "* * * * *"
+```
+
+The acknowledgement deadline (120 s) is longer than one run, so a message isn't delivered again while the function still holds it. Try it by publishing as in [Pub/Sub to Cloud Storage](/docs/quick-start/gcp/pubsub-files); the reading appears in the table within a minute.
+
+Why not trigger a function from each message? A Pub/Sub trigger calls the function once per message, and each call would be one commit. That suits a few messages a minute, not a fleet of devices.

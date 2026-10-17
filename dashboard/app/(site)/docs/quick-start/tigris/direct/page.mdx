@@ -1,0 +1,27 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "Tigris: Direct appends" }
+
+# Direct appends
+
+Do the [Tigris setup](/docs/quick-start/tigris/setup) first.
+
+<IngestFlow
+  nodes={[
+    { label: "Devices" },
+    { label: "Your process", sub: "table.append", accent: true },
+    { label: "Lake bucket", sub: "Iceberg tables" },
+  ]}
+  edges={["MQTT / HTTP / serial", "commit"]}
+/>
+
+A process that already receives the readings (an MQTT client, an HTTP API, a gateway's poller) appends to the lake itself, with the variables from [Shared setup](/docs/quick-start/tigris/setup#an-access-key) in its environment:
+
+```python
+import timelake
+
+table = timelake.Lake("s3://my-lake/warehouse").table("iot.readings")
+table.append(batch)  # a pyarrow Table, RecordBatch, or polars DataFrame
+```
+
+Collect readings for a few seconds and append them together, as in the [local guide](/docs/quick-start/local/python): each append is one commit, about 7 writes. Writers can run anywhere. In a single-region bucket every request goes to that region, so put the writers near it, or choose a multi-region bucket if they are spread across a continent. Several processes can append to one table; when two commit together, one retries.

@@ -1,0 +1,59 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "Azure: Service Bus" }
+
+# Service Bus
+
+Do the [Azure setup](/docs/quick-start/azure/setup) first.
+
+<IngestFlow
+  nodes={[
+    { label: "Devices", sub: "send_messages" },
+    { label: "Service Bus queue" },
+    { label: "Azure Function", sub: "ingest_service_bus", accent: true },
+    { label: "lake container", sub: "Iceberg tables" },
+  ]}
+  edges={["AMQP / HTTPS", "batch", "commit"]}
+/>
+
+Devices send messages to a queue, each one reading or a list of readings. The function collects up to 1,000 messages or 30 seconds' worth per call and commits them at once. When a call fails, Service Bus hands the messages out again. A message that fails 5 times moves to the queue's dead-letter queue, where you can inspect it.
+
+```bash
+export SB_NAMESPACE=timelake-$RANDOM
+az servicebus namespace create -g $RG -n $SB_NAMESPACE -l $LOCATION --sku Basic
+az servicebus queue create -g $RG --namespace-name $SB_NAMESPACE -n readings \
+  --max-delivery-count 5 --lock-duration PT5M
+export SB_SCOPE=$(az servicebus namespace show -g $RG -n $SB_NAMESPACE --query id -o tsv)
+az role assignment create --role "Azure Service Bus Data Receiver" --scope $SB_SCOPE \
+  --assignee-object-id $PRINCIPAL --assignee-principal-type ServicePrincipal
+az functionapp config appsettings set -g $RG -n $APP --settings \
+  ServiceBusConnection__fullyQualifiedNamespace=$SB_NAMESPACE.servicebus.windows.net
+```
+
+The 5-minute lock keeps a batch's messages from being handed out again while the function holds them.
+
+Try it:
+
+```bash
+az role assignment create --role "Azure Service Bus Data Sender" --scope $SB_SCOPE \
+  --assignee $(az ad signed-in-user show --query id -o tsv)
+pip install azure-servicebus azure-identity
+```
+
+```python
+import json
+import os
+
+from azure.identity import DefaultAzureCredential
+from azure.servicebus import ServiceBusClient, ServiceBusMessage
+
+readings = [
+    {"time": "2026-01-05T10:10:00Z", "device_id": "pump-1", "temp": 63.1, "humidity": 41},
+    {"time": "2026-01-05T10:10:00Z", "device_id": "pump-2", "temp": 60.2, "humidity": 44},
+]
+client = ServiceBusClient(f"{os.environ['SB_NAMESPACE']}.servicebus.windows.net", DefaultAzureCredential())
+with client, client.get_queue_sender("readings") as sender:
+    sender.send_messages(ServiceBusMessage(json.dumps(readings)))
+```
+
+Devices without the SDK can send over HTTPS with Service Bus's REST API and a shared access signature.

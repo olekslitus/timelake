@@ -1,0 +1,48 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "Google Cloud: checks and maintenance" }
+
+# Google Cloud: checks and maintenance
+
+Do the [Google Cloud setup](/docs/quick-start/gcp/setup) first.
+
+## Scheduled checks on recent data
+
+<IngestFlow
+  nodes={[
+    { label: "Cloud Scheduler", sub: "*/5 * * * *" },
+    { label: "Cloud Run function", sub: "check", accent: true },
+    { label: "Lake bucket", sub: "iot.readings" },
+    { label: "Webhook", sub: "Google Chat, Slack" },
+  ]}
+  edges={["call", "query", "alert"]}
+/>
+
+The `check` entry point runs every 5 minutes. It asks two questions of the table and posts to a chat webhook when either has an answer:
+
+- Which pumps averaged above 80° over the last 10 minutes? A SQL query over recent data. The time filter skips every file whose time range lies outside the window, before any data is read.
+- Which pumps have sent nothing for 15 minutes? `lake.latest()` answers from the last-value index, without scanning the table.
+
+Google Chat and Slack incoming webhooks both accept the `{"text": …}` body it sends. The webhook URL is a secret, so it goes in Secret Manager:
+
+```bash
+printf '%s' 'https://chat.googleapis.com/v1/spaces/…' | gcloud secrets create timelake-alert-webhook --data-file=-
+gcloud secrets add-iam-policy-binding timelake-alert-webhook --member=serviceAccount:$SA \
+  --role=roles/secretmanager.secretAccessor
+
+run_function timelake-check check
+gcloud run services update timelake-check --region $REGION --update-secrets ALERT_WEBHOOK=timelake-alert-webhook:latest
+schedule timelake-check "*/5 * * * *"
+```
+
+Change the SQL to check anything the table holds: a rate of change, a counter that stopped increasing, readings outside a band per site (join a devices table). Over longer windows, a [rollup](/docs/rollups) keeps the query small. A check that also wants a record of what it found can append its findings to another Timelake table.
+
+## Maintenance
+
+Each append already merges small files and removes duplicates. An hourly `maintain` also sorts each finished day into one file, applies retention, and deletes files no version needs:
+
+```bash
+run_function timelake-maintain maintain
+gcloud run services update timelake-maintain --region $REGION --memory 2Gi --timeout 900
+schedule timelake-maintain "0 * * * *"
+```

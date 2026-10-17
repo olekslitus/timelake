@@ -1,0 +1,72 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "Tigris: Files and a poller" }
+
+# Files and a poller
+
+Do the [Tigris setup](/docs/quick-start/tigris/setup) first.
+
+<IngestFlow
+  nodes={[
+    { label: "Gateways", sub: "CSV / Parquet" },
+    { label: "Landing bucket" },
+    { label: "Poller", sub: "table.append", accent: true },
+    { label: "Lake bucket", sub: "Iceberg tables" },
+  ]}
+  edges={["PUT", "every minute", "commit"]}
+/>
+
+Gateways upload files to the landing bucket with any S3 client, using a key that is unique per file, such as `gateway-7/20260105T1000.csv`. Every minute a script lists the landing bucket, appends each file, and deletes it. Nothing needs to be reachable from the internet.
+
+`ingest_landing.py`:
+
+```python
+"""Appends every CSV or Parquet file in the landing bucket to a Timelake table, then deletes it."""
+
+import io
+import os
+
+import boto3
+import pyarrow.csv as csv
+import pyarrow.parquet as pq
+import timelake
+
+BUCKET = os.environ["LANDING_BUCKET"]
+s3 = boto3.client("s3")  # endpoint and region from AWS_ENDPOINT_URL_S3 and AWS_REGION
+table = timelake.Lake(os.environ["TIMELAKE_WAREHOUSE"]).table(os.environ["TIMELAKE_TABLE"])
+
+
+def read(name, body):
+    return pq.read_table(io.BytesIO(body)) if name.endswith(".parquet") else csv.read_csv(io.BytesIO(body))
+
+
+for page in s3.get_paginator("list_objects_v2").paginate(Bucket=BUCKET):
+    for obj in page.get("Contents", []):
+        key = obj["Key"]
+        body = s3.get_object(Bucket=BUCKET, Key=key)["Body"].read()
+        # The object key is the batch id: if the script stops before the delete, the next run skips the file.
+        print(key, table.append(read(key, body), batch_id=key))
+        s3.delete_object(Bucket=BUCKET, Key=key)
+```
+
+Add the rest of its settings to `timelake.env`, so cron has them too:
+
+```
+AWS_ENDPOINT=https://t3.storage.dev
+TIMELAKE_WAREHOUSE=s3://my-lake/warehouse
+TIMELAKE_TABLE=iot.readings
+LANDING_BUCKET=my-lake-landing
+```
+
+Run it by hand once, then from cron on any host with Python:
+
+```bash
+set -a; . ./timelake.env; set +a
+uv run --with timelake --with boto3 ingest_landing.py
+```
+
+```
+* * * * * cd $HOME/timelake && set -a && . ./timelake.env && set +a && $HOME/.local/bin/uv run --with timelake --with boto3 ingest_landing.py >> ingest.log 2>&1
+```
+
+Run one poller per table. It appends files one after another, so its commits never wait for each other. A file uploaded again with a key that was already loaded is skipped, so send corrections as new files.

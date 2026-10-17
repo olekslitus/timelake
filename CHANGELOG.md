@@ -47,8 +47,9 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
   continuous ingestion, each with several designs, a recommendation, scheduled checks on recent data, and
   maintenance: Local, AWS (S3, Kinesis, SQS, IoT Core, and Firehose into Lambda), Azure (Blob Storage, Event Hubs,
   Service Bus, and IoT Hub into Azure Functions), Google Cloud (Cloud Storage and Pub/Sub into Cloud Run functions),
-  Cloudflare (R2 and Queues, with a writer outside Workers), Fly.io, Vercel, and Tigris. The Quick start compares the
-  platforms and designs. The AWS page compares S3 with S3 Tables.
+  Cloudflare (R2 and Queues, with a writer outside Workers), Fly.io, Vercel, and Tigris. Each platform has an
+  overview, a setup page, a page per design, and a checks page; the docs sidebar opens and closes nested pages. The
+  Quick start compares the platforms and designs. The AWS page compares S3 with S3 Tables.
 
 ### Changed
 

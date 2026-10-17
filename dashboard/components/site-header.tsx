@@ -6,11 +6,11 @@ import { usePathname } from "next/navigation"
 import { Suspense } from "react"
 
 import { TimelakeLockup } from "@/components/brand/timelake-mark"
+import { DocsNav } from "@/components/docs/docs-sidebar"
 import { GithubIcon } from "@/components/github-icon"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { DOCS_NAV } from "@/lib/docs-nav"
 import { REPO_URL } from "@/lib/site"
 import { cn } from "@/lib/utils"
 
@@ -97,23 +97,7 @@ export function SiteHeader() {
                   GitHub
                 </a>
               </div>
-              {DOCS_NAV.map((g) => (
-                <div key={g.title} className="space-y-1">
-                  <div className="text-xs font-medium text-muted-foreground">{g.title}</div>
-                  {g.items.map((i) => (
-                    <div key={i.href}>
-                      <Link href={i.href} className="block py-1 text-sm">
-                        {i.label}
-                      </Link>
-                      {i.items?.map((c) => (
-                        <Link key={c.href} href={c.href} className="block border-l py-1 pl-3 text-sm">
-                          {c.label}
-                        </Link>
-                      ))}
-                    </div>
-                  ))}
-                </div>
-              ))}
+              <DocsNav />
             </div>
           </SheetContent>
         </Sheet>

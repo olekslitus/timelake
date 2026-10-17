@@ -1,0 +1,53 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "AWS: Files to S3" }
+
+# Files to S3
+
+Do the [AWS setup](/docs/quick-start/aws/setup) first.
+
+<IngestFlow
+  nodes={[
+    { label: "Gateways", sub: "CSV / Parquet / JSON" },
+    { label: "S3 landing bucket" },
+    { label: "Lambda", sub: "ingest_s3", accent: true },
+    { label: "S3 lake bucket", sub: "Iceberg tables" },
+  ]}
+  edges={["PUT", "event", "commit"]}
+/>
+
+Gateways buffer readings and upload a file every few minutes. Each upload triggers the function. A separate landing bucket keeps the lake's own writes from triggering it.
+
+```bash
+aws s3 mb s3://$LANDING
+aws iam put-role-policy --role-name timelake --policy-name landing --policy-document '{
+  "Version": "2012-10-17",
+  "Statement": [{"Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::'$LANDING'/*"}]
+}'
+lambda_function timelake-s3 ingest_s3
+aws lambda put-function-concurrency --function-name timelake-s3 --reserved-concurrent-executions 4
+aws lambda add-permission --function-name timelake-s3 --statement-id landing-bucket \
+  --action lambda:InvokeFunction --principal s3.amazonaws.com \
+  --source-arn arn:aws:s3:::$LANDING --source-account $ACCOUNT
+aws s3api put-bucket-notification-configuration --bucket $LANDING --notification-configuration '{
+  "LambdaFunctionConfigurations": [{
+    "LambdaFunctionArn": "arn:aws:lambda:'$AWS_REGION:$ACCOUNT':function:timelake-s3",
+    "Events": ["s3:ObjectCreated:*"]
+  }]
+}'
+```
+
+Try it:
+
+```bash
+cat > readings.csv <<'EOF'
+time,device_id,temp,humidity
+2026-01-05T10:00:00Z,pump-1,61.2,40
+2026-01-05T10:00:00Z,pump-2,58.9,42
+EOF
+aws s3 cp readings.csv s3://$LANDING/gateway-1/20260105T1000.csv
+aws logs tail /aws/lambda/timelake-s3 --since 5m
+timelake latest iot.readings
+```
+
+Give every upload a unique key, such as the gateway and the time, and send corrections as new files: a key that was already loaded is skipped. Events beyond the concurrency limit wait in Lambda's queue.
