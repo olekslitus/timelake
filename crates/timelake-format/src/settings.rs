@@ -374,6 +374,18 @@ pub static SETTINGS: &[Setting] = &[
         check: duration_or_off,
     },
     Setting {
+        name: "data-page-rows",
+        kind: "count",
+        default: DefaultValue::Derived("20,000; 8,192 when written from WebAssembly"),
+        levels: &[Level::Table],
+        since: "0.6.0",
+        description: "Rows per Parquet data page in the files written. Smaller pages make compaction from a Worker \
+                      use less memory (it holds a page per column of each file it merges: 8,192 rows peaked at 77 MiB \
+                      merging 24 TSBS files, 20,000 at 123 MiB) and page pruning finer, at a few percent more bytes \
+                      (TSBS: +3.6%) and slower scans below about 8,000 rows.",
+        check: count,
+    },
+    Setting {
         name: "version-check-interval",
         kind: "duration",
         default: DefaultValue::Value("1s"),
@@ -529,10 +541,11 @@ mod tests {
             property::ROLLUP_AGGREGATES,
             property::ROLLUP_REFRESH_INTERVAL,
             property::VERSION_CHECK_INTERVAL,
+            property::DATA_PAGE_ROWS,
         ] {
             assert_eq!(find(key).map(Setting::property).as_deref(), Some(key));
         }
-        assert_eq!(SETTINGS.len(), 27, "a new setting needs a property constant and an entry above");
+        assert_eq!(SETTINGS.len(), 28, "a new setting needs a property constant and an entry above");
     }
 
     /// A stated default is what the contract uses when the property is unset.

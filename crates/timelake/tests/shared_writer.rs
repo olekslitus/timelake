@@ -254,3 +254,35 @@ fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     }
     out
 }
+
+/// Compaction reads its inputs a window of pages at a time: on a table without dedup (where a row
+/// read twice would show), files large enough for many windows merge to exactly their rows.
+#[tokio::test(flavor = "multi_thread")]
+async fn windowed_compaction_reads_every_row_once() {
+    use timelake_format::maintain::{MaintainOptions as SharedMaintain, maintain};
+
+    let (dir, lake) = temp_lake();
+    let mut o = opts();
+    o.dedup = Some(false);
+    let t = lake.create_table("iot.r", &schema(), o).await.unwrap();
+    let location = t.location().to_string();
+    let host = EngineHost::new(&lake);
+    let mut state = TableState::load(&&host, &location).await.unwrap();
+    // Noisy values, so 60,000-row files are a few MB and span several windows.
+    for i in 0..3 {
+        let b =
+            batch(T0 + i, 6_000, 3_000_000, 10, |d, j| ((j * 7919 + i64::from(d) * 104_729) % 100_003) as f64 / 7.0);
+        state = append(&&host, state, &[b], &shared_no_maintenance()).await.unwrap().0;
+    }
+    let s = Session::new(reopen(&dir));
+    let before =
+        rows(&s, "SELECT count(*) AS n, sum(device) AS d, sum(CAST(round(value * 7) AS BIGINT)) AS v FROM iot.r").await;
+    let (_, report) =
+        maintain(&&host, state, &SharedMaintain { expire: false, ..SharedMaintain::default() }).await.unwrap();
+    assert_eq!((report.files_rewritten, report.files_written, report.rows_rewritten), (3, 1, 180_000));
+    let s = Session::new(reopen(&dir));
+    assert_eq!(
+        rows(&s, "SELECT count(*) AS n, sum(device) AS d, sum(CAST(round(value * 7) AS BIGINT)) AS v FROM iot.r").await,
+        before
+    );
+}

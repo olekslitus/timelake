@@ -1,0 +1,12 @@
+{
+  "name": "timelake-bench-workers",
+  "private": true,
+  "type": "module",
+  "description": "Measures TableWriter appends and maintenance in workerd (Cloudflare's runtime) through Miniflare",
+  "scripts": {
+    "bench": "bun bench.ts"
+  },
+  "devDependencies": {
+    "miniflare": "4.20260730.0"
+  }
+}

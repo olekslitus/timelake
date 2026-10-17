@@ -13,11 +13,12 @@ use crate::file::{FileStats, FileWriter, writer_properties};
 use crate::host::{Host, Upload, uuid_v7};
 use crate::iceberg::DataFile;
 use crate::maintain::{MaintainOptions, MaintainReport, maintain};
-use crate::rows::{latest_per_series, sort_and_split};
+use crate::rows::{latest_of_sorted, sort_and_split};
 use crate::summary;
 use crate::table::TableState;
 
-/// Bytes sent per part of a multipart upload (S3 and R2 take parts of 5 MiB or more).
+/// Bytes sent per part of a multipart upload: S3 and R2 take parts of 5 MiB or more, and R2 wants
+/// every part but the last to be the same size.
 pub const PART_BYTES: usize = 8 << 20;
 
 /// Options for [`append`].
@@ -61,11 +62,7 @@ pub async fn append<H: Host>(
     let partitions = sort_and_split(&table.schema, &table.contract, batches, now_us)?;
     let rows = partitions.iter().map(|(_, b)| b.num_rows()).sum();
     let touched: HashSet<Option<i32>> = partitions.iter().map(|(p, _)| *p).collect();
-    let latest = latest_per_series(
-        &table.schema,
-        &table.contract,
-        &partitions.iter().map(|(_, b)| b.clone()).collect::<Vec<_>>(),
-    )?;
+    let latest = latest_of_sorted(&table.schema, &table.contract, &partitions)?;
     let mut files = vec![];
     let mut footers = vec![];
     let result = async {
@@ -152,9 +149,43 @@ impl<H: Host> std::fmt::Debug for PartitionFiles<'_, H> {
 struct OpenFile<U> {
     uri: String,
     writer: FileWriter,
-    /// Encoded bytes not sent yet.
-    pending: Vec<u8>,
+    /// Encoded bytes not sent yet, as the writer's chunks.
+    pending: Pending,
     upload: Option<U>,
+}
+
+/// Bytes waiting to be uploaded, kept as chunks and copied into parts of exactly `PART_BYTES`:
+/// parts of one size reuse the memory the previous part freed.
+#[derive(Default)]
+struct Pending {
+    chunks: std::collections::VecDeque<Vec<u8>>,
+    len: usize,
+}
+
+impl Pending {
+    fn extend(&mut self, chunks: Vec<Vec<u8>>) {
+        for c in chunks {
+            self.len += c.len();
+            self.chunks.push_back(c);
+        }
+    }
+
+    /// The first `n` bytes (or all, if fewer) as one buffer.
+    fn take(&mut self, n: usize) -> Vec<u8> {
+        let n = n.min(self.len);
+        let mut part = Vec::with_capacity(n);
+        while part.len() < n {
+            let Some(mut chunk) = self.chunks.pop_front() else { break };
+            let want = n - part.len();
+            if chunk.len() > want {
+                let rest = chunk.split_off(want);
+                self.chunks.push_front(rest);
+            }
+            part.extend_from_slice(&chunk);
+        }
+        self.len -= part.len();
+        part
+    }
 }
 
 impl<'a, H: Host> PartitionFiles<'a, H> {
@@ -181,23 +212,25 @@ impl<'a, H: Host> PartitionFiles<'a, H> {
         let mut file = if let Some(f) = self.open.take() {
             f
         } else {
-            let props = writer_properties(&self.table.schema, &self.table.contract, &created_by())?;
+            let page_rows = self.host.data_page_rows();
+            let props = writer_properties(&self.table.schema, &self.table.contract, &created_by(), page_rows)?;
             OpenFile {
                 uri: format!("{}/{}.parquet", self.dir(), uuid_v7(self.host)),
-                writer: FileWriter::new(self.table.schema.clone(), props)?,
-                pending: vec![],
+                writer: FileWriter::new(self.table.schema.clone(), props)?
+                    .with_max_row_group_bytes(self.host.max_row_group_bytes()),
+                pending: Pending::default(),
                 upload: None,
             }
         };
         file.writer.write(batch)?;
-        file.pending.extend(file.writer.take());
-        if file.pending.len() >= PART_BYTES {
-            let upload = match file.upload.take() {
+        file.pending.extend(file.writer.take_chunks());
+        // Parts of exactly PART_BYTES: R2 requires every part but the last to have the same size.
+        while file.pending.len >= PART_BYTES {
+            let mut upload = match file.upload.take() {
                 Some(u) => u,
                 None => self.host.upload(&file.uri).await?,
             };
-            let mut upload = upload;
-            upload.put_part(std::mem::take(&mut file.pending)).await?;
+            upload.put_part(file.pending.take(PART_BYTES)).await?;
             file.upload = Some(upload);
         }
         if file.writer.size() >= self.table.contract.target_file_size {
@@ -210,14 +243,17 @@ impl<'a, H: Host> PartitionFiles<'a, H> {
 
     async fn close(&mut self, file: OpenFile<H::Upload>) -> WriteResult<()> {
         let OpenFile { uri, writer, mut pending, upload } = file;
-        let (rest, stats) = writer.finish()?;
+        let (rest, stats) = writer.finish_chunks()?;
         pending.extend(rest);
-        match upload {
-            Some(mut u) => {
-                u.put_part(pending).await?;
-                u.complete().await?;
+        if let Some(mut u) = upload {
+            // Full parts first: R2 takes a last part no larger than the others.
+            while pending.len > 0 {
+                u.put_part(pending.take(PART_BYTES)).await?;
             }
-            None => self.host.put(&uri, pending).await?,
+            u.complete().await?;
+        } else {
+            let all = pending.len;
+            self.host.put(&uri, pending.take(all)).await?;
         }
         let footer = footer_bytes(&stats.metadata)?;
         self.done.push((data_file(self.table, uri, self.partition, &stats), footer));

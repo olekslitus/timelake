@@ -118,6 +118,8 @@ pub mod property {
     pub const ROLLUP_REFRESH_INTERVAL: &str = "timelake.rollup-refresh-interval";
     /// How long the Timelake reader uses a table version without checking for a newer one.
     pub const VERSION_CHECK_INTERVAL: &str = "timelake.version-check-interval";
+    /// Rows per Parquet data page in the files written.
+    pub const DATA_PAGE_ROWS: &str = "timelake.data-page-rows";
 }
 
 /// Snapshot summary keys: Timelake's own, and the standard Iceberg counters Timelake maintains.

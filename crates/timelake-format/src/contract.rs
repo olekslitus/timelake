@@ -183,6 +183,8 @@ pub struct Contract {
     /// The Timelake reader uses a table version it loaded or checked for this long before
     /// checking for a newer one.
     pub version_check_interval: Duration,
+    /// Rows per Parquet data page in the files written (`None`: the writer's default).
+    pub data_page_rows: Option<usize>,
 }
 
 impl Contract {
@@ -240,6 +242,10 @@ impl Contract {
             version_check_interval: p
                 .duration(property::VERSION_CHECK_INTERVAL)?
                 .unwrap_or(Self::DEFAULT_VERSION_CHECK_INTERVAL),
+            data_page_rows: p
+                .get(property::DATA_PAGE_ROWS)
+                .map(|_| p.number(property::DATA_PAGE_ROWS, 0))
+                .transpose()?,
         })
     }
 

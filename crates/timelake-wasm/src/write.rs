@@ -162,6 +162,14 @@ impl Host for JsHost {
         u64::from_le_bytes(b)
     }
 
+    fn max_row_group_bytes(&self) -> Option<usize> {
+        Some(MAX_ROW_GROUP_BYTES)
+    }
+
+    fn data_page_rows(&self) -> usize {
+        DATA_PAGE_ROWS
+    }
+
     async fn sleep(&self, ms: u64) {
         let promise = Promise::new(&mut |resolve, _| {
             let global = js_sys::global();
@@ -175,6 +183,16 @@ impl Host for JsHost {
         let _ = JsFuture::from(promise).await;
     }
 }
+
+/// The most a row group being written holds in memory before it goes out: Workers have 128 MB.
+const MAX_ROW_GROUP_BYTES: usize = 16 << 20;
+
+/// Rows per data page in files written from JavaScript, unless the table sets `data-page-rows`:
+/// compaction in a Worker holds a page per column of each file it merges.
+const DATA_PAGE_ROWS: usize = 8 * 1024;
+
+/// Rows per batch when decoding JSON rows.
+const JSON_BATCH_ROWS: usize = 8 * 1024;
 
 /// Bytes inline compaction reads after an append from JavaScript, unless the call says otherwise:
 /// keeps an append's CPU time within what a Worker request gets (SPEC §21.10).
@@ -283,8 +301,8 @@ impl Writer {
         Writer { host: JsHost { store }, location: location.trim_end_matches('/').to_string(), state: Rc::default() }
     }
 
-    /// Appends rows given as a JSON array of objects. Timestamps are epoch milliseconds or ISO
-    /// strings (millisecond precision; use `appendIpc` for microseconds).
+    /// Appends rows given as newline-delimited JSON objects. Timestamps are epoch milliseconds or
+    /// ISO strings (millisecond precision; use `appendIpc` for microseconds).
     #[wasm_bindgen(js_name = appendJson)]
     pub fn append_json(&self, rows_json: String, options: JsValue) -> Promise {
         self.run(options, move |schema| rows_from_json(&rows_json, &schema))
@@ -402,9 +420,10 @@ async fn current(host: &JsHost, location: &str, state: &Rc<RefCell<Option<TableS
     }
 }
 
-/// Rows from JSON objects, decoded with the table schema: timestamps as milliseconds (numbers or
-/// ISO strings), every column nullable here (the table's own nullability is checked when the rows
-/// are aligned), and the insertion time left to the writer.
+/// Rows from newline-delimited JSON objects, decoded with the table schema straight into Arrow
+/// (no intermediate JSON values): timestamps as milliseconds (numbers or ISO strings), every
+/// column nullable here (the table's own nullability is checked when the rows are aligned), and
+/// the insertion time left to the writer.
 fn rows_from_json(json: &str, schema: &SchemaRef) -> WriteResult<Vec<RecordBatch>> {
     let fields: Vec<Field> = schema
         .fields()
@@ -417,14 +436,24 @@ fn rows_from_json(json: &str, schema: &SchemaRef) -> WriteResult<Vec<RecordBatch
             Field::new(f.name(), ty, true)
         })
         .collect();
-    let decode_schema = Arc::new(Schema::new(fields));
-    let rows: Vec<serde_json::Value> =
-        serde_json::from_str(json).map_err(|e| WriteError::invalid(format!("rows must be a JSON array: {e}")))?;
-    // Strict: a column the table doesn't have is an error, not silently dropped.
-    let mut decoder = arrow_json::ReaderBuilder::new(decode_schema).with_strict_mode(true).build_decoder()?;
     let unfit = |e: arrow_schema::ArrowError| WriteError::invalid(format!("rows don't fit the table: {e}"));
-    decoder.serialize(&rows).map_err(unfit)?;
-    Ok(decoder.flush().map_err(unfit)?.into_iter().collect())
+    // Strict: a column the table doesn't have is an error, not silently dropped.
+    let mut decoder = arrow_json::ReaderBuilder::new(Arc::new(Schema::new(fields)))
+        .with_strict_mode(true)
+        .with_batch_size(JSON_BATCH_ROWS)
+        .build_decoder()
+        .map_err(unfit)?;
+    let (mut rest, mut out) = (json.as_bytes(), vec![]);
+    loop {
+        let read = decoder.decode(rest).map_err(unfit)?;
+        rest = &rest[read..];
+        if let Some(batch) = decoder.flush().map_err(unfit)? {
+            out.push(batch);
+        }
+        if read == 0 {
+            return Ok(out);
+        }
+    }
 }
 
 /// Rows from an Arrow IPC stream.

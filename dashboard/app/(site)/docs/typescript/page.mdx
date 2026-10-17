@@ -61,7 +61,10 @@ A warehouse served over plain HTTP(S), such as Vercel Blob, a public S3, R2 or G
 `TableWriter` appends to a table from JavaScript: a Cloudflare Worker, Node, Deno, Bun, or a browser. The WebAssembly module runs the engine's write path. It aligns rows to the table's schema, adds the insertion time, sorts by series and time, keeps the last of rows with the same series and time, and writes one Parquet file per time partition. Then it commits the way the engine does, and updates the last-value index and the head. The engine, DuckDB, and the reader above see the rows like any others.
 
 ```ts
-import { TableWriter, r2Store } from "@timelake/client"
+import wasm from "@timelake/client/timelake.wasm"
+import { TableWriter, initWasm, r2Store } from "@timelake/client/workers"
+
+initWasm(wasm)
 
 export default {
   async queue(batch, env) {
@@ -73,11 +76,23 @@ export default {
 }
 ```
 
+- **In Workers**, import from `@timelake/client/workers`, and pass the module from `@timelake/client/timelake.wasm` to `initWasm`. Workers can't compile WebAssembly from bytes at runtime, so the default entry, which embeds the module as base64, doesn't run there. Wrangler bundles the `.wasm` import as a compiled module. Elsewhere (Node, Deno, Bun, browsers), the default `@timelake/client` works as is.
+
 - **Store.** A writer reads and writes objects through a `Store`: `r2Store` for an R2 binding, `memoryStore` for tests, or your own (`get`, `getRange`, `put`, `putIfAbsent`, `list`, `delete`, and optionally `upload` for multipart uploads). `putIfAbsent` must be atomic, because commits rely on it. The second argument is the warehouse root as the table metadata records it. Keys are what follows the bucket.
 - **Rows.** Pass objects or an Arrow IPC stream. In objects, times are `Date`s, ISO strings, or epoch milliseconds (millisecond precision). Use Arrow IPC for microseconds. A column the table doesn't have, or a missing required one, is an error, and nothing is written.
 - **Commits.** A writer keeps the version it last committed, so a steady writer doesn't reload the table before each append. If another writer committed in between, the commit reloads and retries. A `batchId` makes retries safe: an append whose batch id is already in the table is skipped.
 - **One writer per table works best:** a Queues consumer or a Durable Object that collects rows into appends of a few thousand or more. Concurrent writers are safe, but each conflict costs a retry, and many small appends make many small files.
 - **Creating tables.** Create the table first with the CLI or Python. Writers can't create tables yet.
+- **Memory and time** in workerd (Cloudflare's runtime, run locally with Miniflare on a local R2 bucket; TSBS-like rows with 9 columns):
+
+| | Time | WebAssembly memory |
+| --- | ---: | ---: |
+| Append of 1,000 rows | 0.2 s | 5 MiB |
+| Append of 100,000 rows | 0.7 s | 37 MiB |
+| 60 appends of 1,000 rows with inline maintenance | 18 ms each (median), 0.2 s with compaction | 16 MiB |
+| Compaction of a day of 24 files (1.2M rows, 47 MiB) | 2.7 s | 95 MiB |
+
+  A Worker has 128 MB of memory, WebAssembly included. Compaction reads each file a window of pages at a time, merges at most 24 files at once (larger groups in parts), and writes row groups of at most 16 MiB. Files written from JavaScript have data pages of 8,192 rows (the setting `data-page-rows`; the engine writes 20,000), since compaction holds a page per column of each file it merges. Method and details: [`bench/results/WORKERS.md`](https://github.com/polythings/timelake/blob/main/bench/results/WORKERS.md).
 - **Maintenance.** After each append, the writer runs what the engine runs inline. It merges size tiers of small files in the partitions the append touched, and rewrites cold partitions whole. It also applies retention and expires snapshots in batches. Compaction is a streaming merge: memory is about one row group per file being merged, not the partition. One append's compaction reads at most `maxCompactBytes` (default 64 MiB), so it stays within a request's CPU time; what's left waits for the next append. `writer.maintain({ maxBytes })` runs a full pass, for example from a scheduled Worker. `timelake maintain` elsewhere is optional.
 
 ## How a query runs

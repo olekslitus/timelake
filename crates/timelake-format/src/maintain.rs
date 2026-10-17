@@ -11,7 +11,9 @@ use std::time::Duration;
 use arrow_array::RecordBatch;
 use arrow_select::concat::concat_batches;
 use bytes::Bytes;
-use parquet::arrow::arrow_reader::{ArrowReaderMetadata, ArrowReaderOptions, ParquetRecordBatchReaderBuilder};
+use parquet::arrow::arrow_reader::{
+    ArrowReaderMetadata, ArrowReaderOptions, ParquetRecordBatchReaderBuilder, RowSelection, RowSelector,
+};
 use parquet::errors::ParquetError;
 use parquet::file::metadata::{PageIndexPolicy, ParquetMetaData, ParquetMetaDataReader};
 use parquet::file::reader::{ChunkReader, Length};
@@ -33,9 +35,16 @@ const TIER_BASE_SHIFT: u32 = 16;
 const TIER_GROWTH: u64 = 4;
 /// A partition holding at most this many target sizes is rewritten whole.
 const REWRITE_WHOLE_PARTITION_TARGETS: u64 = 2;
-/// Rows per batch read from an input, and per batch the merge hands the writer.
-const READ_BATCH_ROWS: usize = 4 * 1024;
-const MERGED_BATCH_ROWS: usize = 64 * 1024;
+/// Rows per batch read from an input, and per batch the merge hands the writer. Small, because a
+/// merge holds a batch per input (measured: 1,024 and 8,192 rows peak at 77 MiB merging 24 files
+/// of 50,000 TSBS rows, against 97 MiB with 4,096 and 65,536, for 15% more time).
+const READ_BATCH_ROWS: usize = 1024;
+const MERGED_BATCH_ROWS: usize = 8 * 1024;
+/// The most files one merge reads at once: a merge holds a window of each, so this bounds its
+/// memory. A larger group is merged in parts, which later runs merge again.
+const MAX_MERGE_INPUTS: usize = 24;
+/// Compressed bytes of an input read per window (the pages covering a window's rows).
+const WINDOW_BYTES: u64 = 128 << 10;
 /// Bytes read from the end of a file to find its footer.
 const FOOTER_PREFETCH: u64 = 64 << 10;
 /// Inline maintenance expires snapshots in batches of about this many.
@@ -184,7 +193,15 @@ async fn compact<H: Host>(
     opts: &MaintainOptions,
     report: &mut MaintainReport,
 ) -> WriteResult<TableState> {
-    let mut plan = compaction_plan(host, &mut table, opts).await?;
+    let plan = compaction_plan(host, &mut table, opts).await?;
+    // Groups larger than a merge takes are split into balanced parts, consecutive in commit order.
+    let mut plan: Vec<(Option<i32>, Vec<Entry>)> = plan
+        .into_iter()
+        .flat_map(|(p, files)| {
+            let size = files.len().div_ceil(files.len().div_ceil(MAX_MERGE_INPUTS));
+            files.chunks(size.max(1)).map(|c| (p, c.to_vec())).collect::<Vec<_>>()
+        })
+        .collect();
     if let Some(max) = opts.max_bytes {
         let mut total = 0;
         let keep = plan
@@ -364,20 +381,26 @@ async fn rewrite<H: Host>(
     out.finish().await
 }
 
-/// One input of a compaction: its row groups read one at a time.
+/// One input of a compaction, read a window of rows at a time: with an offset index (Timelake
+/// writes one), only the pages covering the window, one request per column; without, a row group.
 struct Input {
     path: String,
     size: u64,
     metadata: Arc<ParquetMetaData>,
     /// Sorted in the table's order (else read whole and sorted first).
     sorted: bool,
-    next_group: usize,
-    batches: std::vec::IntoIter<RecordBatch>,
+    /// The row group being read, and its next row.
+    group: usize,
+    row: usize,
+    /// Dictionary pages of the current row group, fetched once for all its windows.
+    dictionaries: Vec<(u64, Bytes)>,
+    batches: Batches,
 }
 
 impl Input {
     fn new(path: String, size: u64, metadata: Arc<ParquetMetaData>, sorted: bool) -> Self {
-        Self { path, size, metadata, sorted, next_group: 0, batches: Vec::new().into_iter() }
+        let batches: Batches = Box::new(std::iter::empty());
+        Self { path, size, metadata, sorted, group: 0, row: 0, dictionaries: vec![], batches }
     }
 
     /// The next batch, aligned to the table schema; `None` at the end.
@@ -389,58 +412,143 @@ impl Input {
     ) -> WriteResult<Option<RecordBatch>> {
         loop {
             if let Some(batch) = self.batches.next() {
-                return Ok(Some(align_batch(&batch, &table.schema)?));
+                return Ok(Some(align_batch(&batch?, &table.schema)?));
             }
             let groups = self.metadata.num_row_groups();
-            if self.next_group >= groups {
+            if self.group >= groups {
                 return Ok(None);
             }
-            if self.sorted {
-                let group = self.next_group..self.next_group + 1;
-                self.batches = read_row_groups(host, &self.path, self.size, &self.metadata, group).await?.into_iter();
-                self.next_group += 1;
-            } else {
+            if !self.sorted {
                 // Another engine's file: read it whole and sort it on its own.
                 let all = read_row_groups(host, &self.path, self.size, &self.metadata, 0..groups).await?;
-                let aligned = all.iter().map(|b| align_batch(b, &table.schema)).collect::<WriteResult<Vec<_>>>()?;
+                let aligned = all.map(|b| align_batch(&b?, &table.schema)).collect::<WriteResult<Vec<_>>>()?;
                 let sorted = stable_sort(&concat_batches(&table.schema, &aligned)?, order)?;
                 let n = sorted.num_rows();
                 let slices: Vec<_> =
                     (0..n).step_by(READ_BATCH_ROWS).map(|i| sorted.slice(i, READ_BATCH_ROWS.min(n - i))).collect();
-                self.batches = slices.into_iter();
-                self.next_group = groups;
+                self.batches = Box::new(slices.into_iter().map(Ok));
+                self.group = groups;
+                continue;
+            }
+            let rows = usize::try_from(self.metadata.row_group(self.group).num_rows()).unwrap_or(0);
+            if self.row >= rows {
+                (self.group, self.row) = (self.group + 1, 0);
+                self.dictionaries.clear();
+                continue;
+            }
+            if self.metadata.offset_index().is_none() {
+                let group = self.group..self.group + 1;
+                self.batches = read_row_groups(host, &self.path, self.size, &self.metadata, group).await?;
+                self.row = rows;
+                continue;
+            }
+            let end = (self.row + self.window_rows()).min(rows);
+            self.batches = self.read_window(host, self.row, end).await?;
+            self.row = end;
+        }
+    }
+
+    /// Rows per window: about `WINDOW_BYTES` of the row group's compressed data.
+    fn window_rows(&self) -> usize {
+        let g = self.metadata.row_group(self.group);
+        let (rows, bytes) = (g.num_rows().unsigned_abs(), g.compressed_size().unsigned_abs().max(1));
+        usize::try_from(rows.saturating_mul(WINDOW_BYTES) / bytes).unwrap_or(usize::MAX).max(READ_BATCH_ROWS)
+    }
+
+    /// Rows `start..end` of the current row group, from the pages that cover them.
+    async fn read_window<H: Host>(&mut self, host: &H, start: usize, end: usize) -> WriteResult<Batches> {
+        let group = self.metadata.row_group(self.group);
+        let rows = group.num_rows().unsigned_abs();
+        let Some(index) = self.metadata.offset_index().and_then(|i| i.get(self.group)) else {
+            return Err(crate::error::WriteError::Corrupt("offset index without the row group".into()));
+        };
+        let (mut ranges, mut dictionaries) = (vec![], vec![]);
+        for (column, offsets) in group.columns().iter().zip(index) {
+            let pages = offsets.page_locations();
+            let covering: Vec<_> = pages
+                .iter()
+                .enumerate()
+                .filter(|(i, p)| {
+                    let next = pages.get(i + 1).map_or(rows, |n| n.first_row_index.unsigned_abs());
+                    p.first_row_index.unsigned_abs() < end as u64 && next > start as u64
+                })
+                .map(|(_, p)| p)
+                .collect();
+            if let (Some(first), Some(last)) = (covering.first(), covering.last()) {
+                let from = first.offset.unsigned_abs();
+                ranges.push((
+                    from,
+                    last.offset.unsigned_abs() + u64::from(last.compressed_page_size.unsigned_abs()) - from,
+                ));
+            }
+            let chunk_start = column.byte_range().0;
+            if self.dictionaries.is_empty()
+                && let Some(first) = pages.first()
+                && first.offset.unsigned_abs() > chunk_start
+            {
+                dictionaries.push((chunk_start, first.offset.unsigned_abs() - chunk_start));
             }
         }
+        let path = self.path.as_str();
+        let fetch = |(from, len): (u64, u64)| async move {
+            Ok::<_, crate::error::WriteError>((from, Bytes::from(host.get_range(path, from, len).await?)))
+        };
+        let (pages, new_dictionaries) = futures_util::future::join(
+            futures_util::future::try_join_all(ranges.into_iter().map(fetch)),
+            futures_util::future::try_join_all(dictionaries.into_iter().map(fetch)),
+        )
+        .await;
+        self.dictionaries.extend(new_dictionaries?);
+        let mut parts = pages?;
+        parts.extend(self.dictionaries.iter().cloned());
+        let reader = Sparse { parts, file_len: self.size };
+        let options = ArrowReaderOptions::new().with_page_index_policy(PageIndexPolicy::Optional);
+        let metadata = ArrowReaderMetadata::try_new(Arc::clone(&self.metadata), options)?;
+        let selection = RowSelection::from(vec![RowSelector::skip(start), RowSelector::select(end - start)]);
+        let reader = ParquetRecordBatchReaderBuilder::new_with_metadata(reader, metadata)
+            .with_row_groups(vec![self.group])
+            .with_row_selection(selection)
+            .with_batch_size(READ_BATCH_ROWS)
+            .build()?;
+        Ok(Box::new(reader))
     }
 }
 
-/// Bytes of a file between `offset` and `offset + bytes.len()`, as a Parquet chunk reader.
-struct Window {
-    offset: u64,
-    bytes: Bytes,
+/// Byte ranges of a file that were fetched, as a Parquet chunk reader: reads must fall in one.
+struct Sparse {
+    parts: Vec<(u64, Bytes)>,
     file_len: u64,
 }
 
-impl Length for Window {
+impl Length for Sparse {
     fn len(&self) -> u64 {
         self.file_len
     }
 }
 
-impl ChunkReader for Window {
+impl ChunkReader for Sparse {
     type T = bytes::buf::Reader<Bytes>;
 
     fn get_read(&self, start: u64) -> Result<Self::T, ParquetError> {
-        let end = self.offset + self.bytes.len() as u64;
-        self.get_bytes(start, usize::try_from(end.saturating_sub(start)).unwrap_or(0)).map(bytes::Buf::reader)
+        let (offset, bytes) = self.part(start, 0)?;
+        let from = usize::try_from(start - offset).unwrap_or(0);
+        Ok(bytes::Buf::reader(bytes.slice(from..)))
     }
 
     fn get_bytes(&self, start: u64, length: usize) -> Result<Bytes, ParquetError> {
-        let from = start.checked_sub(self.offset).and_then(|s| usize::try_from(s).ok());
-        match from {
-            Some(from) if from + length <= self.bytes.len() => Ok(self.bytes.slice(from..from + length)),
-            _ => Err(ParquetError::General(format!("bytes {start}+{length} outside the window read"))),
-        }
+        let (offset, bytes) = self.part(start, length)?;
+        let from = usize::try_from(start - offset).unwrap_or(0);
+        Ok(bytes.slice(from..from + length))
+    }
+}
+
+impl Sparse {
+    fn part(&self, start: u64, length: usize) -> Result<(u64, &Bytes), ParquetError> {
+        self.parts
+            .iter()
+            .find(|(offset, bytes)| *offset <= start && start + length as u64 <= *offset + bytes.len() as u64)
+            .map(|(offset, bytes)| (*offset, bytes))
+            .ok_or_else(|| ParquetError::General(format!("bytes {start}+{length} were not fetched")))
     }
 }
 
@@ -451,28 +559,34 @@ async fn read_row_groups<H: Host>(
     file_len: u64,
     metadata: &Arc<ParquetMetaData>,
     groups: std::ops::Range<usize>,
-) -> WriteResult<Vec<RecordBatch>> {
+) -> WriteResult<Batches> {
     let ranges = groups.clone().flat_map(|g| {
         metadata.row_group(g).columns().iter().map(parquet::file::metadata::ColumnChunkMetaData::byte_range)
     });
     let (start, end) = ranges.fold((u64::MAX, 0), |(s, e), (off, len)| (s.min(off), e.max(off + len)));
     if start >= end {
-        return Ok(vec![]);
+        return Ok(Box::new(std::iter::empty()));
     }
     let bytes = Bytes::from(host.get_range(path, start, end - start).await?);
-    let window = Window { offset: start, bytes, file_len };
+    let reader = Sparse { parts: vec![(start, bytes)], file_len };
     let options = ArrowReaderOptions::new().with_page_index_policy(PageIndexPolicy::Skip);
     let reader_metadata = ArrowReaderMetadata::try_new(Arc::clone(metadata), options)?;
-    let reader = ParquetRecordBatchReaderBuilder::new_with_metadata(window, reader_metadata)
+    let reader = ParquetRecordBatchReaderBuilder::new_with_metadata(reader, reader_metadata)
         .with_row_groups(groups.collect())
         .with_batch_size(READ_BATCH_ROWS)
         .build()?;
-    Ok(reader.collect::<Result<Vec<_>, _>>()?)
+    // Decoded a batch at a time as the merge asks.
+    Ok(Box::new(reader))
 }
+
+/// Batches decoded on demand.
+type Batches = Box<dyn Iterator<Item = Result<RecordBatch, arrow_schema::ArrowError>>>;
 
 /// A footer as the head stores it.
 fn decode_footer(bytes: &[u8]) -> WriteResult<Arc<ParquetMetaData>> {
-    let reader = ParquetMetaDataReader::new().with_page_index_policy(PageIndexPolicy::Skip);
+    let reader = ParquetMetaDataReader::new()
+        .with_column_index_policy(PageIndexPolicy::Skip)
+        .with_offset_index_policy(PageIndexPolicy::Optional);
     Ok(Arc::new(reader.parse_and_finish(&Bytes::copy_from_slice(bytes))?))
 }
 
@@ -481,7 +595,9 @@ async fn read_footer<H: Host>(host: &H, path: &str, size: u64) -> WriteResult<Ar
     let mut want = FOOTER_PREFETCH.min(size);
     loop {
         let tail = Bytes::from(host.get_range(path, size - want, want).await?);
-        let mut reader = ParquetMetaDataReader::new().with_page_index_policy(PageIndexPolicy::Skip);
+        let mut reader = ParquetMetaDataReader::new()
+            .with_column_index_policy(PageIndexPolicy::Skip)
+            .with_offset_index_policy(PageIndexPolicy::Optional);
         match reader.try_parse_sized(&tail, size) {
             Ok(()) => return Ok(Arc::new(reader.finish()?)),
             Err(ParquetError::NeedMoreData(n)) if (n as u64) > want && (n as u64) <= size => want = n as u64,

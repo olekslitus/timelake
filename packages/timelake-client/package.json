@@ -14,7 +14,12 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
-    }
+    },
+    "./workers": {
+      "types": "./dist/workers.d.ts",
+      "default": "./dist/workers.js"
+    },
+    "./timelake.wasm": "./dist/wasm/timelake.wasm"
   },
   "files": [
     "dist"

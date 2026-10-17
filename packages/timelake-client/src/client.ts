@@ -1,0 +1,636 @@
+/**
+ * @timelake/client: read Timelake tables over HTTPS from the browser, Node, or serverless
+ * functions. A WebAssembly build of Timelake's reader parses Iceberg metadata, prunes files and
+ * row groups, and decodes Parquet; this package fetches only the byte ranges it asks for.
+ *
+ * ```ts
+ * import { z } from "zod"
+ * import { Lake } from "@timelake/client"
+ *
+ * const Reading = z.object({ time: z.coerce.date(), tags_id: z.number().int(), velocity: z.number().nullable() })
+ * const lake = new Lake("https://<store>.public.blob.vercel-storage.com/demo")
+ * const readings = lake.table("tsbs.readings", Reading)
+ * await readings.latest({ series: [1, 2, 3] })                  // newest row per truck
+ * await readings.range({ series: 7, from: "2026-01-03T12:00:00Z", to: "2026-01-03T13:00:00Z" })
+ * await readings.bucket({ series: 7, every: "1h", agg: { velocity: ["avg", "max"] } })
+ * ```
+ */
+
+import type { z } from "zod"
+
+import { ensureWasm } from "./init.js"
+import {
+  ParquetFile,
+  Query,
+  Table as WasmTable,
+  heapPeakBytes,
+  memoryBytes,
+  version as wasmVersion,
+} from "./wasm/timelake_wasm.js"
+
+export { initWasm } from "./init.js"
+export { memoryStore, r2Store, TableWriter } from "./writer.js"
+export type {
+  AppendReport,
+  AppendRowsOptions,
+  MaintainOptions,
+  MaintainReport,
+  R2BucketLike,
+  Store,
+  StoredObject,
+  Upload,
+} from "./writer.js"
+
+/** Bytes of memory the WebAssembly module has grown to: the peak of what reads and writes used so far. */
+export function wasmMemoryBytes(): number {
+  ensureWasm()
+  return memoryBytes()
+}
+
+/** The most heap bytes the WebAssembly module had in use at once so far (below {@link wasmMemoryBytes} by what the allocator keeps). */
+export function wasmHeapPeakBytes(): number {
+  ensureWasm()
+  return heapPeakBytes()
+}
+
+/** Version of the embedded WASM reader. */
+export function readerVersion(): string {
+  ensureWasm()
+  return wasmVersion()
+}
+
+// --- types -----------------------------------------------------------------------------------------
+
+export type Row = Record<string, unknown>
+export type Scalar = string | number
+/** Series filter: one value or a list for the (first) series key, or `{ column: value(s) }`. */
+export type SeriesFilter = Scalar | Scalar[] | Record<string, Scalar | Scalar[]>
+/** A point in time: Date, ISO string, or epoch milliseconds. */
+export type TimeInput = Date | string | number
+/** A duration: "30s", "10m", "1h", "1d", "1w", or milliseconds. */
+export type DurationInput = `${number}${"ms" | "s" | "m" | "h" | "d" | "w"}` | number
+export type AggOp = "count" | "sum" | "avg" | "min" | "max" | "first" | "last"
+export type AggMap = { readonly [column: string]: readonly AggOp[] }
+
+/** Output column names of an aggregation map: `velocity_avg`, …; `"*": ["count"]` is `count`. */
+export type AggKeys<A extends AggMap> = {
+  [C in keyof A & string]: C extends "*" ? "count" : `${C}_${A[C][number]}`
+}[keyof A & string]
+
+export type BucketRow<A extends AggMap, By extends string = never> = { bucket: Date } & {
+  [K in AggKeys<A>]: number | null
+} & {
+  [K in By]: Scalar | null
+}
+
+/** The part of `fetch` the client uses. */
+export type Fetch = (url: string, init?: RequestInit) => Promise<Response>
+
+export interface LakeOptions {
+  /** fetch implementation (defaults to the global fetch). */
+  fetch?: Fetch
+  /** Maximum concurrent HTTP requests per query. Default 16. */
+  concurrency?: number
+  /** How long a loaded table version is reused, in ms. Default 5000. */
+  cacheMs?: number
+  /** Rewrite object URLs before fetching (e.g. when a warehouse was copied to a new host). */
+  rewriteUrl?: (url: string) => string
+}
+
+export interface SnapshotInfo {
+  id: string
+  timestampMs: number
+  operation: string
+  summary: Record<string, string>
+}
+
+export interface TableInfo {
+  name: string
+  location: string
+  formatVersion: number
+  schema: { id: number; name: string; type: string; required: boolean }[]
+  timeColumn: string | null
+  seriesKey: string[]
+  chunk: string | null
+  dedup: boolean
+  properties: Record<string, string>
+  currentSnapshot: SnapshotInfo | null
+  lastValueIndex: string | null
+  snapshotCount: number
+  /** Newest first, at most 50. */
+  snapshots: SnapshotInfo[]
+  lastUpdatedMs: number
+  /** Committed version (`vN.metadata.json`). */
+  version: number
+  /** Number of manifests in the current snapshot; `null` when the table was read from its head. */
+  manifests: number | null
+  /** Live data files; `partition` is the time partition (hours, days or months since the epoch). */
+  files: { path: string; size: number; records: number; partition: number | null }[]
+}
+
+export interface RangeOptions {
+  series?: SeriesFilter
+  from?: TimeInput
+  to?: TimeInput
+  columns?: string[]
+  limit?: number
+  order?: "asc" | "desc"
+}
+
+export interface BucketOptions<A extends AggMap, By extends string> {
+  series?: SeriesFilter
+  from?: TimeInput
+  to?: TimeInput
+  every: DurationInput
+  /** A bucket boundary; buckets are aligned to it (default: the Unix epoch). */
+  origin?: TimeInput
+  agg: A
+  /** Also group by these columns (e.g. the series key) instead of merging series. */
+  by?: readonly By[]
+}
+
+/** Request statistics of the last query on a table handle. */
+export interface QueryStats {
+  requests: number
+  bytes: number
+  files: number
+  ms: number
+}
+
+// --- helpers ---------------------------------------------------------------------------------------
+
+const DEFAULT_CONCURRENCY = 16
+const DEFAULT_CACHE_MS = 5000
+/** Bytes read from the end of a data file first: holds the whole footer of typical files. */
+const FOOTER_PREFETCH = 64 * 1024
+
+function micros(t: TimeInput): number {
+  const ms = t instanceof Date ? t.getTime() : typeof t === "number" ? t : Date.parse(t)
+  if (!Number.isFinite(ms)) throw new Error(`invalid time: ${String(t)}`)
+  return Math.round(ms * 1000)
+}
+
+const optionalMicros = (t: TimeInput | undefined) => (t === undefined ? undefined : micros(t))
+
+const UNIT_MS = { ms: 1, s: 1e3, m: 60e3, h: 3600e3, d: 86400e3, w: 604800e3 } as const
+
+function durationMicros(d: DurationInput): number {
+  if (typeof d === "number") return Math.round(d * 1000)
+  const m = /^(\d+(?:\.\d+)?)(ms|s|m|h|d|w)$/.exec(d)
+  if (!m) throw new Error(`invalid duration: ${d} (use e.g. 10m, 1h, 1d)`)
+  return Math.round(Number(m[1]) * UNIT_MS[m[2] as keyof typeof UNIT_MS] * 1000)
+}
+
+const emptyStats = (): QueryStats => ({ requests: 0, bytes: 0, files: 0, ms: 0 })
+
+/** Runs at most `max` tasks at once, the rest in FIFO order. */
+class Limiter {
+  private active = 0
+  private queue: (() => void)[] = []
+  constructor(private max: number) {}
+  async run<T>(f: () => Promise<T>): Promise<T> {
+    if (this.active >= this.max) await new Promise<void>((r) => this.queue.push(r))
+    this.active++
+    try {
+      return await f()
+    } finally {
+      this.active--
+      this.queue.shift()?.()
+    }
+  }
+}
+
+/**
+ * The requests of one load or query: at most `concurrency` in flight, counted for `lastStats`.
+ * The limit applies to single requests only: a task waiting for its own requests must never
+ * hold a slot they need.
+ */
+class Requests {
+  readonly stats = emptyStats()
+  private limiter: Limiter
+
+  constructor(private lake: Lake) {
+    this.limiter = new Limiter(lake.options.concurrency)
+  }
+
+  /** The whole object, or bytes `[start, end)` of it. */
+  bytes(url: string, range?: [number, number]): Promise<Uint8Array> {
+    return this.limiter.run(async () => {
+      const init = range ? { headers: { Range: `bytes=${range[0]}-${range[1] - 1}` } } : undefined
+      const r = await this.lake.get(url, init)
+      let b = new Uint8Array(await r.arrayBuffer())
+      // Servers that ignore Range answer 200 with the whole object.
+      if (range && r.status === 200 && b.length > range[1] - range[0]) b = b.slice(range[0], range[1])
+      this.stats.requests++
+      this.stats.bytes += b.length
+      return b
+    })
+  }
+}
+
+/** Runs a query over one Parquet file held in memory (the last-value index). */
+function queryWholeFile(bytes: Uint8Array, spec: object): unknown[] {
+  const query = new Query(spec)
+  try {
+    const file = new ParquetFile(bytes.length, bytes)
+    try {
+      file.plan(spec)
+      file.addRange(0, bytes)
+      query.push(file)
+    } finally {
+      file.free()
+    }
+    return JSON.parse(query.finish()) as unknown[]
+  } finally {
+    query.free()
+  }
+}
+
+// --- Lake ------------------------------------------------------------------------------------------
+
+/** A Timelake warehouse served over HTTP(S): Vercel Blob, S3/R2/GCS public URLs, a CDN, … */
+export class Lake {
+  readonly url: string
+  readonly options: Required<Omit<LakeOptions, "rewriteUrl">> & Pick<LakeOptions, "rewriteUrl">
+
+  constructor(url: string, options: LakeOptions = {}) {
+    // Not /\/+$/: on a URL with many slashes that regex backtracks in quadratic time.
+    let end = url.length
+    while (end > 0 && url[end - 1] === "/") end--
+    this.url = url.slice(0, end)
+    this.options = {
+      fetch: options.fetch ?? ((target, init) => globalThis.fetch(target, init)),
+      concurrency: options.concurrency ?? DEFAULT_CONCURRENCY,
+      cacheMs: options.cacheMs ?? DEFAULT_CACHE_MS,
+      rewriteUrl: options.rewriteUrl,
+    }
+  }
+
+  /** Table names (`namespace.table`) from the warehouse's `timelake-tables.json`. */
+  async tables(): Promise<string[]> {
+    return (await (await this.get(`${this.url}/timelake-tables.json`)).json()) as string[]
+  }
+
+  /**
+   * A table handle. Pass a Zod schema to validate and type rows (use `z.coerce.date()` for time
+   * columns; values arrive as ISO strings). Without one, rows are `Record<string, unknown>`.
+   */
+  table<S extends z.ZodType = z.ZodType<Row>>(name: string, schema?: S): TableHandle<z.output<S>> {
+    return new TableHandle(this, name, schema)
+  }
+
+  /**
+   * GETs `url` (after `rewriteUrl`). Throws on HTTP errors, except that a 404 returns `undefined`
+   * when `optional` is set.
+   * @internal
+   */
+  async get(url: string, init?: RequestInit): Promise<Response>
+  async get(url: string, init: RequestInit | undefined, optional: true): Promise<Response | undefined>
+  async get(url: string, init?: RequestInit, optional = false): Promise<Response | undefined> {
+    const target = this.options.rewriteUrl?.(url) ?? url
+    const r = await this.options.fetch(target, init)
+    if (optional && r.status === 404) return undefined
+    if (!r.ok) throw new Error(`GET ${target}: HTTP ${r.status}`)
+    return r
+  }
+}
+
+type Loaded = {
+  wasm: WasmTable
+  info: Omit<TableInfo, "files" | "name" | "version" | "manifests">
+  files: TableInfo["files"]
+  version: number
+  manifests: number | null
+  /** Resolves to true if a newer version than `version` existed when it was loaded. */
+  stale: Promise<boolean>
+}
+
+/** One table of a {@link Lake}; rows are typed `T` (validated when a Zod schema was given). */
+export class TableHandle<T = Row> {
+  private loaded: Promise<Loaded> | null = null
+  private loadedAt = 0
+  /** Statistics of the last query. */
+  lastStats: QueryStats = emptyStats()
+
+  constructor(
+    readonly lake: Lake,
+    readonly name: string,
+    private schema?: z.ZodType,
+  ) {
+    if (!/^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)?$/.test(name)) throw new Error(`invalid table name: ${name}`)
+  }
+
+  private get location(): string {
+    const [ns, t] = this.name.includes(".") ? this.name.split(".") : ["default", this.name]
+    return `${this.lake.url}/${ns}/${t}`
+  }
+
+  /**
+   * Loads (or reuses) the current table version. A version loaded earlier is reused within
+   * `cacheMs`, and after that while no newer one exists (checked as the next query runs).
+   */
+  private load(): Promise<Loaded> {
+    if (this.loaded && Date.now() - this.loadedAt < this.lake.options.cacheMs) return this.loaded
+    const previous = this.loaded
+    return this.keep(
+      previous ? previous.then((l) => ({ ...l, stale: this.newerExists(l.version) })) : this.fetchVersion(),
+    )
+  }
+
+  /** Loads version `version` or a newer one through the metadata chain, skipping the head. */
+  private reload(version: number): Promise<Loaded> {
+    return this.keep(this.fetchVersion(version))
+  }
+
+  /** Makes `loaded` the version later calls reuse. */
+  private keep(loaded: Promise<Loaded>): Promise<Loaded> {
+    this.loadedAt = Date.now()
+    loaded.catch(() => {
+      if (this.loaded === loaded) this.loaded = null
+    })
+    this.loaded = loaded
+    return loaded
+  }
+
+  /** Whether a version after `version` exists (one HEAD request). */
+  private async newerExists(version: number): Promise<boolean> {
+    const next = `${this.location}/metadata/v${version + 1}.metadata.json`
+    return (await this.lake.get(next, { method: "HEAD" }, true)) !== undefined
+  }
+
+  /**
+   * Loads the current version: from the table's head object (`metadata/timelake-head`: metadata,
+   * files, and when they fit the last-value index and file footers) when it has one, checked for
+   * a newer version while the first query runs; otherwise through the version hint, metadata,
+   * manifest list and manifests. With `atLeast`, skips the head and reads that version or a newer one.
+   */
+  private async fetchVersion(atLeast?: number): Promise<Loaded> {
+    ensureWasm()
+    const metadata = `${this.location}/metadata`
+    if (atLeast !== undefined) return this.fromMetadata(atLeast)
+    const [head, hintResponse] = await Promise.all([
+      this.lake.get(`${metadata}/timelake-head`, undefined, true),
+      this.lake.get(`${metadata}/version-hint.text`, undefined, true),
+    ])
+    const hint = hintResponse ? (await hintResponse.text()).trim() : undefined
+    const hinted = hint === undefined ? undefined : Number(hint)
+    if (hinted !== undefined && !Number.isInteger(hinted)) {
+      throw new Error(`${this.name}: bad version hint ${JSON.stringify(hint)}`)
+    }
+    if (head) {
+      const loaded = this.fromHead(new Uint8Array(await head.arrayBuffer()), hinted)
+      if (loaded) return loaded
+    }
+    if (hinted === undefined) throw new Error(`${this.name}: table not found (no head or version hint)`)
+    return this.fromMetadata(hinted)
+  }
+
+  /** Version `hinted` or the one after it, through the metadata, manifest list and manifests. */
+  private async fromMetadata(hinted: number): Promise<Loaded> {
+    const metadata = `${this.location}/metadata`
+    // The hint is written after each commit, so it may lag one version behind.
+    const [current, next] = await Promise.all([
+      this.lake.get(`${metadata}/v${hinted}.metadata.json`),
+      this.lake.get(`${metadata}/v${hinted + 1}.metadata.json`, undefined, true),
+    ])
+    if (next) void current.body?.cancel()
+    const version = next ? hinted + 1 : hinted
+    const wasm = new WasmTable(await (next ?? current).text())
+    const requests = new Requests(this.lake)
+    let manifests: string[] = []
+    if (wasm.manifestList) {
+      manifests = wasm.addManifestList(await requests.bytes(wasm.manifestList))
+      for (const bytes of await Promise.all(manifests.map((path) => requests.bytes(path)))) wasm.addManifest(bytes)
+    }
+    return {
+      wasm,
+      info: wasm.info() as Loaded["info"],
+      files: wasm.files() as TableInfo["files"],
+      version,
+      manifests: manifests.length,
+      stale: Promise.resolve(false),
+    }
+  }
+
+  /** The version a head describes; `undefined` if it can't be read here or the hint is newer. */
+  private fromHead(bytes: Uint8Array, hinted: number | undefined): Loaded | undefined {
+    let wasm: WasmTable
+    try {
+      wasm = WasmTable.fromHead(bytes)
+    } catch {
+      return undefined // a format or layout this reader doesn't know
+    }
+    const version = wasm.version
+    if (version === undefined || (hinted !== undefined && hinted > version)) {
+      wasm.free()
+      return undefined
+    }
+    return {
+      wasm,
+      info: wasm.info() as Loaded["info"],
+      files: wasm.files() as TableInfo["files"],
+      version,
+      manifests: null,
+      stale: this.newerExists(version),
+    }
+  }
+
+  /** Drops the cached table version; the next call loads the latest commit. */
+  refresh(): this {
+    this.loaded = null
+    return this
+  }
+
+  /** Contract, schema, snapshot and live files of the current version. */
+  async info(): Promise<TableInfo> {
+    const l = await this.current()
+    return { name: this.name, ...l.info, version: l.version, manifests: l.manifests, files: l.files }
+  }
+
+  /** The current version, after its check for a newer one. */
+  private async current(): Promise<Loaded> {
+    const l = await this.load()
+    return (await l.stale) ? this.reload(l.version + 1) : l
+  }
+
+  /**
+   * Runs `query` on the loaded version while the check for a newer version is in flight. If the
+   * version turns out outdated, its result is dropped and the query runs on the current version.
+   */
+  private async run<R>(query: (l: Loaded, requests: Requests) => Promise<R>): Promise<R> {
+    const l = await this.load()
+    const [result, stale] = await Promise.allSettled([this.measure((r) => query(l, r)), l.stale])
+    if (stale.status === "rejected") throw stale.reason
+    if (!stale.value) {
+      if (result.status === "rejected") throw result.reason
+      return result.value
+    }
+    const current = await this.reload(l.version + 1)
+    return this.measure((r) => query(current, r))
+  }
+
+  private seriesSpec(info: Loaded["info"], series?: SeriesFilter): Record<string, Scalar[]> {
+    if (series === undefined) return {}
+    if (typeof series === "object" && !Array.isArray(series)) {
+      return Object.fromEntries(Object.entries(series).map(([k, v]) => [k, Array.isArray(v) ? v : [v]]))
+    }
+    const key = info.seriesKey[0]
+    if (!key) throw new Error(`${this.name} has no series key; pass { column: value } instead`)
+    return { [key]: Array.isArray(series) ? series : [series] }
+  }
+
+  /** Runs `query` with fresh request statistics, which become `lastStats` when it succeeds. */
+  private async measure<R>(query: (requests: Requests) => Promise<R>): Promise<R> {
+    const t0 = performance.now()
+    const requests = new Requests(this.lake)
+    const result = await query(requests)
+    this.lastStats = { ...requests.stats, ms: performance.now() - t0 }
+    return result
+  }
+
+  /** Runs a query spec over the files that may match it. */
+  private async scan(wasm: WasmTable, spec: object, requests: Requests): Promise<unknown[]> {
+    const files = wasm.planFiles(spec) as TableInfo["files"]
+    const query = new Query(spec)
+    try {
+      // Fetch files concurrently, decode in order (decoding is synchronous WASM work).
+      const opened = await Promise.all(
+        files.map(async ({ path, size }) => {
+          let file = wasm.openFile(path, size)
+          if (!file) {
+            let tail = await requests.bytes(path, [Math.max(0, size - FOOTER_PREFETCH), size])
+            const footer = ParquetFile.footerLength(tail)
+            if (footer > tail.length) tail = await requests.bytes(path, [size - footer, size])
+            file = new ParquetFile(size, tail)
+          }
+          const ranges = file.plan(spec) as [number, number][]
+          const chunks = await Promise.all(ranges.map((r) => requests.bytes(path, r)))
+          ranges.forEach(([start], i) => file.addRange(start, chunks[i] as Uint8Array))
+          return file
+        }),
+      )
+      for (const file of opened) {
+        try {
+          query.push(file)
+        } finally {
+          file.free()
+        }
+      }
+      requests.stats.files = files.length
+      return JSON.parse(query.finish()) as unknown[]
+    } finally {
+      query.free()
+    }
+  }
+
+  private validate(rows: unknown[], columns?: string[]): T[] {
+    if (!this.schema) return rows as T[]
+    let schema = this.schema
+    // A projection returns some columns only: validate against the matching part of the schema.
+    const pick = (schema as unknown as { pick?: (m: Record<string, true>) => z.ZodType }).pick
+    if (columns?.length && typeof pick === "function") {
+      schema = pick.call(schema, Object.fromEntries(columns.map((c) => [c, true as const])))
+    }
+    return rows.map((r) => schema.parse(r) as T)
+  }
+
+  /**
+   * The newest row of each series, from the table's last-value index (one small file). Tables
+   * without the index (e.g. written by another Iceberg writer) are scanned instead.
+   */
+  async latest<C extends keyof T & string>(opts: { series?: SeriesFilter; columns: C[] }): Promise<Pick<T, C>[]>
+  async latest(opts?: { series?: SeriesFilter; columns?: string[] }): Promise<T[]>
+  async latest(opts: { series?: SeriesFilter; columns?: string[] } = {}): Promise<T[]> {
+    const rows = await this.run(async ({ wasm, info }, requests) => {
+      if (!info.timeColumn) throw new Error(`${this.name} has no time column, so no latest rows`)
+      const spec = {
+        timeColumn: info.timeColumn,
+        series: this.seriesSpec(info, opts.series),
+        columns: opts.columns ?? [],
+      }
+      const index = info.lastValueIndex
+      if (!index) return this.scan(wasm, { ...spec, latestBy: info.seriesKey }, requests)
+      requests.stats.files = 1
+      // The index came with the head, or it is one small file.
+      const inline = wasm.queryLastValues(spec)
+      if (inline !== undefined) return JSON.parse(inline) as unknown[]
+      return queryWholeFile(await requests.bytes(index), spec)
+    })
+    return this.validate(rows, opts.columns)
+  }
+
+  /** Rows of the selected series in `[from, to)`, ordered by time. */
+  async range<C extends keyof T & string>(opts: RangeOptions & { columns: C[] }): Promise<Pick<T, C>[]>
+  async range(opts?: RangeOptions): Promise<T[]>
+  async range(opts: RangeOptions = {}): Promise<T[]> {
+    const rows = await this.run(({ wasm, info }, requests) => {
+      const spec = {
+        timeColumn: info.timeColumn,
+        series: this.seriesSpec(info, opts.series),
+        from: optionalMicros(opts.from),
+        to: optionalMicros(opts.to),
+        columns: opts.columns ?? [],
+        limit: opts.limit,
+        descending: opts.order === "desc",
+      }
+      return this.scan(wasm, spec, requests)
+    })
+    return this.validate(rows, opts.columns)
+  }
+
+  /** Time-bucketed aggregates, e.g. `{ every: "1h", agg: { velocity: ["avg", "max"] } }`. */
+  async bucket<A extends AggMap, By extends string = never>(opts: BucketOptions<A, By>): Promise<BucketRow<A, By>[]> {
+    const aggs = Object.entries(opts.agg).flatMap(([column, ops]) => ops.map((op) => ({ column, op })))
+    const rows = (await this.run(({ wasm, info }, requests) => {
+      if (!info.timeColumn) throw new Error(`${this.name} has no time column`)
+      const spec = {
+        timeColumn: info.timeColumn,
+        series: this.seriesSpec(info, opts.series),
+        from: optionalMicros(opts.from),
+        to: optionalMicros(opts.to),
+        bucket: {
+          every: durationMicros(opts.every),
+          origin: optionalMicros(opts.origin),
+          by: [...(opts.by ?? [])],
+          aggs,
+        },
+      }
+      return this.scan(wasm, spec, requests)
+    })) as (Row & { bucket: string })[]
+    return rows.map((r) => ({ ...r, bucket: new Date(r.bucket) })) as unknown as BucketRow<A, By>[]
+  }
+
+  /** TypeScript source of a Zod schema for this table's rows (paste it into your code). */
+  async zodSource(exportName?: string): Promise<string> {
+    return zodSource(await this.info(), exportName)
+  }
+}
+
+// --- Zod helpers -------------------------------------------------------------------------------------
+
+function zodType(icebergType: string): string {
+  if (icebergType.startsWith("timestamp")) return "z.coerce.date()"
+  switch (icebergType) {
+    case "int":
+    case "long":
+      return "z.number().int()"
+    case "float":
+    case "double":
+      return "z.number()"
+    case "boolean":
+      return "z.boolean()"
+    default:
+      return "z.string()"
+  }
+}
+
+/** Zod schema source for a table's rows (time columns coerce ISO strings to `Date`). */
+export function zodSource(info: Pick<TableInfo, "name" | "schema">, exportName?: string): string {
+  const table = info.name.split(".").at(-1) ?? info.name
+  const name = exportName ?? table.replace(/(^|[_-])(\w)/g, (_, __, c: string) => c.toUpperCase()).replace(/s$/, "")
+  const fields = info.schema.map(
+    (f) =>
+      `  ${/^[A-Za-z_]\w*$/.test(f.name) ? f.name : JSON.stringify(f.name)}: ${zodType(f.type)}${f.required ? "" : ".nullable()"},`,
+  )
+  return `export const ${name} = z.object({\n${fields.join("\n")}\n})\nexport type ${name} = z.infer<typeof ${name}>\n`
+}

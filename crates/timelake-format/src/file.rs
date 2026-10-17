@@ -29,22 +29,31 @@ use crate::Contract;
 /// ZSTD level for data files: fast to write, close to the best ratio.
 pub const ZSTD_LEVEL: i32 = 3;
 
+/// Rows encoded between checks of a row group's size against its byte cap.
+const BYTE_CHECK_ROWS: usize = 8 * 1024;
+
 /// Rows below which a batch's columns are encoded on one thread: threads cost more than they save.
 #[cfg(not(target_arch = "wasm32"))]
 const PARALLEL_MIN_ROWS: usize = 8 * 1024;
 
+/// Rows per data page when the table doesn't set `data-page-rows`: Parquet's own default.
+pub const DATA_PAGE_ROWS: usize = 20_000;
+
 /// Parquet settings for a table's data files: ZSTD, page statistics and page index (for row-group
-/// and page pruning), delta encoding for the time column, byte-stream-split for floats, dictionary
-/// encoding for everything else (series keys, tags), and the sort order recorded.
+/// and page pruning), delta encoding for the time column, byte-stream-split for floats,
+/// dictionary encoding for everything else (series keys, tags), and the sort order recorded.
+/// Pages hold the table's `data-page-rows`, else `default_page_rows`.
 pub fn writer_properties(
     schema: &SchemaRef,
     contract: &Contract,
     created_by: &str,
+    default_page_rows: usize,
 ) -> Result<WriterProperties, ParquetError> {
     let mut b = WriterProperties::builder()
         .set_compression(Compression::ZSTD(ZstdLevel::try_new(ZSTD_LEVEL)?))
         .set_max_row_group_row_count(Some(contract.row_group_rows))
         .set_statistics_enabled(EnabledStatistics::Page)
+        .set_data_page_row_count_limit(contract.data_page_rows.unwrap_or(default_page_rows).max(1))
         .set_created_by(created_by.to_string());
     for f in schema.fields() {
         let path = ColumnPath::from(f.name().as_str());
@@ -79,17 +88,23 @@ pub fn writer_properties(
 
 /// Bytes written and not yet taken by the caller.
 #[derive(Clone, Debug, Default)]
-struct Buffer(Arc<Mutex<Vec<u8>>>);
+struct Buffer(Arc<Mutex<Vec<Vec<u8>>>>);
 
 impl Buffer {
-    fn take(&self) -> Vec<u8> {
+    /// The chunks written, in order: kept apart rather than in one growing buffer, which on
+    /// WebAssembly leaves memory the allocator can't reuse.
+    fn take(&self) -> Vec<Vec<u8>> {
         std::mem::take(&mut *self.0.lock().unwrap_or_else(PoisonError::into_inner))
+    }
+
+    fn len(&self) -> usize {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner).iter().map(Vec::len).sum()
     }
 }
 
 impl Write for Buffer {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap_or_else(PoisonError::into_inner).extend_from_slice(buf);
+        self.0.lock().unwrap_or_else(PoisonError::into_inner).push(buf.to_vec());
         Ok(buf.len())
     }
 
@@ -110,6 +125,8 @@ pub struct FileWriter {
     columns: Option<Vec<ArrowColumnWriter>>,
     rows_in_group: usize,
     row_group_rows: usize,
+    /// Flush a row group once its encoded columns hold this many bytes, before `row_group_rows`.
+    max_group_bytes: Option<usize>,
     /// Bytes taken by the caller so far.
     taken: u64,
     /// NaN counts of float columns, by field id.
@@ -148,11 +165,20 @@ impl FileWriter {
             columns: None,
             rows_in_group: 0,
             row_group_rows,
+            max_group_bytes: None,
             taken: 0,
             nan_counts: BTreeMap::new(),
             field_ids,
             parallel: cfg!(not(target_arch = "wasm32")),
         })
+    }
+
+    /// Ends row groups once their encoded columns hold `bytes`, even before the row count, to
+    /// bound memory where it is scarce (128 MB in a Cloudflare Worker).
+    #[must_use]
+    pub fn with_max_row_group_bytes(mut self, bytes: Option<usize>) -> Self {
+        self.max_group_bytes = bytes;
+        self
     }
 
     /// Encodes the columns on one thread (as on WebAssembly), for measuring.
@@ -168,12 +194,15 @@ impl FileWriter {
             return Err(ParquetError::General("batch schema differs from the file's".into()));
         }
         self.count_nans(batch);
+        // With a byte cap, encode in slices small enough to notice when the group is full.
+        let step = if self.max_group_bytes.is_some() { BYTE_CHECK_ROWS } else { usize::MAX };
         let mut offset = 0;
         while offset < batch.num_rows() {
-            let n = (self.row_group_rows - self.rows_in_group).min(batch.num_rows() - offset);
+            let n = (self.row_group_rows - self.rows_in_group).min(batch.num_rows() - offset).min(step);
             self.encode(&batch.slice(offset, n))?;
             offset += n;
-            if self.rows_in_group == self.row_group_rows {
+            let full = self.max_group_bytes.is_some_and(|max| self.group_memory() >= max);
+            if self.rows_in_group == self.row_group_rows || full {
                 self.flush_row_group()?;
             }
         }
@@ -182,9 +211,14 @@ impl FileWriter {
 
     /// The bytes encoded since the last call, to be uploaded in order.
     pub fn take(&mut self) -> Vec<u8> {
-        let bytes = self.buffer.take();
-        self.taken += bytes.len() as u64;
-        bytes
+        self.take_chunks().concat()
+    }
+
+    /// Like [`FileWriter::take`], as the chunks written (no copy into one buffer).
+    pub fn take_chunks(&mut self) -> Vec<Vec<u8>> {
+        let chunks = self.buffer.take();
+        self.taken += chunks.iter().map(Vec::len).sum::<usize>() as u64;
+        chunks
     }
 
     /// Bytes the file has so far, including the open row group's estimated size.
@@ -193,19 +227,29 @@ impl FileWriter {
         self.writer.bytes_written() as u64 + open as u64
     }
 
+    fn group_memory(&self) -> usize {
+        self.columns.iter().flatten().map(ArrowColumnWriter::memory_size).sum()
+    }
+
     /// Memory the writer holds: the open row group and bytes not yet taken.
     pub fn memory_size(&self) -> usize {
         let open: usize = self.columns.iter().flatten().map(ArrowColumnWriter::memory_size).sum();
-        open + self.buffer.0.lock().unwrap_or_else(PoisonError::into_inner).len()
+        open + self.buffer.len()
     }
 
     /// Finishes the file: the last bytes to upload, and the file's statistics.
-    pub fn finish(mut self) -> Result<(Vec<u8>, FileStats), ParquetError> {
+    pub fn finish(self) -> Result<(Vec<u8>, FileStats), ParquetError> {
+        let (rest, stats) = self.finish_chunks()?;
+        Ok((rest.concat(), stats))
+    }
+
+    /// Like [`FileWriter::finish`], with the last bytes as the chunks written.
+    pub fn finish_chunks(mut self) -> Result<(Vec<Vec<u8>>, FileStats), ParquetError> {
         if self.rows_in_group > 0 {
             self.flush_row_group()?;
         }
         let metadata = self.writer.finish()?;
-        let rest = self.take();
+        let rest = self.take_chunks();
         let stats = FileStats::new(&metadata, self.taken, std::mem::take(&mut self.nan_counts));
         Ok((rest, FileStats { metadata: Arc::new(metadata), ..stats }))
     }
@@ -487,7 +531,7 @@ mod tests {
             ("timelake.row-group-rows".to_string(), rows.to_string()),
         ]))
         .unwrap();
-        writer_properties(&schema(), &contract, "test").unwrap()
+        writer_properties(&schema(), &contract, "test", DATA_PAGE_ROWS).unwrap()
     }
 
     fn write(parallel: bool, rows: usize) -> (Vec<u8>, FileStats) {

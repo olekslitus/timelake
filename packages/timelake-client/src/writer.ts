@@ -216,9 +216,10 @@ function rootOf(warehouse: string): string {
   return m[1]
 }
 
-/** JSON for rows: Dates as ISO strings (as JSON does), bigints as numbers. */
+/** Rows as newline-delimited JSON: Dates as ISO strings (as JSON does), bigints as numbers. */
 function rowsJson(rows: readonly Record<string, unknown>[]): string {
-  return JSON.stringify(rows, (_, v: unknown) => (typeof v === "bigint" ? Number(v) : v))
+  const replacer = (_: string, v: unknown) => (typeof v === "bigint" ? Number(v) : v)
+  return rows.map((r) => JSON.stringify(r, replacer)).join("\n")
 }
 
 /**

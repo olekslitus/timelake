@@ -83,6 +83,53 @@ pub fn version() -> String {
     env!("CARGO_PKG_VERSION").into()
 }
 
+/// Counts heap bytes in use and their peak, to tell the heap's own size from the memory the
+/// allocator has grown to (which never shrinks).
+struct Counting;
+
+static HEAP: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static HEAP_PEAK: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+#[expect(unsafe_code, reason = "a global allocator wraps the system one")]
+unsafe impl std::alloc::GlobalAlloc for Counting {
+    unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
+        use std::sync::atomic::Ordering::Relaxed;
+        let now = HEAP.fetch_add(layout.size(), Relaxed) + layout.size();
+        HEAP_PEAK.fetch_max(now, Relaxed);
+        // SAFETY: the caller's contract is passed on unchanged.
+        unsafe { std::alloc::System.alloc(layout) }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
+        HEAP.fetch_sub(layout.size(), std::sync::atomic::Ordering::Relaxed);
+        // SAFETY: the caller's contract is passed on unchanged.
+        unsafe { std::alloc::System.dealloc(ptr, layout) }
+    }
+}
+
+#[global_allocator]
+static ALLOCATOR: Counting = Counting;
+
+/// The most heap bytes in use at once so far.
+#[wasm_bindgen(js_name = heapPeakBytes)]
+pub fn heap_peak_bytes() -> f64 {
+    #[expect(clippy::cast_precision_loss, reason = "far below 2^53")]
+    let peak = HEAP_PEAK.load(std::sync::atomic::Ordering::Relaxed) as f64;
+    peak
+}
+
+/// Bytes of WebAssembly memory the module has grown to. It never shrinks, so this is the peak of
+/// everything the reader and writer did so far (what counts against a Worker's memory limit, with
+/// the JavaScript heap).
+#[wasm_bindgen(js_name = memoryBytes)]
+pub fn memory_bytes() -> f64 {
+    #[cfg(target_arch = "wasm32")]
+    #[expect(clippy::cast_precision_loss, reason = "far below 2^53")]
+    return (core::arch::wasm32::memory_size(0) * 65_536) as f64;
+    #[cfg(not(target_arch = "wasm32"))]
+    0.0
+}
+
 /// A data file as JavaScript sees it.
 #[derive(Serialize)]
 struct FileView<'a> {

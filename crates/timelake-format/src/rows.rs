@@ -202,6 +202,26 @@ pub fn latest_per_series(
     Ok(Some(last_per_group(&sorted, &contract.series_key)?))
 }
 
+/// Newest row per series among partitions that [`sort_and_split`] returned: each is sorted by the
+/// write order, so its last row per series is its newest, and only those few rows are sorted to
+/// pick the newest across partitions. The same rows as [`latest_per_series`] of the partitions,
+/// without sorting the whole append again.
+pub fn latest_of_sorted(
+    schema: &SchemaRef,
+    contract: &Contract,
+    partitions: &[PartitionRows],
+) -> WriteResult<Option<RecordBatch>> {
+    if contract.time_column.is_none() {
+        return Ok(None);
+    }
+    let lasts = partitions
+        .iter()
+        .filter(|(_, rows)| rows.num_rows() > 0)
+        .map(|(_, rows)| last_per_group(rows, &contract.series_key))
+        .collect::<WriteResult<Vec<_>>>()?;
+    latest_per_series(schema, contract, &lasts)
+}
+
 fn too_many_rows(rows: usize) -> WriteError {
     WriteError::invalid(format!("{rows} rows are too many to sort at once"))
 }
@@ -241,6 +261,46 @@ mod tests {
         let b = batch(&[Some(1), Some(2)], &["a", "b"]);
         assert_eq!(tags(&stable_sort(&b, &[]).unwrap()), ["a", "b"]);
         assert_eq!(tags(&last_per_group(&b, &[]).unwrap()), ["b"]);
+    }
+
+    /// The newest row per series from sorted partitions is what sorting everything gives.
+    #[test]
+    fn latest_of_sorted_partitions_matches_sorting_everything() {
+        use std::collections::HashMap;
+
+        use arrow_array::{Float64Array, TimestampMicrosecondArray};
+
+        const DAY: i64 = 86_400_000_000;
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("time", DataType::Timestamp(arrow_schema::TimeUnit::Microsecond, Some(UTC.into())), false),
+            Field::new("device", DataType::Int32, true),
+            Field::new("value", DataType::Float64, true),
+        ]));
+        let contract = Contract::from_properties(&HashMap::from([
+            (crate::property::TIME_COLUMN.to_string(), "time".to_string()),
+            (crate::property::SERIES_KEY.to_string(), "device".to_string()),
+            (crate::property::CHUNK.to_string(), "day".to_string()),
+        ]))
+        .unwrap();
+        let rows: Vec<(i64, i32, f64)> = (0..200)
+            .map(|i| {
+                ((i * 7919) % 5 * DAY + i % 13, i32::try_from(i % 6).unwrap(), f64::from(i32::try_from(i).unwrap()))
+            })
+            .collect();
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(TimestampMicrosecondArray::from_iter_values(rows.iter().map(|r| r.0)).with_timezone(UTC)),
+                Arc::new(Int32Array::from_iter_values(rows.iter().map(|r| r.1))),
+                Arc::new(Float64Array::from_iter_values(rows.iter().map(|r| r.2))),
+            ],
+        )
+        .unwrap();
+        let partitions = sort_and_split(&schema, &contract, &[batch], 0).unwrap();
+        assert!(partitions.len() > 1);
+        let all: Vec<RecordBatch> = partitions.iter().map(|(_, b)| b.clone()).collect();
+        let expected = latest_per_series(&schema, &contract, &all).unwrap();
+        assert_eq!(latest_of_sorted(&schema, &contract, &partitions).unwrap(), expected);
     }
 
     #[test]

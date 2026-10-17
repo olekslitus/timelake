@@ -253,6 +253,18 @@
   },
   {
     "default": {
+      "derived": "20,000; 8,192 when written from WebAssembly"
+    },
+    "description": "Rows per Parquet data page in the files written. Smaller pages make compaction from a Worker use less memory (it holds a page per column of each file it merges: 8,192 rows peaked at 77 MiB merging 24 TSBS files, 20,000 at 123 MiB) and page pruning finer, at a few percent more bytes (TSBS: +3.6%) and slower scans below about 8,000 rows.",
+    "kind": "count",
+    "levels": ["table"],
+    "name": "data-page-rows",
+    "property": "timelake.data-page-rows",
+    "since": "0.6.0",
+    "sql": "timelake.data_page_rows"
+  },
+  {
+    "default": {
       "value": "1s"
     },
     "description": "The Timelake reader uses a table version it loaded or checked this long before checking for a newer one, so queries in that time send no request for it and can miss commits by other processes. `0s` checks on every query. This process's own commits are seen at once, and writers always check.",

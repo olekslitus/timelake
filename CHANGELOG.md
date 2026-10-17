@@ -16,7 +16,11 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
   index and head. Rows are objects or an Arrow IPC stream; `batchId` makes retries safe. Appends run inline
   maintenance like the engine's (size-tier and cold-partition compaction by streaming merge, within `maxCompactBytes`,
   default 64 MiB; retention; snapshot expiry), and `writer.maintain()` runs a full pass. Tables are created with
-  the CLI or Python (SPEC §21.10).
+  the CLI or Python (SPEC §21.10). In Cloudflare Workers, import from `@timelake/client/workers` and pass the
+  module from `@timelake/client/timelake.wasm` to `initWasm`. Measured in workerd: an append of 100,000 rows takes
+  0.7 s and 37 MiB, compaction of a day of 24 files 2.7 s and 95 MiB (`bench/results/WORKERS.md`).
+- **`data-page-rows`**: rows per Parquet data page in the files a table gets (default 20,000; 8,192 for files
+  written from JavaScript, where compaction holds a page per column of each file it merges).
 - **Version check interval.** The setting `version-check-interval` (table or session) says how long the Timelake
   reader uses a table version it loaded or checked before checking for a newer one. Within it, queries send no
   request for the table's version, and can miss commits by other processes; the process's own commits are seen at
@@ -36,7 +40,7 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
 - **Compaction streams.** Compaction merges its input files as sorted streams instead of loading a partition into
   memory, so its memory no longer grows with the partition. Full compaction of TSBS IoT (72 hourly files into 3 days):
   3.65 → 2.37 s, peak memory 1.95 → 0.53 GB, with identical files.
-- **Columns are encoded in parallel.** Timelake writes Parquet with its own writer (shared with the coming WebAssembly
+- **Columns are encoded in parallel.** Timelake writes Parquet with its own writer (shared with the WebAssembly
   writer), encoding each row group's columns on threads of their own. The files are the same, byte for byte. The
   compaction above takes 1.17 s instead of 2.37 s; importing 11.7M rows 4.7 s instead of 6.0 s.
 
@@ -47,6 +51,8 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
   profiles: it reads the `AWS_*` environment variables (`aws configure export-credentials` exports a profile's). The
   storage page says to create a Tigris lake bucket as single-region or multi-region: on Tigris's default `global`
   buckets, conditional writes are checked within one region only.
+- `@timelake/client` didn't run in Cloudflare Workers: Workers can't compile WebAssembly from bytes at runtime,
+  which the client did on first use. The `@timelake/client/workers` entry takes the compiled module instead.
 
 ## 0.5.0 – 2026-10-17
 

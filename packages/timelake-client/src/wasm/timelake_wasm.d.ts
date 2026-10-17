@@ -111,8 +111,8 @@ export class Writer {
      */
     appendIpc(ipc: Uint8Array, options: any): Promise<any>;
     /**
-     * Appends rows given as a JSON array of objects. Timestamps are epoch milliseconds or ISO
-     * strings (millisecond precision; use `appendIpc` for microseconds).
+     * Appends rows given as newline-delimited JSON objects. Timestamps are epoch milliseconds or
+     * ISO strings (millisecond precision; use `appendIpc` for microseconds).
      */
     appendJson(rows_json: string, options: any): Promise<any>;
     /**
@@ -131,6 +131,18 @@ export class Writer {
 }
 
 /**
+ * The most heap bytes in use at once so far.
+ */
+export function heapPeakBytes(): number;
+
+/**
+ * Bytes of WebAssembly memory the module has grown to. It never shrinks, so this is the peak of
+ * everything the reader and writer did so far (what counts against a Worker's memory limit, with
+ * the JavaScript heap).
+ */
+export function memoryBytes(): number;
+
+/**
  * Version of this crate.
  */
 export function version(): string;
@@ -143,6 +155,8 @@ export interface InitOutput {
     readonly __wbg_query_free: (a: number, b: number) => void;
     readonly __wbg_table_free: (a: number, b: number) => void;
     readonly __wbg_writer_free: (a: number, b: number) => void;
+    readonly heapPeakBytes: () => number;
+    readonly memoryBytes: () => number;
     readonly parquetfile_addRange: (a: number, b: number, c: number, d: number) => [number, number];
     readonly parquetfile_footerLength: (a: number, b: number) => [number, number, number];
     readonly parquetfile_new: (a: number, b: number, c: number) => [number, number, number];

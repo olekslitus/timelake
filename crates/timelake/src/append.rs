@@ -10,7 +10,6 @@ use iceberg::spec::DataFile;
 
 use crate::commit::{Change, CommitInfo, commit};
 use crate::error::Result;
-use crate::lvi::latest_per_series;
 use crate::maintain::{MaintainOptions, MaintainReport};
 use crate::rollup::RollupRefresh;
 use crate::storage::Uploads;
@@ -66,11 +65,8 @@ impl Table {
         let partitions = sort_and_split(self, batches)?;
         let rows = partitions.iter().map(|(_, b)| b.num_rows()).sum();
         let touched: HashSet<Option<i32>> = partitions.iter().map(|(p, _)| *p).collect();
-        let latest = latest_per_series(
-            &self.schema(),
-            self.contract(),
-            &partitions.iter().map(|(_, b)| b.clone()).collect::<Vec<_>>(),
-        )?;
+        // Each partition is sorted: its last row per series is its newest (no second sort).
+        let latest = timelake_format::rows::latest_of_sorted(&self.schema(), self.contract(), &partitions)?;
         let uploads = Uploads::default();
         let files = self.write_partitions(partitions, &uploads).await?;
         if files.is_empty() {

@@ -141,3 +141,11 @@ test("appends compact small files inline, and maintain compacts the rest", async
   expect(count("iot.small")).toBe(80)
   expect(fx.sql("SELECT count(*) AS n FROM iot.small WHERE temp = 3")).toEqual([{ n: 20 }])
 })
+
+test("the workers entry takes the module from initWasm", async () => {
+  const workers = await import("../src/workers")
+  const { wasmBase64 } = await import("../src/wasm/inline.js")
+  workers.initWasm(Uint8Array.from(atob(wasmBase64), (c) => c.charCodeAt(0)))
+  const writer = new workers.TableWriter(workers.memoryStore(), "s3://bucket/lake", "iot.none")
+  await expect(writer.append([{ time: 0 }])).rejects.toThrow(/not found/)
+})

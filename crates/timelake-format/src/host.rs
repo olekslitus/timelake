@@ -45,6 +45,18 @@ pub trait Host {
     fn random(&self) -> u64;
     /// Waits `ms` milliseconds.
     fn sleep(&self, ms: u64) -> impl Future<Output = ()>;
+
+    /// The most bytes a row group being written may hold in memory before it is written out, where
+    /// memory is scarce (`None`: row groups end at the table's `row-group-rows`).
+    fn max_row_group_bytes(&self) -> Option<usize> {
+        None
+    }
+
+    /// Rows per Parquet data page in files written here, when the table doesn't set
+    /// `data-page-rows`.
+    fn data_page_rows(&self) -> usize {
+        crate::file::DATA_PAGE_ROWS
+    }
 }
 
 /// A multipart upload: parts in order, then [`Upload::complete`].

@@ -583,7 +583,7 @@ These tasks can be triggered by a schedule, by commit events (catalog events, S3
 
 ### 10.1 Streaming compaction (decided 2026-10-17, built in the engine 2026-10-17)
 
-**Status:** the engine compacts by streaming merge (`timelake_format::merge`, `maintain.rs`). Full compaction of TSBS IoT, 72 hourly files into 3 days: 3.65 → 2.37 s, peak memory 1.95 → 0.53 GB, identical output ([`bench/results/PERFORMANCE.md`](bench/results/PERFORMANCE.md)). Per open input about 10 MB (its row group). Writing was 80% of the time on one thread; the shared file writer (`timelake_format::file`) now encodes columns in parallel: 2.37 → 1.17 s, byte-identical files. Next: the byte cap per run, and page-window reads in WASM (an input's pages fetched a window at a time, by the offset index, so its memory doesn't depend on its row group).
+**Status:** the engine compacts by streaming merge (`timelake_format::merge`, `maintain.rs`). Full compaction of TSBS IoT, 72 hourly files into 3 days: 3.65 → 2.37 s, peak memory 1.95 → 0.53 GB, identical output ([`bench/results/PERFORMANCE.md`](bench/results/PERFORMANCE.md)). Per open input about 10 MB (its row group). Writing was 80% of the time on one thread; the shared file writer (`timelake_format::file`) now encodes columns in parallel: 2.37 → 1.17 s, byte-identical files. The shared maintenance (WASM) adds the byte cap per run, page-window reads by the offset index, and at most 24 files per merge (§21.10).
 
 **Why.** Compaction read every file of a run into memory, concatenated, sorted, and deduplicated it, so its memory grew with the partition: fine on a server, too much for a 128 MB Cloudflare Worker (F10), and wasteful everywhere.
 
@@ -1289,7 +1289,7 @@ New product features beyond the original requirements, recorded on 2026-10-13. N
 | F7 | Edge gateway: local endpoints for data, metrics, logs and blobs, plus a local cache | R25 | Ingest (§13), reader | 6 |
 | F8 | Server mode: Timelake as a database on local disk, the bucket as the durable copy (experiment first) | R26 | Reader, hot tier (§8), F7 | Experiment after §17.6 |
 | F9 | Settings: every engine feature can be turned on or off or tuned, per table, per session or per call | — | Table properties (§7.1) | Now (design for review) |
-| F10 | Writes from WebAssembly: append and maintain tables from Cloudflare Workers and other JS runtimes | — | `@timelake/client`, streaming compaction (§10.1) | Now |
+| F10 | Writes from WebAssembly: append and maintain tables from Cloudflare Workers and other JS runtimes | — | `@timelake/client`, streaming compaction (§10.1) | Built |
 
 ### 21.1 F1: Agent access with permission sets (R19)
 
@@ -1454,6 +1454,7 @@ A setting declares which levels it allows: the time column and series key only a
 | `as_of_inserted` | a timestamp, or none | session | Leave out rows inserted after it, before dedup (§7.4, proposed) |
 | `compact-cold-after` | a duration, or off (1h) | table, call | Full compaction of partitions whose time range has ended (§9.1) |
 | `version-check-interval` | a duration (1s) | table, session | How long the reader uses a table version without checking for a newer one (§19.1 P6), built |
+| `data-page-rows` | a count (20,000; 8,192 when written from WebAssembly) | table | Rows per Parquet data page (§21.10), built |
 
 The existing `timelake.*` properties become registry entries unchanged. Hard-coded behaviour moves into settings as it's touched: compaction tiers, the small-file ratio, scan parallelism. The planning cache's lifetime became `version-check-interval`.
 
@@ -1469,7 +1470,9 @@ The existing `timelake.*` properties become registry entries unchanged. Hard-cod
 - `timelake settings [table] [--json]` lists them; the docs page "Settings" renders the same list (`dashboard/lib/settings.json`, checked by a test).
 - Changes from the proposal: `dedup` is fixed at creation (files written with it off may hold copies, which dedup on read assumes they don't). `append-dedup` isn't built for the same reason: an append that keeps copies would need its files marked for the reader. `format-version` is managed by Timelake (create, upgrade) and can't be set by hand. `latest-by` and `as_of_inserted` wait for §7.4. Storage options (`timelake_freshness_check`, …) stay lake options, documented on the Storage page.
 
-### 21.10 F10: Writes from WebAssembly (decided 2026-10-17, in progress)
+### 21.10 F10: Writes from WebAssembly (decided 2026-10-17, built 2026-10-17)
+
+**Status:** built and measured in workerd ([`bench/results/WORKERS.md`](bench/results/WORKERS.md)). `TableWriter` in `@timelake/client` (`/workers` entry with `initWasm` for Workers, which can't compile WebAssembly from bytes) appends and maintains through a `Store` (`r2Store`, `memoryStore`, or the application's). The shared write path lives in `timelake-format` (`write` feature): rows, file writer, Iceberg manifests and metadata, commits, maintenance, over a `Host`. Measured in workerd: appends of 100,000 rows 0.7 s and 37 MiB; compaction of a day of 24 files (1.2M rows) 2.7 s and 95 MiB. Interop tests: the engine and the shared writer append to and maintain one table in turn (`crates/timelake/tests/shared_writer.rs`). Changes from the design below: the read side of compaction reads a window of pages at a time and merges at most 24 files at once; files written from JavaScript have 8,192-row data pages (setting `data-page-rows`); the WASM host caps row groups being written at 16 MiB. Not yet: creating tables from JavaScript, rollup refresh, signing S3 requests.
 
 **Goal.** Append to Timelake tables, and keep them maintained, from JavaScript runtimes where the Rust engine can't run: Cloudflare Workers first, then browsers, Deno, Bun, and Node. Workers run JavaScript and WebAssembly; Python Workers can't load the native Python package.
 

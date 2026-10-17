@@ -351,8 +351,8 @@ export class Writer {
         return ret;
     }
     /**
-     * Appends rows given as a JSON array of objects. Timestamps are epoch milliseconds or ISO
-     * strings (millisecond precision; use `appendIpc` for microseconds).
+     * Appends rows given as newline-delimited JSON objects. Timestamps are epoch milliseconds or
+     * ISO strings (millisecond precision; use `appendIpc` for microseconds).
      * @param {string} rows_json
      * @param {any} options
      * @returns {Promise<any>}
@@ -396,6 +396,26 @@ export class Writer {
     }
 }
 if (Symbol.dispose) Writer.prototype[Symbol.dispose] = Writer.prototype.free;
+
+/**
+ * The most heap bytes in use at once so far.
+ * @returns {number}
+ */
+export function heapPeakBytes() {
+    const ret = wasm.heapPeakBytes();
+    return ret;
+}
+
+/**
+ * Bytes of WebAssembly memory the module has grown to. It never shrinks, so this is the peak of
+ * everything the reader and writer did so far (what counts against a Worker's memory limit, with
+ * the JavaScript heap).
+ * @returns {number}
+ */
+export function memoryBytes() {
+    const ret = wasm.memoryBytes();
+    return ret;
+}
 
 /**
  * Version of this crate.
@@ -754,7 +774,7 @@ function __wbg_get_imports() {
             return ret;
         },
         __wbindgen_generic_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 272, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 288, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen_bedb11be96d84d49___convert__closures_____invoke___wasm_bindgen_bedb11be96d84d49___JsValue__core_608f92abc48d28da___result__Result_____wasm_bindgen_bedb11be96d84d49___JsError___true_);
             return ret;
         },
