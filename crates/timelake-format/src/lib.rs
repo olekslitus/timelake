@@ -26,6 +26,8 @@ pub mod bounds;
 pub mod contract;
 #[cfg(feature = "head")]
 pub mod head;
+#[cfg(feature = "write")]
+pub mod merge;
 pub mod settings;
 pub mod version;
 

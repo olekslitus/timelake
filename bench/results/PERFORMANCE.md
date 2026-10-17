@@ -3,6 +3,29 @@
 Measurements for the steps of the performance plan ([SPEC.md §19.1](../../SPEC.md)), newest first. Each step is
 measured from a laptop (M1 Pro) over the internet, against the numbers before it.
 
+## Streaming compaction (2026-10-17, SPEC §10.1)
+
+Laptop (M1 Pro), local disk, release build. TSBS IoT readings (11,671,497 rows, 2026-01-01 to 01-03) split into 72
+hourly Parquet files and imported with `timelake import --no-maintain` (one file per commit, day partitions), then
+`timelake maintain tsbs.readings` on a fresh copy each run; time from the command's report, peak memory from
+`/usr/bin/time -l`.
+
+| | Time (3 runs) | Peak RSS |
+|---|---:|---:|
+| Before (in-memory sort, `d703958`) | 3.73, 3.65, 3.65 s | 1.95, 1.98, 1.95 GB |
+| Streaming merge | 2.41, 2.37, 2.37 s | 532, 542, 529 MB |
+| Streaming merge, without writing the output | 0.44 s | |
+| `maintain` with nothing to do | | 19 MB |
+
+- Output: the three compacted files hold the same rows in the same order as before (compared column by column).
+- One day alone (24 files): 362 MB. With `row-group-rows = 131072`: 390 MB for three days instead of 536 MB.
+- Read batch rows and read-ahead (1,024–16,384 rows, 1–4 batches): 2.34–2.43 s and 438–571 MB, no trend beyond
+  noise; defaults 4,096 rows and 1 batch.
+- Data page size (files written with 32 KiB, 128 KiB pages): 347 and 365 MB for one day, against 362 MB with 1 MiB.
+- Reading the same 24 files outside the engine (parquet-rs, 8,192-row batches, one batch from each in turn): 67 MB
+  synchronously from the files, 134 MB with each file in memory, 155 MB with the async reader. Per open input the
+  cost is its row group held while decoding.
+
 ## P5: block cache (2026-10-17)
 
 Measured on the benchmark instance (c8gd.2xlarge, us-east-2) on the S3 tables of the weekly run of 2026-10-16, with

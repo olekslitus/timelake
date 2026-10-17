@@ -581,7 +581,9 @@ A logical delete hides data but is not erasure: the bytes still exist in the ori
 
 These tasks can be triggered by a schedule, by commit events (catalog events, S3 notifications), or inline from the writer for small deployments. The core is concurrency-safe via Iceberg optimistic commits and conflict-aware retries.
 
-### 10.1 Streaming compaction (decided 2026-10-17, in progress)
+### 10.1 Streaming compaction (decided 2026-10-17, built in the engine 2026-10-17)
+
+**Status:** the engine compacts by streaming merge (`timelake_format::merge`, `maintain.rs`). Full compaction of TSBS IoT, 72 hourly files into 3 days: 3.65 → 2.37 s, peak memory 1.95 → 0.53 GB, identical output ([`bench/results/PERFORMANCE.md`](bench/results/PERFORMANCE.md)). Per open input about 10 MB (its row group); writing is 80% of the time, single-threaded. Next: encode columns in parallel, the byte cap per run, and page-window reads in WASM (an input's pages fetched a window at a time, by the offset index, so its memory doesn't depend on its row group).
 
 **Why.** Compaction read every file of a run into memory, concatenated, sorted, and deduplicated it, so its memory grew with the partition: fine on a server, too much for a 128 MB Cloudflare Worker (F10), and wasteful everywhere.
 

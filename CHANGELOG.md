@@ -16,6 +16,12 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
   once, and writers always check. The default, 1 second, is the old fixed behaviour; `0s` checks on every query
   (`SET timelake.version_check_interval = '30s'`, `--set`, `Lake(settings=…)`, or `timelake alter --set`).
 
+### Changed
+
+- **Compaction streams.** Compaction merges its input files as sorted streams instead of loading a partition into
+  memory, so its memory no longer grows with the partition. Full compaction of TSBS IoT (72 hourly files into 3 days):
+  3.65 → 2.37 s, peak memory 1.95 → 0.53 GB, with identical files.
+
 ## 0.5.0 – 2026-10-17
 
 ### Added

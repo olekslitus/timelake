@@ -12,6 +12,7 @@ Each version is a [tag on GitHub](https://github.com/polythings/timelake/tags): 
 
 | Version | Change | Commit | Effect |
 | --- | --- | --- | --- |
+| Unreleased | Streaming compaction | | Full compaction of 72 hourly files (11.7M rows) into 3 days: 3.65 → 2.37 s, peak memory 1.95 → 0.53 GB |
 | Unreleased | Version check interval | | Queries within `version-check-interval` send no request: one round trip less per query (unit test) |
 | 0.5.0 | Block cache | `69c6ca5` | Repeat queries on S3 (TSBS IoT): 54 → 16 ms, no requests; 16 clients 288 → 398 queries/s |
 | 0.3.0 | Footers in the head, cold loads in one round trip | `4e8a1fa` | First query on S3: `latest` 314 → 240 ms, a filtered scan of one truck 823 → 560 ms |
@@ -19,6 +20,21 @@ Each version is a [tag on GitHub](https://github.com/polythings/timelake/tags): 
 | 0.2.0 | Two-step commit | `d2b80cd` | Commit p50 on S3: 483 → 243 ms; a 1,728-commit ingest 1,307 → 795 s |
 
 From 0.2.0 to 0.3.0, the first `latest` query on S3 went from about 510 ms to 240 ms, and on Tigris from about 810 ms to 210 ms. 0.1.0 is the baseline for 0.2.0’s commit numbers.
+
+## Unreleased: streaming compaction
+
+- **What changed:** compaction merges its input files as sorted streams instead of loading a whole partition, sorting it, and removing copies in memory. See [Compaction](/docs/architecture#compaction).
+- **Measured** on a laptop (M1 Pro, local disk): the TSBS IoT readings (11.7M rows, 3 days) appended in 72 hourly files, then `timelake maintain` rewrote each day into one file. Three runs each:
+
+| | Before | After |
+| --- | ---: | ---: |
+| Time | 3.65 s | 2.37 s |
+| Peak memory | 1.95 GB | 0.53 GB |
+
+- The files written are identical: the same rows in the same order.
+- Memory now depends on the files merged, about 10 MB per open file here (its row group, held compressed while it is decoded), plus the row group being written, not on the partition's size.
+- Of the 2.37 s, reading and merging take 0.44 s; the rest is encoding the output on one thread.
+- **Tried:** read batches of 1,024 to 16,384 rows and reading 1 to 4 batches ahead: the same time, within noise in memory. Data pages of 32 KiB or 128 KiB instead of 1 MiB: barely less memory (347 and 365 MB for one day against 362 MB), so pages stay at 1 MiB.
 
 ## Unreleased: version check interval
 

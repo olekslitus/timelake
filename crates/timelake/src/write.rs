@@ -173,57 +173,94 @@ pub(crate) async fn write_partition(
     props: &WriterProperties,
     uploads: &Uploads,
 ) -> Result<Vec<DataFile>> {
-    let contract = table.contract();
-    let metadata = table.metadata();
-    let builder = ParquetWriterBuilder::new(props.clone(), metadata.current_schema().clone());
-    let dir = match (partition, &contract.time_column, contract.chunk) {
-        (Some(v), Some(time_column), Some(chunk)) => {
-            format!("{}/data/{time_column}_{chunk}={}", table.location(), chunk.label(v))
-        }
-        _ => format!("{}/data", table.location()),
-    };
-    let target = usize::try_from(contract.target_file_size).unwrap_or(usize::MAX);
-
-    let mut files = vec![];
-    let mut open = None;
+    let mut writer = PartitionWriter::new(table, partition, props, uploads);
     for batch in batches {
+        writer.write(&batch).await?;
+    }
+    writer.finish().await
+}
+
+type ParquetFileWriter = <ParquetWriterBuilder as FileWriterBuilder>::R;
+
+/// Writes sorted batches of one partition as they come, rolling to a new file at the target size
+/// (see [`write_partition`]). Memory is the row group being written: files stream out as
+/// multipart uploads.
+pub(crate) struct PartitionWriter<'a> {
+    table: &'a Table,
+    partition: Option<i32>,
+    builder: ParquetWriterBuilder,
+    uploads: &'a Uploads,
+    dir: String,
+    target: usize,
+    open: Option<ParquetFileWriter>,
+    files: Vec<iceberg::spec::DataFileBuilder>,
+}
+
+impl<'a> PartitionWriter<'a> {
+    pub(crate) fn new(
+        table: &'a Table,
+        partition: Option<i32>,
+        props: &WriterProperties,
+        uploads: &'a Uploads,
+    ) -> Self {
+        let contract = table.contract();
+        let builder = ParquetWriterBuilder::new(props.clone(), table.metadata().current_schema().clone());
+        let dir = match (partition, &contract.time_column, contract.chunk) {
+            (Some(v), Some(time_column), Some(chunk)) => {
+                format!("{}/data/{time_column}_{chunk}={}", table.location(), chunk.label(v))
+            }
+            _ => format!("{}/data", table.location()),
+        };
+        let target = usize::try_from(contract.target_file_size).unwrap_or(usize::MAX);
+        Self { table, partition, builder, uploads, dir, target, open: None, files: vec![] }
+    }
+
+    /// Writes rows that sort after every row written so far.
+    pub(crate) async fn write(&mut self, batch: &RecordBatch) -> Result<()> {
         if batch.num_rows() == 0 {
-            continue;
+            return Ok(());
         }
-        let mut writer = if let Some(w) = open.take() {
+        let mut writer = if let Some(w) = self.open.take() {
             w
         } else {
-            let uri = format!("{dir}/{}.parquet", uuid::Uuid::now_v7());
-            builder.build(table.lake().storage().deferred_output_file(&uri, uploads)).await?
+            let uri = format!("{}/{}.parquet", self.dir, uuid::Uuid::now_v7());
+            let output = self.table.lake().storage().deferred_output_file(&uri, self.uploads);
+            self.builder.clone().build(output).await?
         };
-        writer.write(&batch).await?;
-        if writer.current_written_size() >= target {
-            files.extend(writer.close().await?);
+        writer.write(batch).await?;
+        if writer.current_written_size() >= self.target {
+            self.files.extend(writer.close().await?);
         } else {
-            open = Some(writer);
+            self.open = Some(writer);
         }
-    }
-    if let Some(writer) = open {
-        files.extend(writer.close().await?);
+        Ok(())
     }
 
-    let spec_id = metadata.default_partition_spec().spec_id();
-    let sort_order_id = (!contract.sort_columns().is_empty())
-        .then(|| i32::try_from(metadata.default_sort_order_id()))
-        .transpose()
-        .map_err(|_| Error::invalid("sort order id out of range"))?;
-    files
-        .into_iter()
-        .map(|mut b| {
-            b.content(DataContentType::Data).partition(partition_struct(partition)).partition_spec_id(spec_id);
-            if let Some(id) = sort_order_id {
-                b.sort_order_id(id);
-            }
-            b.build().map_err(|e| {
-                iceberg::Error::new(iceberg::ErrorKind::Unexpected, "building data file").with_source(e).into()
+    /// Closes the last file; returns the files written.
+    pub(crate) async fn finish(mut self) -> Result<Vec<DataFile>> {
+        if let Some(writer) = self.open.take() {
+            self.files.extend(writer.close().await?);
+        }
+        let metadata = self.table.metadata();
+        let spec_id = metadata.default_partition_spec().spec_id();
+        let sort_order_id = (!self.table.contract().sort_columns().is_empty())
+            .then(|| i32::try_from(metadata.default_sort_order_id()))
+            .transpose()
+            .map_err(|_| Error::invalid("sort order id out of range"))?;
+        let partition = self.partition;
+        self.files
+            .into_iter()
+            .map(|mut b| {
+                b.content(DataContentType::Data).partition(partition_struct(partition)).partition_spec_id(spec_id);
+                if let Some(id) = sort_order_id {
+                    b.sort_order_id(id);
+                }
+                b.build().map_err(|e| {
+                    iceberg::Error::new(iceberg::ErrorKind::Unexpected, "building data file").with_source(e).into()
+                })
             })
-        })
-        .collect()
+            .collect()
+    }
 }
 
 pub(crate) fn partition_struct(v: Option<i32>) -> Struct {
