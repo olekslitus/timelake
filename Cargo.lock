@@ -4239,6 +4239,7 @@ dependencies = [
 name = "timelake-format"
 version = "0.5.0"
 dependencies = [
+ "apache-avro",
  "arrow-arith",
  "arrow-array",
  "arrow-cast",
@@ -4250,6 +4251,8 @@ dependencies = [
  "arrow-select",
  "bytes",
  "chrono",
+ "futures-executor",
+ "futures-util",
  "parquet",
  "serde",
  "serde_json",

@@ -1,6 +1,6 @@
 [package]
 name = "timelake-format"
-description = "Timelake's table conventions, shared by the engine and the WASM reader (no I/O)"
+description = "Timelake's table conventions and write path without I/O, shared by the engine and the WebAssembly reader and writer"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -13,8 +13,8 @@ categories = ["database-implementations"]
 [features]
 # The head object's container and codecs (Arrow IPC and JSON), for the engine and the WASM reader.
 head = ["dep:arrow-array", "dep:arrow-ipc", "dep:arrow-json", "dep:arrow-schema", "dep:arrow-select", "dep:serde", "dep:serde_json"]
-# Writing tables without I/O, shared by the engine and the WASM writer: Parquet files with their Iceberg
-# statistics, and the streaming merge of compaction.
+# Writing tables without I/O of its own, shared by the engine and the WASM writer: rows, Parquet files with their
+# Iceberg statistics, manifests and metadata, appends and commits over a `Host`, and the streaming merge of compaction.
 write = [
     "dep:arrow-arith",
     "dep:arrow-array",
@@ -24,9 +24,17 @@ write = [
     "dep:arrow-schema",
     "dep:arrow-select",
     "dep:parquet",
+    "dep:apache-avro",
+    "dep:serde_json",
+    "dep:bytes",
+    "dep:futures-util",
+    "head",
 ]
 
 [dependencies]
+bytes = { version = "1", optional = true }
+futures-util = { version = "0.3", default-features = false, features = ["alloc"], optional = true }
+apache-avro = { version = "0.21", default-features = false, optional = true }
 chrono = { version = "0.4", default-features = false, features = ["alloc"] }
 arrow-arith = { version = "58", optional = true }
 arrow-array = { version = "58", optional = true }
@@ -43,6 +51,7 @@ serde_json = { version = "1", optional = true }
 
 [dev-dependencies]
 bytes = "1"
+futures-executor = "0.3"
 
 [lints]
 workspace = true

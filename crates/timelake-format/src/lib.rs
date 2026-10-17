@@ -1,6 +1,9 @@
-//! Timelake's on-disk conventions, with no I/O and no heavy dependencies, so the engine
-//! (`timelake`) and the WebAssembly reader (`timelake-wasm`) share one definition: the table
-//! contract stored in `timelake.*` properties, time partition math, and Iceberg bound decoding.
+//! Timelake's on-disk conventions, with no I/O of its own, so the engine (`timelake`) and the
+//! WebAssembly reader and writer (`timelake-wasm`) share one definition: the table contract stored
+//! in `timelake.*` properties, time partition math, and Iceberg bound decoding. With the `write`
+//! feature, also the write path: preparing rows, writing Parquet with Iceberg statistics,
+//! manifests and table metadata, and appending and committing over a [`host::Host`] that the
+//! caller implements (SPEC §21.10).
 //!
 //! ```
 //! use std::collections::HashMap;
@@ -22,7 +25,11 @@
 
 use std::fmt;
 
+#[cfg(feature = "write")]
+pub mod append;
 pub mod bounds;
+#[cfg(feature = "write")]
+pub mod commit;
 pub mod contract;
 #[cfg(feature = "write")]
 pub mod error;
@@ -31,10 +38,18 @@ pub mod file;
 #[cfg(feature = "head")]
 pub mod head;
 #[cfg(feature = "write")]
+pub mod host;
+#[cfg(feature = "write")]
+pub mod iceberg;
+#[cfg(feature = "write")]
 pub mod merge;
+#[cfg(feature = "write")]
+pub mod metadata;
 #[cfg(feature = "write")]
 pub mod rows;
 pub mod settings;
+#[cfg(feature = "write")]
+pub mod table;
 pub mod version;
 
 pub use contract::{Chunk, Contract, TableOptions, format_duration, parse_duration};
