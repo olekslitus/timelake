@@ -249,15 +249,63 @@ For MinIO and other S3-compatible stores, see [Storage & configuration](/docs/st
 
 ## Ingestion setups
 
-Files that keep arriving, appended as they land, on your platform:
+The guides below set up continuous ingestion on one platform each, with several designs per platform and a recommendation for which to start with. Every design appends to the same `iot.readings` table as above.
 
-| Guide | Tables in | Files land in | Appended by |
+### Platforms
+
+| Guide | Tables in | Appends run in | Devices send through | Storage tested |
+| --- | --- | --- | --- | --- |
+| [Local](/docs/quick-start/local) | a folder | cron, or your own program | files in a folder | yes |
+| [AWS](/docs/quick-start/aws) | S3 | Lambda | S3, Kinesis, SQS, IoT Core, or Firehose | yes |
+| [Azure](/docs/quick-start/azure) | Blob Storage | Azure Functions | Blob Storage, Event Hubs, Service Bus, or IoT Hub | not yet |
+| [Google Cloud](/docs/quick-start/gcp) | Cloud Storage | Cloud Run functions | Cloud Storage or Pub/Sub | not yet |
+| [Cloudflare](/docs/quick-start/cloudflare) | R2 | a writer on any host; Workers take the uploads | R2 or Queues | not yet |
+| [Fly.io](/docs/quick-start/fly) | Tigris | a Fly app that stays running | HTTPS, MQTT, or Tigris uploads | performance only |
+| [Vercel](/docs/quick-start/vercel) | Tigris, S3, or R2 | Vercel Functions and Cron Jobs | HTTPS, Vercel Queues, or bucket uploads | depends on the store |
+| [Tigris](/docs/quick-start/tigris) | Tigris | anywhere | Tigris uploads, or your own process | performance only |
+
+"Storage tested" is from [Limitations](/docs/limitations): Timelake's correctness tests run on local disk and AWS S3. Its performance has been measured on Tigris. Azure, Google Cloud, and R2 use the same storage library but haven't been tested yet.
+
+### Designs
+
+The same few designs appear on every platform, under different service names:
+
+| Design | Fits |
+| --- | --- |
+| Files, appended on upload | gateways that buffer readings and upload a file every few minutes |
+| Stream or queue, in batches | devices that send readings one at a time |
+| Platform batches into files | many small senders, when a minute or more of delay is fine |
+| MQTT | devices that already speak MQTT |
+| HTTP intake | devices or gateways that POST over HTTPS |
+| Scheduled checks | alerts on recent data |
+
+| Design | AWS | Azure | Google Cloud |
 | --- | --- | --- | --- |
-| [Local](/docs/quick-start/local) | a folder | a folder | `timelake append` from cron |
-| [AWS](/docs/quick-start/aws) | S3 | S3 | Lambda, on upload events |
-| [Azure](/docs/quick-start/azure) | Blob Storage | Blob Storage | Azure Functions, on Event Grid events |
-| [Google Cloud](/docs/quick-start/gcp) | Cloud Storage | Cloud Storage | Cloud Run function, on upload events |
-| [Cloudflare](/docs/quick-start/cloudflare) | R2 | R2, through a Worker | a Python script from cron |
+| Files, appended on upload | S3 + Lambda | Blob Storage + Event Grid | Cloud Storage + Eventarc |
+| Stream or queue, in batches | Kinesis or SQS | Event Hubs or Service Bus | Pub/Sub, pulled |
+| Platform batches into files | Firehose | Event Hubs Capture (outline) | Pub/Sub to Cloud Storage |
+| MQTT | IoT Core | IoT Hub | your own broker |
+| HTTP intake | API Gateway + SQS | Service Bus over HTTPS | — |
+| Scheduled checks | EventBridge + Lambda | a timer function | Cloud Scheduler |
+
+| Design | Cloudflare | Fly.io | Vercel |
+| --- | --- | --- | --- |
+| Files, appended on upload | R2 notifications | Tigris notifications | a Cron Job polls |
+| Stream or queue, in batches | Queues, pulled | — | Vercel Queues |
+| Platform batches into files | — | — | — |
+| MQTT | — | an MQTT worker | — |
+| HTTP intake | a Worker | the app itself | a function |
+| Scheduled checks | cron | the `jobs` process | a Cron Job |
+
+### Which to choose
+
+- **Your platform decides first.** Use the guide for the cloud your devices and team already use: credentials, networking, and billing are already in place.
+- **Then how devices send.** If gateways can buffer readings into files, start with files to a bucket: it has the fewest moving parts, and each file becomes one commit with its name as the batch id. If devices send one reading at a time, put a stream or queue in front and append in batches. Without an account yet, start with [Local](/docs/quick-start/local).
+- **Batch to about one commit every 10 seconds to a minute.** Each commit costs about 9 storage requests, and commits to one table happen one at a time. Upload intervals, batching windows, and flush intervals are the settings that control this.
+- **For storage Timelake has been tested on,** use AWS S3 or local disk. On Tigris, create the lake bucket single-region or multi-region: on the default global type, conditional writes are checked within one region only.
+- **For a web app or HTTPS devices without a cloud provider,** use Fly.io (an app that stays running) or Vercel (functions and cron), both with Tigris as the store.
+
+Every design uses the same Timelake pieces: one commit per append, a batch id where the input has a stable name, deduplication for the rest, a few concurrent writers at most, and an hourly `maintain`.
 
 ## Next steps
 

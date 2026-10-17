@@ -4,29 +4,31 @@ export const metadata = { title: "Quick start: Azure" }
 
 # Azure
 
-Gateways upload CSV or Parquet files to a `landing` container. Each upload triggers an Azure Function that appends the file to a Timelake table in a `lake` container of the same storage account. A timer in the same function app runs maintenance every hour.
+On Azure, Timelake runs inside Azure Functions and keeps its tables in a Blob Storage container. Data reaches the functions in one of several ways, depending on how your devices send it. Every design below appends to the same table from the same function app, so you can start with one and add another later.
 
-<IngestFlow
-  nodes={[
-    { label: "Gateways", sub: "CSV / Parquet" },
-    { label: "landing container" },
-    { label: "Azure Function", sub: "table.append", accent: true },
-    { label: "lake container", sub: "Iceberg tables" },
-  ]}
-  edges={["upload", "Event Grid", "commit"]}
-/>
+| Design | Devices send | Visible to queries after | Fits |
+| --- | --- | --- | --- |
+| [Files to Blob Storage](#design-1-files-to-blob-storage) | CSV, Parquet, or JSON files | each upload | gateways that buffer readings and upload every few minutes |
+| [Event Hubs](#design-2-event-hubs) | events through the SDK, AMQP, or Kafka | the batch wait (up to 30 s) | steady, high-volume streams; replay; order per device |
+| [Service Bus](#design-3-service-bus) | messages through the SDK or HTTPS | the batch wait (up to 30 s) | bursty or low volume; a dead-letter queue for bad messages |
+| [IoT Hub](#design-4-iot-hub) | MQTT or AMQP messages | the batch wait (up to 30 s) | devices registered in IoT Hub, with per-device credentials |
+
+**Which to start with.** If gateways can write files, start with design 1: it has the fewest moving parts, and each file is one commit. If devices send readings one at a time, use Event Hubs (design 2) for a steady stream and Service Bus (design 3) for a trickle or bursts. Use IoT Hub (design 4) when you already manage devices there; it feeds the Event Hubs function.
+
+Then [scheduled checks](#scheduled-checks-on-recent-data) read recent data and alert, and [maintenance](#maintenance) runs every hour. [Other designs](#other-designs) lists a long-running consumer, Event Hubs Capture, and backfills.
 
 Timelake hasn't been tested on Azure Blob Storage yet ([Limitations](/docs/limitations)). It reaches Azure through the same storage library as S3, and commits use Azure's `If-None-Match` precondition.
 
-The commands use the Azure CLI, [Azure Functions Core Tools](https://learn.microsoft.com/azure/azure-functions/functions-run-local), and the `timelake` command ([install](/docs/quick-start#1-install)). Set these once:
+## Shared setup
+
+Do this once for every design. The commands use the Azure CLI, [Azure Functions Core Tools](https://learn.microsoft.com/azure/azure-functions/functions-run-local), and the `timelake` command ([install](/docs/quick-start#1-install)).
 
 ```bash
 export RG=timelake LOCATION=eastus
 export ACCOUNT=timelake$RANDOM APP=timelake-ingest-$RANDOM     # names must be unique across Azure
-az provider register --namespace Microsoft.EventGrid
 ```
 
-## 1. Create the storage account and the table
+### The storage account and the table
 
 ```bash
 az group create -n $RG -l $LOCATION
@@ -36,7 +38,6 @@ export SCOPE=$(az storage account show -n $ACCOUNT -g $RG --query id -o tsv)
 # Owners of the account still need a data role to read and write blobs
 az role assignment create --role "Storage Blob Data Contributor" --scope $SCOPE \
   --assignee $(az ad signed-in-user show --query id -o tsv)
-az storage container create --account-name $ACCOUNT -n landing --auth-mode login
 az storage container create --account-name $ACCOUNT -n lake --auth-mode login
 ```
 
@@ -49,20 +50,23 @@ timelake create iot.readings --schema "time:timestamptz,device_id:string,temp:do
   --time-column time --series-key device_id
 ```
 
-The trigger below fires only for the `landing` container, so the lake's own writes never trigger the function.
+### The function code
 
-## 2. Write the function
-
-In a new folder, `function_app.py`:
+In a new folder, `function_app.py` has one function per design, plus the maintenance and check timers:
 
 ```python
-"""Appends each CSV or Parquet file that lands in the landing container to a Timelake table."""
+"""Timelake on Azure Functions: append from Blob Storage, Event Hubs, or Service Bus; maintain; check recent data."""
 
+import datetime as dt
 import io
+import json
 import os
+import urllib.request
 
 import azure.functions as func
+import pyarrow as pa
 import pyarrow.csv as csv
+import pyarrow.json as pj
 import pyarrow.parquet as pq
 import timelake
 
@@ -71,20 +75,89 @@ lake = timelake.Lake(os.environ["TIMELAKE_WAREHOUSE"])
 table = lake.table(os.environ["TIMELAKE_TABLE"])
 
 
-def read(name, body):
-    return pq.read_table(io.BytesIO(body)) if name.endswith(".parquet") else csv.read_csv(io.BytesIO(body))
+def read_file(name, body):
+    if name.endswith(".parquet"):
+        return pq.read_table(io.BytesIO(body))
+    if name.endswith(".csv"):
+        return csv.read_csv(io.BytesIO(body))
+    return pj.read_json(io.BytesIO(body))  # newline-delimited JSON
+
+
+def read_messages(payloads):
+    """Readings from JSON messages, each one reading or a list of readings."""
+    rows = []
+    for payload in payloads:
+        try:
+            message = json.loads(payload)
+        except ValueError:
+            print("skipped, not JSON:", payload[:200])
+            continue
+        rows.extend(message if isinstance(message, list) else [message])
+    return pa.Table.from_pylist(rows)
 
 
 @app.blob_trigger(arg_name="blob", path="landing/{name}", connection="AzureWebJobsStorage", source=func.BlobSource.EVENT_GRID)
-def ingest(blob: func.InputStream):
+def ingest_blob(blob: func.InputStream):
     # The blob name is the batch id: a redelivered event loads nothing twice.
-    print(blob.name, table.append(read(blob.name, blob.read()), batch_id=blob.name))
+    print(blob.name, table.append(read_file(blob.name, blob.read()), batch_id=blob.name))
+
+
+@app.event_hub_message_trigger(
+    arg_name="events", event_hub_name="readings", connection="EventHubConnection", cardinality=func.Cardinality.MANY
+)
+@app.retry(strategy="exponential_backoff", max_retry_count="10", minimum_interval="00:00:05", maximum_interval="00:05:00")
+def ingest_event_hub(events: list[func.EventHubEvent]):
+    # A replayed batch can start and end elsewhere, so it has no stable id. Deduplication keeps
+    # one row per device and time instead.
+    data = read_messages(e.get_body() for e in events)
+    if data.num_rows:
+        print(len(events), "events", table.append(data))
+
+
+@app.service_bus_queue_trigger(
+    arg_name="messages", queue_name="readings", connection="ServiceBusConnection", cardinality=func.Cardinality.MANY
+)
+def ingest_service_bus(messages: list[func.ServiceBusMessage]):
+    # Service Bus regroups messages when it redelivers them; deduplication handles the repeats.
+    data = read_messages(m.get_body() for m in messages)
+    if data.num_rows:
+        print(len(messages), "messages", table.append(data))
 
 
 @app.timer_trigger(arg_name="timer", schedule="0 0 * * * *")
 def maintain(timer: func.TimerRequest):
     for name in lake.tables():
         print(name, lake.table(name).maintain())
+
+
+@app.timer_trigger(arg_name="timer", schedule="0 */5 * * * *")
+def check(timer: func.TimerRequest):
+    """Alert on pumps running hot over the last 10 minutes and on pumps silent for 15."""
+    hot = lake.sql("""
+        SELECT device_id, avg(temp) AS avg_temp, max(temp) AS max_temp
+        FROM iot.readings
+        WHERE time > now() - INTERVAL '10 minutes'
+        GROUP BY device_id
+        HAVING avg(temp) > 80
+    """).to_pylist()
+    now = dt.datetime.now(dt.timezone.utc)
+    latest = lake.latest("iot.readings").to_pylist()
+    silent = [r["device_id"] for r in latest if now - r["time"] > dt.timedelta(minutes=15)]
+    print({"hot": hot, "silent": silent})
+    if hot or silent:
+        text = json.dumps({"hot": hot, "silent": silent}, default=str, indent=2)
+        request = urllib.request.Request(
+            os.environ["ALERT_WEBHOOK"],
+            data=json.dumps({"text": f"Timelake check\n{text}"}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        urllib.request.urlopen(request, timeout=10)
+```
+
+Messages are JSON, one reading or a list of readings, with the table's columns:
+
+```json
+{"time": "2026-01-05T10:00:00Z", "device_id": "pump-1", "temp": 61.2, "humidity": 40}
 ```
 
 `requirements.txt`:
@@ -94,48 +167,69 @@ azure-functions
 timelake
 ```
 
-`host.json`:
+`host.json` sets how many messages each call collects. The function waits up to 30 seconds for 500 of them, then takes what has arrived:
 
 ```json
 {
   "version": "2.0",
-  "extensionBundle": { "id": "Microsoft.Azure.Functions.ExtensionBundle", "version": "[4.*, 5.0.0)" }
+  "extensionBundle": { "id": "Microsoft.Azure.Functions.ExtensionBundle", "version": "[4.*, 5.0.0)" },
+  "extensions": {
+    "eventHubs": { "maxEventBatchSize": 1000, "minEventBatchSize": 500, "maxWaitTime": "00:00:30" },
+    "serviceBus": { "maxMessageBatchSize": 1000, "minMessageBatchSize": 500, "maxBatchWaitTime": "00:00:30" }
+  }
 }
 ```
 
-Event Grid delivers each event at least once and retries failed calls. With the blob name as the batch id, a repeated event is skipped. So give every upload a unique name, such as `gateway-7/20260105T1000.csv`, and send corrections as new files.
+Delete the functions of designs you won't set up: a trigger whose connection settings are missing fails to start and logs errors.
 
-## 3. Create the function app and deploy
+### The function app
 
 The app runs on the Flex Consumption plan, with a managed identity that may read and write the storage account:
 
 ```bash
 az functionapp create -g $RG -n $APP --storage-account $ACCOUNT --flexconsumption-location $LOCATION \
   --runtime python --runtime-version 3.12 --assign-identity '[system]'
+export PRINCIPAL=$(az functionapp identity show -g $RG -n $APP --query principalId -o tsv)
 az role assignment create --role "Storage Blob Data Contributor" --scope $SCOPE \
-  --assignee-object-id $(az functionapp identity show -g $RG -n $APP --query principalId -o tsv) \
-  --assignee-principal-type ServicePrincipal
+  --assignee-object-id $PRINCIPAL --assignee-principal-type ServicePrincipal
 az functionapp config appsettings set -g $RG -n $APP --settings \
   TIMELAKE_WAREHOUSE=az://lake/warehouse TIMELAKE_TABLE=iot.readings AZURE_STORAGE_ACCOUNT_NAME=$ACCOUNT
+az functionapp scale config set -g $RG -n $APP --maximum-instance-count 4
 func azure functionapp publish $APP
 ```
 
-Timelake gets the managed identity's credentials from the function host. Commits to one table happen one at a time: when two instances commit together, one retries. Fewer, larger files ingest faster than many small ones.
+Timelake gets the managed identity's credentials from the function host. Run `func azure functionapp publish $APP` again after any change to the code or `host.json`.
 
-## 4. Send blob events to the function
+**Retries and concurrency.** Every source here delivers at least once. Where a batch has a stable name (a blob name), it is the batch id, and a repeat is skipped. Batch ids are remembered while their commits are kept: by default the last hour, and at most 100 commits. Beyond that, and for Event Hubs and Service Bus, deduplication keeps one row per device and time. Commits to one table happen one at a time: when two instances commit together, one retries. `--maximum-instance-count 4` keeps those retries rare.
+
+## Design 1: Files to Blob Storage
+
+<IngestFlow
+  nodes={[
+    { label: "Gateways", sub: "CSV / Parquet / JSON" },
+    { label: "landing container" },
+    { label: "Azure Function", sub: "ingest_blob", accent: true },
+    { label: "lake container", sub: "Iceberg tables" },
+  ]}
+  edges={["upload", "Event Grid", "commit"]}
+/>
+
+Gateways buffer readings and upload a file every few minutes to a `landing` container in the same storage account. Event Grid tells the function about each new blob. The subscription only covers `landing`, so the lake's own writes never trigger it.
 
 ```bash
+az provider register --namespace Microsoft.EventGrid
+az storage container create --account-name $ACCOUNT -n landing --auth-mode login
 az eventgrid system-topic create -g $RG -n timelake-storage -l $LOCATION \
   --topic-type Microsoft.Storage.StorageAccounts --source $SCOPE
 KEY=$(az functionapp keys list -g $RG -n $APP --query systemKeys.blobs_extension -o tsv)
 HOST=$(az functionapp show -g $RG -n $APP --query defaultHostName -o tsv)
 az eventgrid system-topic event-subscription create -g $RG --system-topic-name timelake-storage -n landing \
-  --endpoint "https://$HOST/runtime/webhooks/blobs?functionName=Host.Functions.ingest&code=$KEY" \
+  --endpoint "https://$HOST/runtime/webhooks/blobs?functionName=Host.Functions.ingest_blob&code=$KEY" \
   --included-event-types Microsoft.Storage.BlobCreated \
   --subject-begins-with /blobServices/default/containers/landing/
 ```
 
-## 5. Send a file and query it
+Try it:
 
 ```bash
 cat > readings.csv <<'EOF'
@@ -145,14 +239,190 @@ time,device_id,temp,humidity
 EOF
 az storage blob upload --account-name $ACCOUNT -c landing -n gateway-1/20260105T1000.csv -f readings.csv \
   --auth-mode login
-
 timelake latest iot.readings
 ```
 
+Give every upload a unique name, such as the gateway and the time, and send corrections as new files: a name that was already loaded is skipped.
+
+## Design 2: Event Hubs
+
+<IngestFlow
+  nodes={[
+    { label: "Devices", sub: "send_batch" },
+    { label: "Event hub" },
+    { label: "Azure Function", sub: "ingest_event_hub", accent: true },
+    { label: "lake container", sub: "Iceberg tables" },
+  ]}
+  edges={["AMQP / Kafka", "batch", "commit"]}
+/>
+
+Devices send events to an event hub, with the device id as the partition key so each device's readings stay in order. The function reads each partition in batches: one batch at a time per partition, one commit per batch. The hub keeps events for a day on the Basic tier, so a broken function can catch up.
+
+```bash
+export EH_NAMESPACE=timelake-$RANDOM
+az eventhubs namespace create -g $RG -n $EH_NAMESPACE -l $LOCATION --sku Basic
+az eventhubs eventhub create -g $RG --namespace-name $EH_NAMESPACE -n readings --partition-count 4
+export EH_SCOPE=$(az eventhubs namespace show -g $RG -n $EH_NAMESPACE --query id -o tsv)
+az role assignment create --role "Azure Event Hubs Data Receiver" --scope $EH_SCOPE \
+  --assignee-object-id $PRINCIPAL --assignee-principal-type ServicePrincipal
+az functionapp config appsettings set -g $RG -n $APP --settings \
+  EventHubConnection__fullyQualifiedNamespace=$EH_NAMESPACE.servicebus.windows.net
+```
+
+The function moves on to the next batch even when a call fails. The retry policy in `function_app.py` (`@app.retry`) holds the partition and retries the batch up to 10 times, with growing delays. A batch that still fails after that is skipped, so check the function's logs for errors. Four partitions mean at most four functions commit at once.
+
+Try it, sending as a device would (give yourself the sender role first):
+
+```bash
+az role assignment create --role "Azure Event Hubs Data Sender" --scope $EH_SCOPE \
+  --assignee $(az ad signed-in-user show --query id -o tsv)
+pip install azure-eventhub azure-identity
+```
+
+```python
+import json
+import os
+
+from azure.eventhub import EventData, EventHubProducerClient
+from azure.identity import DefaultAzureCredential
+
+readings = [{"time": "2026-01-05T10:05:00Z", "device_id": "pump-1", "temp": 62.0, "humidity": 41}]
+producer = EventHubProducerClient(
+    fully_qualified_namespace=f"{os.environ['EH_NAMESPACE']}.servicebus.windows.net",
+    eventhub_name="readings",
+    credential=DefaultAzureCredential(),
+)
+with producer:
+    producer.send_batch([EventData(json.dumps(r)) for r in readings], partition_key="pump-1")
+```
+
+## Design 3: Service Bus
+
+<IngestFlow
+  nodes={[
+    { label: "Devices", sub: "send_messages" },
+    { label: "Service Bus queue" },
+    { label: "Azure Function", sub: "ingest_service_bus", accent: true },
+    { label: "lake container", sub: "Iceberg tables" },
+  ]}
+  edges={["AMQP / HTTPS", "batch", "commit"]}
+/>
+
+Devices send messages to a queue, each one reading or a list of readings. The function collects up to 1,000 messages or 30 seconds' worth per call and commits them at once. When a call fails, Service Bus hands the messages out again. A message that fails 5 times moves to the queue's dead-letter queue, where you can inspect it.
+
+```bash
+export SB_NAMESPACE=timelake-$RANDOM
+az servicebus namespace create -g $RG -n $SB_NAMESPACE -l $LOCATION --sku Basic
+az servicebus queue create -g $RG --namespace-name $SB_NAMESPACE -n readings \
+  --max-delivery-count 5 --lock-duration PT5M
+export SB_SCOPE=$(az servicebus namespace show -g $RG -n $SB_NAMESPACE --query id -o tsv)
+az role assignment create --role "Azure Service Bus Data Receiver" --scope $SB_SCOPE \
+  --assignee-object-id $PRINCIPAL --assignee-principal-type ServicePrincipal
+az functionapp config appsettings set -g $RG -n $APP --settings \
+  ServiceBusConnection__fullyQualifiedNamespace=$SB_NAMESPACE.servicebus.windows.net
+```
+
+The 5-minute lock keeps a batch's messages from being handed out again while the function holds them.
+
+Try it:
+
+```bash
+az role assignment create --role "Azure Service Bus Data Sender" --scope $SB_SCOPE \
+  --assignee $(az ad signed-in-user show --query id -o tsv)
+pip install azure-servicebus azure-identity
+```
+
+```python
+import json
+import os
+
+from azure.identity import DefaultAzureCredential
+from azure.servicebus import ServiceBusClient, ServiceBusMessage
+
+readings = [
+    {"time": "2026-01-05T10:10:00Z", "device_id": "pump-1", "temp": 63.1, "humidity": 41},
+    {"time": "2026-01-05T10:10:00Z", "device_id": "pump-2", "temp": 60.2, "humidity": 44},
+]
+client = ServiceBusClient(f"{os.environ['SB_NAMESPACE']}.servicebus.windows.net", DefaultAzureCredential())
+with client, client.get_queue_sender("readings") as sender:
+    sender.send_messages(ServiceBusMessage(json.dumps(readings)))
+```
+
+Devices without the SDK can send over HTTPS with Service Bus's REST API and a shared access signature.
+
+## Design 4: IoT Hub
+
+<IngestFlow
+  nodes={[
+    { label: "Devices", sub: "MQTT / AMQP" },
+    { label: "IoT Hub route" },
+    { label: "Event hub" },
+    { label: "Azure Function", sub: "ingest_event_hub", accent: true },
+    { label: "lake container", sub: "Iceberg tables" },
+  ]}
+  edges={["device messages", "send", "batch", "commit"]}
+/>
+
+Devices registered in IoT Hub send readings with their own credentials. A message route forwards them to the event hub from design 2, so the rest is the same. IoT Hub also has a built-in endpoint that Functions can read directly, but only with a connection string; routing to your own event hub keeps managed identities throughout. Set up design 2 first. Registering real devices is covered in the [IoT Hub docs](https://learn.microsoft.com/azure/iot-hub/iot-hub-create-through-portal).
+
+```bash
+export HUB=timelake-$RANDOM
+az iot hub create -g $RG -n $HUB --sku S1
+az iot hub identity assign -g $RG -n $HUB --system-assigned \
+  --role "Azure Event Hubs Data Sender" --scopes $EH_SCOPE
+az iot hub message-endpoint create eventhub -g $RG -n $HUB --en readings \
+  --endpoint-uri sb://$EH_NAMESPACE.servicebus.windows.net --entity-path readings --identity '[system]'
+az iot hub message-route create -g $RG -n $HUB --route-name readings --endpoint-name readings \
+  --source devicemessages
+```
+
+The `message-endpoint` and `message-route` commands come with the `azure-iot` CLI extension, which installs on first use. The free tier (`--sku F1`, 8,000 messages a day, one per subscription) works for trying it.
+
+Try it, sending as a registered device:
+
+```bash
+az iot hub device-identity create -n $HUB -d pump-1
+az iot device send-d2c-message -n $HUB -d pump-1 \
+  --data '{"time": "2026-01-05T10:15:00Z", "device_id": "pump-1", "temp": 64.0, "humidity": 40}'
+```
+
+Include `device_id` in each message, as above. IoT Hub also stamps every message with the sending device's id (`iothub-connection-device-id`).
+
+## Scheduled checks on recent data
+
+<IngestFlow
+  nodes={[
+    { label: "Timer", sub: "every 5 minutes" },
+    { label: "Azure Function", sub: "check", accent: true },
+    { label: "lake container", sub: "iot.readings" },
+    { label: "Webhook", sub: "Slack, Teams, …" },
+  ]}
+  edges={["invoke", "query", "alert"]}
+/>
+
+The `check` function runs every 5 minutes. It asks two questions of the table and posts to a webhook when either has an answer:
+
+- Which pumps averaged above 80° over the last 10 minutes? A SQL query over recent data. The time filter skips every file whose time range lies outside the window, before any data is read.
+- Which pumps have sent nothing for 15 minutes? `lake.latest()` answers from the last-value index, without scanning the table.
+
+Point it at any URL that takes a JSON POST, such as a Slack incoming webhook (which reads the `text` field) or a Logic App with an HTTP trigger that sends email:
+
+```bash
+az functionapp config appsettings set -g $RG -n $APP --settings ALERT_WEBHOOK=https://hooks.slack.com/services/…
+```
+
+Change the SQL to check anything the table holds: a rate of change, a counter that stopped increasing, readings outside a band per site (join a devices table). Over longer windows, a [rollup](/docs/rollups) keeps the query small. A check that also wants a record of what it found can append its findings to another Timelake table.
+
 ## Maintenance
 
-Each append already merges small files and removes duplicates. The `maintain` timer in the same app runs at the start of every hour: it also sorts each finished day into one file and deletes expired files. Remove it if you don't need it.
+Each append already merges small files and removes duplicates. The `maintain` timer runs at the start of every hour: it also sorts each finished day into one file, applies retention, and deletes files no version needs. Remove it from `function_app.py` if you don't need it.
+
+## Other designs
+
+- **A long-running consumer.** For a stream busy enough to keep a function running all the time, run the same code in a loop on Azure Container Apps: read Event Hubs with the `azure-eventhub` SDK and append every few seconds. It holds the table open between appends.
+- **Event Hubs Capture.** On the Standard tier, Capture writes each partition's events to Blob Storage as Avro files every few minutes. Point design 1 at the capture container and add an Avro reader (such as `fastavro`) to `read_file`.
+- **Backfill.** Load history from a VM in the same region: `az storage blob download-batch` the old files to disk, then `timelake import iot.readings ./history --batch-id backfill-2025`. Appends of history don't conflict with live ingestion. [Settings](/docs/settings) covers partition size for old data.
 
 ## Cost
 
-Each append sends about 7 writes and 2 reads to the storage account. Blob Storage charges per 10,000 write and read operations. [Storage & configuration](/docs/storage#requests-and-cost) lists the requests per append and per query. To pay less, have gateways send fewer, larger files.
+Each commit sends about 7 writes and 2 reads to the storage account. Blob Storage charges per 10,000 write and read operations, so the batch settings in `host.json` and the upload interval are the main cost control. [Storage & configuration](/docs/storage#requests-and-cost) lists the requests per append and per query. Event Hubs charges per throughput unit-hour and per million events, Service Bus per million operations, and IoT Hub per unit of its tier. Flex Consumption bills for executions and the memory-seconds they use.

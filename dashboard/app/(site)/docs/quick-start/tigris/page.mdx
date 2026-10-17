@@ -1,0 +1,250 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "Quick start: Tigris" }
+
+# Tigris
+
+[Tigris](https://www.tigrisdata.com) is S3-compatible object storage, and it can hold the lake. It runs no code, so the Timelake writer runs wherever you have compute: a VM, a laptop, a container on [Fly.io](/docs/quick-start/fly), or a function on [Vercel](/docs/quick-start/vercel). This page covers the Tigris side: the bucket, credentials, settings, and three ways to feed it.
+
+| Design | Devices send | Visible to queries after | Fits |
+| --- | --- | --- | --- |
+| [Files and a poller](#design-1-files-and-a-poller) | CSV or Parquet files to a landing bucket | the next poll (every minute) | gateways that upload files; no public endpoint to run |
+| [Object notifications](#design-2-object-notifications) | CSV or Parquet files to a landing bucket | seconds after each upload | the same gateways, with an HTTPS endpoint you run |
+| [Direct appends](#design-3-direct-appends) | readings to your own Python process | each append | an app or gateway that already runs your code |
+
+**Which to choose.** If the readings already pass through a process you run, append from it directly (design 3). For a fleet of gateways that upload files, use object notifications (design 2) if you can run an HTTPS endpoint, and the poller (design 1) if you can't. Whichever you choose, create the lake bucket in one region or one multi-region geography, as [Shared setup](#shared-setup) explains.
+
+## Shared setup
+
+The commands use the [Tigris CLI](https://www.tigrisdata.com/docs/cli/) (`tigris`, or `t3` for short), the AWS CLI for one check, [uv](https://docs.astral.sh/uv/), and the `timelake` command ([install](/docs/quick-start#1-install)).
+
+### The buckets
+
+```bash
+tigris login
+tigris buckets create my-lake --locations iad            # the lake: one region, next to the writers
+tigris buckets create my-lake-landing --locations iad    # files from gateways (designs 1 and 2)
+```
+
+Bucket names are global: choose your own. **Create the lake in a single region (such as `iad`) or a multi-region geography (`usa`, `eur`), not the default `global`.** Each Timelake commit is a conditional write ("create the next metadata file only if it doesn't exist"). Tigris evaluates conditions against the latest state everywhere only for single-region and multi-region buckets. In a `global` bucket, writers in two regions could both see their commit succeed ([Tigris consistency](https://www.tigrisdata.com/docs/concepts/consistency/)). A single-region bucket also gives every reader the newest version straight away.
+
+### An access key
+
+```bash
+tigris access-keys create timelake --bucket my-lake,my-lake-landing --role Editor,Editor --env timelake.env --for aws
+set -a; . ./timelake.env; set +a
+export AWS_ENDPOINT=$AWS_ENDPOINT_URL_S3
+```
+
+The key may read, write, and delete in both buckets. `timelake.env` holds `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL_S3` (`https://t3.storage.dev`), and `AWS_REGION=auto`; keep it private, since the secret is shown only once. Timelake, boto3, and the AWS CLI read these variables. The last line also sets `AWS_ENDPOINT`, so Timelake recognises Tigris and uses its faster freshness check ([Tigris settings](#tigris-settings-for-timelake)).
+
+### Check conditional writes and create the table
+
+The second `put-object` must fail with `PreconditionFailed`:
+
+```bash
+echo probe > probe.txt
+aws s3api put-object --bucket my-lake --key probe.txt --body probe.txt --if-none-match '*'
+aws s3api put-object --bucket my-lake --key probe.txt --body probe.txt --if-none-match '*'
+aws s3api delete-object --bucket my-lake --key probe.txt
+
+export TIMELAKE_WAREHOUSE=s3://my-lake/warehouse
+timelake create iot.readings --schema "time:timestamptz,device_id:string,temp:double,humidity:int" \
+  --time-column time --series-key device_id
+```
+
+## Design 1: Files and a poller
+
+<IngestFlow
+  nodes={[
+    { label: "Gateways", sub: "CSV / Parquet" },
+    { label: "Landing bucket" },
+    { label: "Poller", sub: "table.append", accent: true },
+    { label: "Lake bucket", sub: "Iceberg tables" },
+  ]}
+  edges={["PUT", "every minute", "commit"]}
+/>
+
+Gateways upload files to the landing bucket with any S3 client, using a key that is unique per file, such as `gateway-7/20260105T1000.csv`. Every minute a script lists the landing bucket, appends each file, and deletes it. Nothing needs to be reachable from the internet.
+
+`ingest_landing.py`:
+
+```python
+"""Appends every CSV or Parquet file in the landing bucket to a Timelake table, then deletes it."""
+
+import io
+import os
+
+import boto3
+import pyarrow.csv as csv
+import pyarrow.parquet as pq
+import timelake
+
+BUCKET = os.environ["LANDING_BUCKET"]
+s3 = boto3.client("s3")  # endpoint and region from AWS_ENDPOINT_URL_S3 and AWS_REGION
+table = timelake.Lake(os.environ["TIMELAKE_WAREHOUSE"]).table(os.environ["TIMELAKE_TABLE"])
+
+
+def read(name, body):
+    return pq.read_table(io.BytesIO(body)) if name.endswith(".parquet") else csv.read_csv(io.BytesIO(body))
+
+
+for page in s3.get_paginator("list_objects_v2").paginate(Bucket=BUCKET):
+    for obj in page.get("Contents", []):
+        key = obj["Key"]
+        body = s3.get_object(Bucket=BUCKET, Key=key)["Body"].read()
+        # The object key is the batch id: if the script stops before the delete, the next run skips the file.
+        print(key, table.append(read(key, body), batch_id=key))
+        s3.delete_object(Bucket=BUCKET, Key=key)
+```
+
+Add the rest of its settings to `timelake.env`, so cron has them too:
+
+```
+AWS_ENDPOINT=https://t3.storage.dev
+TIMELAKE_WAREHOUSE=s3://my-lake/warehouse
+TIMELAKE_TABLE=iot.readings
+LANDING_BUCKET=my-lake-landing
+```
+
+Run it by hand once, then from cron on any host with Python:
+
+```bash
+set -a; . ./timelake.env; set +a
+uv run --with timelake --with boto3 ingest_landing.py
+```
+
+```
+* * * * * cd $HOME/timelake && set -a && . ./timelake.env && set +a && $HOME/.local/bin/uv run --with timelake --with boto3 ingest_landing.py >> ingest.log 2>&1
+```
+
+Run one poller per table. It appends files one after another, so its commits never wait for each other. A file uploaded again with a key that was already loaded is skipped, so send corrections as new files.
+
+## Design 2: Object notifications
+
+<IngestFlow
+  nodes={[
+    { label: "Gateways", sub: "CSV / Parquet" },
+    { label: "Landing bucket" },
+    { label: "Your endpoint", sub: "table.append", accent: true },
+    { label: "Lake bucket", sub: "Iceberg tables" },
+  ]}
+  edges={["PUT", "webhook", "commit"]}
+/>
+
+Tigris can POST a JSON notification to a URL whenever an object is created, renamed, or deleted ([object notifications](https://www.tigrisdata.com/docs/buckets/object-notifications/)). Each request carries a list of events with the bucket, the key, the size, and the ETag. A small HTTP server appends each new file as soon as it lands. It needs a public HTTPS address: a VM behind a TLS proxy, a [Fly.io](/docs/quick-start/fly) app, or anything else that keeps a process running.
+
+`notify.py`:
+
+```python
+"""Receives Tigris object notifications and appends each new CSV or Parquet file to a Timelake table."""
+
+import hmac
+import io
+import json
+import os
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+import boto3
+import pyarrow.csv as csv
+import pyarrow.parquet as pq
+import timelake
+
+TOKEN = os.environ["NOTIFY_TOKEN"]
+s3 = boto3.client("s3")  # endpoint and region from AWS_ENDPOINT_URL_S3 and AWS_REGION
+table = timelake.Lake(os.environ["TIMELAKE_WAREHOUSE"]).table(os.environ["TIMELAKE_TABLE"])
+
+
+def read(name, body):
+    return pq.read_table(io.BytesIO(body)) if name.endswith(".parquet") else csv.read_csv(io.BytesIO(body))
+
+
+class Notifications(BaseHTTPRequestHandler):
+    def do_POST(self):
+        if not hmac.compare_digest(self.headers.get("Authorization", ""), f"Bearer {TOKEN}"):
+            self.send_response(401)
+            self.end_headers()
+            return
+        events = json.loads(self.rfile.read(int(self.headers["Content-Length"])))["events"]
+        for event in events:
+            if not event["eventName"].startswith("OBJECT_CREATED"):
+                continue
+            bucket, key = event["bucket"], event["object"]["key"]
+            body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
+            # The object key is the batch id: a redelivered notification loads nothing twice.
+            print(key, table.append(read(key, body), batch_id=key), flush=True)
+        self.send_response(200)
+        self.end_headers()
+
+
+# One request at a time, so appends to the table never wait for each other.
+HTTPServer(("", int(os.environ.get("PORT", "8080"))), Notifications).serve_forever()
+```
+
+Start it with a random token:
+
+```bash
+set -a; . ./timelake.env; set +a
+export NOTIFY_TOKEN=$(openssl rand -hex 32) && echo $NOTIFY_TOKEN    # for the dashboard
+uv run --with timelake --with boto3 notify.py
+```
+
+Then, in the Tigris dashboard, open the **landing** bucket's **Settings**, enable object notifications, and enter your endpoint's URL. Choose token authentication with the same token: Tigris sends it as `Authorization: Bearer <token>`. Set notifications on the landing bucket only. On the lake bucket, every Timelake write would send an event.
+
+Tigris counts any response other than 2xx, and any request that takes longer than 10 seconds, as failed, and retries it. Delivery is at least once and not always in order. With the key as the batch id, a repeated notification is skipped. An append of a file of a few MB usually takes well under a second.
+
+## Design 3: Direct appends
+
+<IngestFlow
+  nodes={[
+    { label: "Devices" },
+    { label: "Your process", sub: "table.append", accent: true },
+    { label: "Lake bucket", sub: "Iceberg tables" },
+  ]}
+  edges={["MQTT / HTTP / serial", "commit"]}
+/>
+
+A process that already receives the readings (an MQTT client, an HTTP API, a gateway's poller) appends to the lake itself, with the variables from [Shared setup](#an-access-key) in its environment:
+
+```python
+import timelake
+
+table = timelake.Lake("s3://my-lake/warehouse").table("iot.readings")
+table.append(batch)  # a pyarrow Table, RecordBatch, or polars DataFrame
+```
+
+Collect readings for a few seconds and append them together, as in the [local guide](/docs/quick-start/local#appending-from-python): each append is one commit, about 7 writes. Writers can run anywhere. In a single-region bucket every request goes to that region, so put the writers near it, or choose a multi-region bucket if they are spread across a continent. Several processes can append to one table; when two commit together, one retries.
+
+## Tigris settings for Timelake
+
+- **Freshness check.** A reader that already has a table version checks for a newer one before each query. On most stores that is a HEAD request. On Tigris a HEAD of a missing key took about 285 ms and a LIST of the same name about 40 ms ([Storage & configuration](/docs/storage#request-options-trade-offs)), so Timelake uses `list` on Tigris. It recognises Tigris when the S3 endpoint option (`AWS_ENDPOINT` or `-o aws_endpoint=…`) contains `tigris` or `storage.dev`. An endpoint given only as `AWS_ENDPOINT_URL_S3`, as the Tigris CLI and Fly.io set it, is not recognised. Every check then takes the slower HEAD. Set `AWS_ENDPOINT` as well (Shared setup does), or pass `-o timelake_freshness_check=list`.
+- **Bucket location.** Use a single-region or multi-region bucket for the lake, as above.
+- **Region.** `AWS_REGION=auto`; Tigris routes each request.
+
+## Scheduled checks
+
+A check that reads recent data and alerts runs as a cron job next to the poller, or as a scheduled job on your compute platform. The [check on the AWS page](/docs/quick-start/aws#scheduled-checks-on-recent-data) works unchanged on Tigris. Replace its SNS call with a POST to your chat or paging webhook.
+
+## Maintenance
+
+Each append already merges small files and removes duplicates. Run `timelake maintain` once an hour from cron to also sort each finished day into one file, apply retention, and delete files no version needs:
+
+```
+0 * * * * cd $HOME/timelake && set -a && . ./timelake.env && set +a && $HOME/.cargo/bin/timelake maintain >> maintain.log 2>&1
+```
+
+## Cost
+
+Tigris prices, as of October 2026 ([pricing](https://www.tigrisdata.com/pricing/)):
+
+| | Price |
+| --- | ---: |
+| Standard storage | $0.02 per GB-month |
+| Class A requests (PUT, COPY, POST, LIST) | $0.005 per 1,000 |
+| Class B requests (GET, HEAD, and all others) | $0.0005 per 1,000 |
+| DELETE | free |
+| Object notifications | $0.01 per 1,000 events |
+| Egress | free |
+| Free each month | 5 GB storage, 10,000 Class A and 100,000 Class B requests |
+
+Each commit sends about 7 Class A and 2 Class B requests: at one commit per second about $3.10 a day, at one per minute about 5 cents. The free tier covers about 1,400 commits a month. On Tigris each freshness check is a LIST, a Class A request: a dashboard refreshing one table every 5 seconds sends about 17,000 a day, about 9 cents. Reading data out costs only the GETs, from any cloud or the internet.

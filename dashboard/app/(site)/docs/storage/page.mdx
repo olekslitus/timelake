@@ -118,6 +118,8 @@ aws s3api delete-object --bucket my-bucket --key probe.txt
 
 Creating the same table twice is not a test: `create` sees the first table before it tries the conditional write.
 
+A probe from one place doesn't show what writers in different regions see. Tigris checks a conditional write against the latest state in one region only on its default `global` and dual-region buckets ([Tigris docs](https://www.tigrisdata.com/docs/objects/conditionals)), so writers in two regions could both commit the same version. Create a Tigris lake bucket as single-region or multi-region, or keep every writer in one region.
+
 ## Environment
 
 | Variable | Meaning |
