@@ -4,8 +4,22 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { Suspense } from "react"
 
-import { DOCS_NAV } from "@/lib/docs-nav"
+import { DOCS_NAV, type DocsLink } from "@/lib/docs-nav"
 import { cn } from "@/lib/utils"
+
+function NavLink({ link, pathname }: { link: DocsLink; pathname: string | null }) {
+  return (
+    <Link
+      href={link.href}
+      className={cn(
+        "block rounded-md px-2 py-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+        pathname === link.href && "bg-muted font-medium text-foreground",
+      )}
+    >
+      {link.label}
+    </Link>
+  )
+}
 
 function Nav({ pathname }: { pathname: string | null }) {
   return (
@@ -14,16 +28,16 @@ function Nav({ pathname }: { pathname: string | null }) {
         <div key={g.title} className="space-y-1">
           <div className="label-mono px-2">{g.title}</div>
           {g.items.map((i) => (
-            <Link
-              key={i.href}
-              href={i.href}
-              className={cn(
-                "block rounded-md px-2 py-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
-                pathname === i.href && "bg-muted font-medium text-foreground",
+            <div key={i.href} className="space-y-1">
+              <NavLink link={i} pathname={pathname} />
+              {i.items && (
+                <div className="ml-2 space-y-1 border-l pl-2">
+                  {i.items.map((c) => (
+                    <NavLink key={c.href} link={c} pathname={pathname} />
+                  ))}
+                </div>
               )}
-            >
-              {i.label}
-            </Link>
+            </div>
           ))}
         </div>
       ))}

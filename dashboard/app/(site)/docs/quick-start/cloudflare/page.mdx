@@ -1,0 +1,154 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "Quick start: Cloudflare" }
+
+# Cloudflare
+
+Gateways upload CSV or Parquet files over HTTPS to a Worker, which stores them under `landing/` in an R2 bucket. A writer script lists those files every minute, appends each one to a Timelake table under `lake/` in the same bucket, and deletes it.
+
+<IngestFlow
+  nodes={[
+    { label: "Gateways", sub: "CSV / Parquet" },
+    { label: "Worker" },
+    { label: "R2 landing/" },
+    { label: "Writer", sub: "table.append", accent: true },
+    { label: "R2 lake/", sub: "Iceberg tables" },
+  ]}
+  edges={["HTTPS PUT", "put", "every minute", "commit"]}
+/>
+
+The writer is native code, so it can't run inside a Worker; the WebAssembly build of Timelake only reads. Run the writer on any Linux or macOS host with Python, such as a small VM or a Kubernetes CronJob. It talks to R2 through R2's S3-compatible API.
+
+Timelake hasn't been tested on R2 yet ([Limitations](/docs/limitations)). Step 2 checks the one feature it depends on.
+
+The commands use [Wrangler](https://developers.cloudflare.com/workers/wrangler/), the AWS CLI (for the check), [uv](https://docs.astral.sh/uv/), and the `timelake` command ([install](/docs/quick-start#1-install)).
+
+## 1. Create the bucket and an API token
+
+```bash
+npx wrangler r2 bucket create timelake
+```
+
+In the Cloudflare dashboard, open **R2 → Manage API tokens → Create API token**, choose **Object Read & Write**, and limit it to the `timelake` bucket. Note the access key ID, the secret access key, and your account ID. Timelake and the writer use them as S3 credentials:
+
+```bash
+export AWS_ACCESS_KEY_ID=<access key id> AWS_SECRET_ACCESS_KEY=<secret access key> AWS_REGION=auto
+export AWS_ENDPOINT=https://<account id>.r2.cloudflarestorage.com
+export TIMELAKE_WAREHOUSE=s3://timelake/lake
+```
+
+## 2. Check conditional writes and create the table
+
+Each commit is a put-if-absent. The second `put-object` must fail with `PreconditionFailed`:
+
+```bash
+echo probe > probe.txt
+aws s3api put-object --endpoint-url $AWS_ENDPOINT --bucket timelake --key probe.txt --body probe.txt --if-none-match '*'
+aws s3api put-object --endpoint-url $AWS_ENDPOINT --bucket timelake --key probe.txt --body probe.txt --if-none-match '*'
+aws s3api delete-object --endpoint-url $AWS_ENDPOINT --bucket timelake --key probe.txt
+
+timelake create iot.readings --schema "time:timestamptz,device_id:string,temp:double,humidity:int" \
+  --time-column time --series-key device_id
+```
+
+## 3. Deploy the Worker
+
+`src/index.js`:
+
+```js
+// Accepts PUT /<file>.csv (or .parquet) from gateways and stores it under landing/ in R2.
+// The gateway names each file (gateway id + sequence number), so a retried upload overwrites
+// the same object and the writer loads it once.
+const NAME = /^[\w.-]+\.(csv|parquet)$/
+
+export default {
+  async fetch(request, env) {
+    if (request.headers.get("authorization") !== `Bearer ${env.INGEST_TOKEN}`) {
+      return new Response("unauthorized", { status: 401 })
+    }
+    const name = new URL(request.url).pathname.slice(1)
+    if (request.method !== "PUT" || !NAME.test(name)) {
+      return new Response("PUT /<name>.csv or /<name>.parquet", { status: 400 })
+    }
+    await env.LAKE.put(`landing/${name}`, await request.arrayBuffer())
+    return new Response(`landing/${name}\n`, { status: 201 })
+  },
+}
+```
+
+`wrangler.jsonc`:
+
+```json
+{
+  "name": "timelake-intake",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-01",
+  "r2_buckets": [{ "binding": "LAKE", "bucket_name": "timelake" }]
+}
+```
+
+```bash
+openssl rand -hex 32 | npx wrangler secret put INGEST_TOKEN     # note the token for the gateways
+npx wrangler deploy
+```
+
+## 4. Run the writer
+
+`ingest_r2.py`:
+
+```python
+"""Appends every CSV or Parquet file under landing/ in an R2 bucket to a Timelake table, then deletes it."""
+
+import io
+import os
+
+import boto3
+import pyarrow.csv as csv
+import pyarrow.parquet as pq
+import timelake
+
+BUCKET = os.environ["LANDING_BUCKET"]
+r2 = boto3.client("s3", endpoint_url=os.environ["AWS_ENDPOINT"], region_name="auto")
+table = timelake.Lake(os.environ["TIMELAKE_WAREHOUSE"]).table(os.environ["TIMELAKE_TABLE"])
+
+
+def read(name, body):
+    return pq.read_table(io.BytesIO(body)) if name.endswith(".parquet") else csv.read_csv(io.BytesIO(body))
+
+
+for page in r2.get_paginator("list_objects_v2").paginate(Bucket=BUCKET, Prefix="landing/"):
+    for obj in page.get("Contents", []):
+        key = obj["Key"]
+        body = r2.get_object(Bucket=BUCKET, Key=key)["Body"].read()
+        # The object key is the batch id: if the script stops before the delete, the next run skips the file.
+        print(key, table.append(read(key, body), batch_id=key))
+        r2.delete_object(Bucket=BUCKET, Key=key)
+```
+
+Run it once by hand, then from cron every minute. For cron, put the `export` lines from step 1 and the one below in `~/timelake.env`.
+
+```bash
+export LANDING_BUCKET=timelake TIMELAKE_TABLE=iot.readings
+uv run --with timelake --with boto3 ingest_r2.py
+```
+
+```
+* * * * * . $HOME/timelake.env && cd $HOME/timelake && $HOME/.local/bin/uv run --with timelake --with boto3 ingest_r2.py >> ingest.log 2>&1
+```
+
+Run one writer per table: it appends files in order, so commits never wait for each other.
+
+## 5. Send a file and query it
+
+```bash
+curl -X PUT --data-binary @readings.csv -H "authorization: Bearer <token>" \
+  https://timelake-intake.<your subdomain>.workers.dev/gateway-1-20260105T1000.csv
+
+timelake latest iot.readings      # after the next writer run
+```
+
+The writer's appends already merge small files and remove duplicates. To also sort each finished day into one file and delete expired files, add `timelake maintain` to cron once an hour.
+
+## Cost
+
+R2 charges per million writes and reads, and nothing for data read out of it. Each append sends about 7 writes and 2 reads, and each uploaded file adds a write, a list, a read, and a delete. [Storage & configuration](/docs/storage#requests-and-cost) lists the requests per append and per query. To pay less, have gateways send fewer, larger files.

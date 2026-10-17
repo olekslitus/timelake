@@ -1,0 +1,185 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "Quick start: AWS" }
+
+# AWS
+
+Gateways upload CSV or Parquet files to a landing bucket. Each upload triggers a Lambda function that appends the file to a Timelake table in a second bucket. A scheduled Lambda runs maintenance. There is no server: you pay for the requests, the storage, and the Lambda time.
+
+<IngestFlow
+  nodes={[
+    { label: "Gateways", sub: "CSV / Parquet" },
+    { label: "S3 landing bucket" },
+    { label: "Lambda", sub: "table.append", accent: true },
+    { label: "S3 lake bucket", sub: "Iceberg tables" },
+  ]}
+  edges={["PUT", "event", "commit"]}
+/>
+
+The commands use the AWS CLI, Docker, and the `timelake` command ([install](/docs/quick-start#1-install)). Set these once:
+
+```bash
+export AWS_REGION=us-east-2
+export ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+export LANDING=$ACCOUNT-timelake-landing LAKE=$ACCOUNT-timelake-lake
+```
+
+Timelake reads credentials from the `AWS_*` environment variables, not from `~/.aws/config`. To use a profile or an SSO login on your machine, export its credentials first:
+
+```bash
+eval "$(aws configure export-credentials --format env)"
+```
+
+## 1. Create the buckets and the table
+
+```bash
+aws s3 mb s3://$LANDING
+aws s3 mb s3://$LAKE
+export TIMELAKE_WAREHOUSE=s3://$LAKE/warehouse
+timelake create iot.readings --schema "time:timestamptz,device_id:string,temp:double,humidity:int" \
+  --time-column time --series-key device_id
+```
+
+Use two buckets so that the lake's own writes never trigger the function.
+
+## 2. Write the function
+
+`handler.py`:
+
+```python
+"""Appends each CSV or Parquet file that lands in the landing bucket to a Timelake table."""
+
+import io
+import os
+from urllib.parse import unquote_plus
+
+import boto3
+import pyarrow.csv as csv
+import pyarrow.parquet as pq
+import timelake
+
+s3 = boto3.client("s3")
+lake = timelake.Lake(os.environ["TIMELAKE_WAREHOUSE"])
+table = lake.table(os.environ["TIMELAKE_TABLE"])
+
+
+def read(name, body):
+    return pq.read_table(io.BytesIO(body)) if name.endswith(".parquet") else csv.read_csv(io.BytesIO(body))
+
+
+def ingest(event, context):
+    for record in event["Records"]:
+        bucket = record["s3"]["bucket"]["name"]
+        key = unquote_plus(record["s3"]["object"]["key"])
+        body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
+        # The object key is the batch id: a redelivered event loads nothing twice.
+        print(key, table.append(read(key, body), batch_id=key))
+
+
+def maintain(event, context):
+    for name in lake.tables():
+        print(name, lake.table(name).maintain())
+```
+
+S3 delivers each event at least once, and Lambda retries failed calls. With the object key as the batch id, a repeated event is skipped. So give every upload a unique key, such as `gateway-7/20260105T1000.csv`, and send corrections as new files.
+
+`Dockerfile`:
+
+```dockerfile
+FROM public.ecr.aws/lambda/python:3.13-arm64
+RUN pip install --no-cache-dir timelake boto3
+COPY handler.py ${LAMBDA_TASK_ROOT}/
+CMD ["handler.ingest"]
+```
+
+The function is deployed as a container image because `timelake` and `pyarrow` together are larger than the 250 MB limit for a zip upload ([#98](https://github.com/polythings/timelake/issues/98)).
+
+## 3. Build and push the image
+
+```bash
+export REPO=$ACCOUNT.dkr.ecr.$AWS_REGION.amazonaws.com/timelake-ingest
+aws ecr create-repository --repository-name timelake-ingest
+aws ecr get-login-password | docker login --username AWS --password-stdin ${REPO%%/*}
+docker build --platform linux/arm64 --provenance=false -t $REPO:latest .
+docker push $REPO:latest
+```
+
+## 4. Give the function a role
+
+The role may read the landing bucket and read, write, list, and delete in the lake bucket:
+
+```bash
+aws iam create-role --role-name timelake-ingest --assume-role-policy-document '{
+  "Version": "2012-10-17",
+  "Statement": [{"Effect": "Allow", "Principal": {"Service": "lambda.amazonaws.com"}, "Action": "sts:AssumeRole"}]
+}'
+aws iam attach-role-policy --role-name timelake-ingest \
+  --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+aws iam put-role-policy --role-name timelake-ingest --policy-name buckets --policy-document '{
+  "Version": "2012-10-17",
+  "Statement": [
+    {"Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::'$LANDING'/*"},
+    {"Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload"],
+     "Resource": "arn:aws:s3:::'$LAKE'/*"},
+    {"Effect": "Allow", "Action": "s3:ListBucket", "Resource": "arn:aws:s3:::'$LAKE'"}
+  ]
+}'
+```
+
+## 5. Create the function and connect the bucket
+
+```bash
+aws lambda create-function --function-name timelake-ingest --package-type Image \
+  --code ImageUri=$REPO:latest --architectures arm64 \
+  --role arn:aws:iam::$ACCOUNT:role/timelake-ingest \
+  --memory-size 1024 --timeout 120 \
+  --environment "Variables={TIMELAKE_WAREHOUSE=s3://$LAKE/warehouse,TIMELAKE_TABLE=iot.readings}"
+aws lambda put-function-concurrency --function-name timelake-ingest --reserved-concurrent-executions 4
+
+aws lambda add-permission --function-name timelake-ingest --statement-id landing-bucket \
+  --action lambda:InvokeFunction --principal s3.amazonaws.com \
+  --source-arn arn:aws:s3:::$LANDING --source-account $ACCOUNT
+aws s3api put-bucket-notification-configuration --bucket $LANDING --notification-configuration '{
+  "LambdaFunctionConfigurations": [{
+    "LambdaFunctionArn": "arn:aws:lambda:'$AWS_REGION:$ACCOUNT':function:timelake-ingest",
+    "Events": ["s3:ObjectCreated:*"]
+  }]
+}'
+```
+
+Lambda supplies the credentials and the region in environment variables, which Timelake reads. Commits to one table happen one at a time: when two functions commit together, one retries. The concurrency limit of 4 keeps those retries rare. Events beyond the limit wait in Lambda's queue. Fewer, larger files ingest faster than many small ones.
+
+## 6. Send a file and query it
+
+```bash
+cat > readings.csv <<'EOF'
+time,device_id,temp,humidity
+2026-01-05T10:00:00Z,pump-1,61.2,40
+2026-01-05T10:00:00Z,pump-2,58.9,42
+EOF
+aws s3 cp readings.csv s3://$LANDING/gateway-1/20260105T1000.csv
+
+aws logs tail /aws/lambda/timelake-ingest --since 5m     # the append result
+timelake latest iot.readings
+```
+
+## 7. Schedule maintenance (optional)
+
+Each append already merges small files and removes duplicates. An hourly `maintain` also sorts each finished day into one file and deletes expired files. It uses the same image with the other handler:
+
+```bash
+aws lambda create-function --function-name timelake-maintain --package-type Image \
+  --code ImageUri=$REPO:latest --architectures arm64 --image-config Command=handler.maintain \
+  --role arn:aws:iam::$ACCOUNT:role/timelake-ingest --memory-size 2048 --timeout 900 \
+  --environment "Variables={TIMELAKE_WAREHOUSE=s3://$LAKE/warehouse,TIMELAKE_TABLE=iot.readings}"
+aws events put-rule --name timelake-maintain --schedule-expression "rate(1 hour)"
+aws lambda add-permission --function-name timelake-maintain --statement-id hourly \
+  --action lambda:InvokeFunction --principal events.amazonaws.com \
+  --source-arn arn:aws:events:$AWS_REGION:$ACCOUNT:rule/timelake-maintain
+aws events put-targets --rule timelake-maintain \
+  --targets Id=1,Arn=arn:aws:lambda:$AWS_REGION:$ACCOUNT:function:timelake-maintain
+```
+
+## Cost
+
+Each append sends about 7 PUTs and 2 GETs to the lake bucket: at one file per second, about $3 a day in S3 requests. [Storage & configuration](/docs/storage#requests-and-cost) breaks this down. To pay less, have gateways send fewer, larger files.

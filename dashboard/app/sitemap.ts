@@ -2,7 +2,7 @@ import type { MetadataRoute } from "next"
 
 import { BENCHMARKS } from "@/lib/benchmark-catalog"
 import { WORKLOADS } from "@/lib/benchmarks"
-import { DOCS_NAV } from "@/lib/docs-nav"
+import { DOCS_PAGES } from "@/lib/docs-nav"
 import { SITE_URL } from "@/lib/site"
 
 // The site's pages, so search engines index timelake.dev rather than the domains that redirect to it.
@@ -10,7 +10,7 @@ import { SITE_URL } from "@/lib/site"
 export default function sitemap(): MetadataRoute.Sitemap {
   const paths = [
     "/",
-    ...DOCS_NAV.flatMap((s) => s.items.map((i) => i.href)),
+    ...DOCS_PAGES.map((p) => p.href),
     "/benchmarks",
     "/benchmarks/timebench",
     ...BENCHMARKS.filter((b) => b.workload && WORKLOADS.some((w) => w.id === b.workload)).map(

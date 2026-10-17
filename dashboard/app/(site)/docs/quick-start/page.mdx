@@ -237,7 +237,7 @@ GROUP BY 1 ORDER BY 1;
 
 ## 10. Move to object storage
 
-Point the warehouse at a bucket. Credentials come from the usual AWS environment variables or profile:
+Point the warehouse at a bucket. Credentials come from the usual `AWS_*` environment variables. For a profile or an SSO login, export its credentials first with `eval "$(aws configure export-credentials --format env)"`:
 
 ```bash
 export TIMELAKE_WAREHOUSE=s3://my-bucket/lake
@@ -245,7 +245,19 @@ export AWS_REGION=us-east-2
 timelake import iot.readings readings.csv --time-column time --series-key device_id
 ```
 
-For R2, MinIO, GCS, and Azure, see [Storage & configuration](/docs/storage).
+For MinIO and other S3-compatible stores, see [Storage & configuration](/docs/storage).
+
+## Ingestion setups
+
+Files that keep arriving, appended as they land, on your platform:
+
+| Guide | Tables in | Files land in | Appended by |
+| --- | --- | --- | --- |
+| [Local](/docs/quick-start/local) | a folder | a folder | `timelake append` from cron |
+| [AWS](/docs/quick-start/aws) | S3 | S3 | Lambda, on upload events |
+| [Azure](/docs/quick-start/azure) | Blob Storage | Blob Storage | Azure Functions, on Event Grid events |
+| [Google Cloud](/docs/quick-start/gcp) | Cloud Storage | Cloud Storage | Cloud Run function, on upload events |
+| [Cloudflare](/docs/quick-start/cloudflare) | R2 | R2, through a Worker | a Python script from cron |
 
 ## Next steps
 

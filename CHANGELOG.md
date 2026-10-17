@@ -43,6 +43,9 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
   the raw table, grouped by series-key columns, with `count`, `sum`, `min`, `max`, `avg`, `first_value` and
   `last_value`. `timelake maintain` and `Table.maintain()` report `rollups_refreshed` and `rollup_rows`
   (`--no-rollups`, `rollups=False` to skip). The docs have a new page, "Rollups".
+- **Ingestion guides.** The [Quick start](https://timelake.dev/docs/quick-start) has five sub-pages that set up
+  ingestion of arriving files: Local (a folder and cron), AWS (S3 and Lambda), Azure (Blob Storage and Azure
+  Functions), Google Cloud (Cloud Storage and Cloud Run functions), and Cloudflare (R2, a Worker, and a writer script).
 
 ### Changed
 
@@ -68,6 +71,9 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
   another size was committed between them, and the merged file then counted as newer than that file: where both held
   the same `(series, time)`, the older value won from then on. Compaction now merges only files next to each other in
   commit order, and a merged file keeps the data sequence number of the newest file it replaces.
+- Docs: the storage page's check for conditional writes created a table twice, which fails the second time on any
+  store. It now sends a put-if-absent twice with the AWS CLI. The quick start no longer says that Timelake reads AWS
+  profiles: it reads the `AWS_*` environment variables (`aws configure export-credentials` exports a profile's).
 
 ## 0.4.0 – 2026-10-14
 

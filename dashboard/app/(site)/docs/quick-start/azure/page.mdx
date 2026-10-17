@@ -1,0 +1,158 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "Quick start: Azure" }
+
+# Azure
+
+Gateways upload CSV or Parquet files to a `landing` container. Each upload triggers an Azure Function that appends the file to a Timelake table in a `lake` container of the same storage account. A timer in the same function app runs maintenance every hour.
+
+<IngestFlow
+  nodes={[
+    { label: "Gateways", sub: "CSV / Parquet" },
+    { label: "landing container" },
+    { label: "Azure Function", sub: "table.append", accent: true },
+    { label: "lake container", sub: "Iceberg tables" },
+  ]}
+  edges={["upload", "Event Grid", "commit"]}
+/>
+
+Timelake hasn't been tested on Azure Blob Storage yet ([Limitations](/docs/limitations)). It reaches Azure through the same storage library as S3, and commits use Azure's `If-None-Match` precondition.
+
+The commands use the Azure CLI, [Azure Functions Core Tools](https://learn.microsoft.com/azure/azure-functions/functions-run-local), and the `timelake` command ([install](/docs/quick-start#1-install)). Set these once:
+
+```bash
+export RG=timelake LOCATION=eastus
+export ACCOUNT=timelake$RANDOM APP=timelake-ingest-$RANDOM     # names must be unique across Azure
+az provider register --namespace Microsoft.EventGrid
+```
+
+## 1. Create the storage account and the table
+
+```bash
+az group create -n $RG -l $LOCATION
+az storage account create -n $ACCOUNT -g $RG -l $LOCATION --sku Standard_LRS --allow-blob-public-access false
+export SCOPE=$(az storage account show -n $ACCOUNT -g $RG --query id -o tsv)
+
+# Owners of the account still need a data role to read and write blobs
+az role assignment create --role "Storage Blob Data Contributor" --scope $SCOPE \
+  --assignee $(az ad signed-in-user show --query id -o tsv)
+az storage container create --account-name $ACCOUNT -n landing --auth-mode login
+az storage container create --account-name $ACCOUNT -n lake --auth-mode login
+```
+
+A new role assignment can take a few minutes to apply. Then create the table, signed in through the Azure CLI:
+
+```bash
+export AZURE_STORAGE_ACCOUNT_NAME=$ACCOUNT AZURE_USE_AZURE_CLI=true
+export TIMELAKE_WAREHOUSE=az://lake/warehouse
+timelake create iot.readings --schema "time:timestamptz,device_id:string,temp:double,humidity:int" \
+  --time-column time --series-key device_id
+```
+
+The trigger below fires only for the `landing` container, so the lake's own writes never trigger the function.
+
+## 2. Write the function
+
+In a new folder, `function_app.py`:
+
+```python
+"""Appends each CSV or Parquet file that lands in the landing container to a Timelake table."""
+
+import io
+import os
+
+import azure.functions as func
+import pyarrow.csv as csv
+import pyarrow.parquet as pq
+import timelake
+
+app = func.FunctionApp()
+lake = timelake.Lake(os.environ["TIMELAKE_WAREHOUSE"])
+table = lake.table(os.environ["TIMELAKE_TABLE"])
+
+
+def read(name, body):
+    return pq.read_table(io.BytesIO(body)) if name.endswith(".parquet") else csv.read_csv(io.BytesIO(body))
+
+
+@app.blob_trigger(arg_name="blob", path="landing/{name}", connection="AzureWebJobsStorage", source=func.BlobSource.EVENT_GRID)
+def ingest(blob: func.InputStream):
+    # The blob name is the batch id: a redelivered event loads nothing twice.
+    print(blob.name, table.append(read(blob.name, blob.read()), batch_id=blob.name))
+
+
+@app.timer_trigger(arg_name="timer", schedule="0 0 * * * *")
+def maintain(timer: func.TimerRequest):
+    for name in lake.tables():
+        print(name, lake.table(name).maintain())
+```
+
+`requirements.txt`:
+
+```
+azure-functions
+timelake
+```
+
+`host.json`:
+
+```json
+{
+  "version": "2.0",
+  "extensionBundle": { "id": "Microsoft.Azure.Functions.ExtensionBundle", "version": "[4.*, 5.0.0)" }
+}
+```
+
+Event Grid delivers each event at least once and retries failed calls. With the blob name as the batch id, a repeated event is skipped. So give every upload a unique name, such as `gateway-7/20260105T1000.csv`, and send corrections as new files.
+
+## 3. Create the function app and deploy
+
+The app runs on the Flex Consumption plan, with a managed identity that may read and write the storage account:
+
+```bash
+az functionapp create -g $RG -n $APP --storage-account $ACCOUNT --flexconsumption-location $LOCATION \
+  --runtime python --runtime-version 3.12 --assign-identity '[system]'
+az role assignment create --role "Storage Blob Data Contributor" --scope $SCOPE \
+  --assignee-object-id $(az functionapp identity show -g $RG -n $APP --query principalId -o tsv) \
+  --assignee-principal-type ServicePrincipal
+az functionapp config appsettings set -g $RG -n $APP --settings \
+  TIMELAKE_WAREHOUSE=az://lake/warehouse TIMELAKE_TABLE=iot.readings AZURE_STORAGE_ACCOUNT_NAME=$ACCOUNT
+func azure functionapp publish $APP
+```
+
+Timelake gets the managed identity's credentials from the function host. Commits to one table happen one at a time: when two instances commit together, one retries. Fewer, larger files ingest faster than many small ones.
+
+## 4. Send blob events to the function
+
+```bash
+az eventgrid system-topic create -g $RG -n timelake-storage -l $LOCATION \
+  --topic-type Microsoft.Storage.StorageAccounts --source $SCOPE
+KEY=$(az functionapp keys list -g $RG -n $APP --query systemKeys.blobs_extension -o tsv)
+HOST=$(az functionapp show -g $RG -n $APP --query defaultHostName -o tsv)
+az eventgrid system-topic event-subscription create -g $RG --system-topic-name timelake-storage -n landing \
+  --endpoint "https://$HOST/runtime/webhooks/blobs?functionName=Host.Functions.ingest&code=$KEY" \
+  --included-event-types Microsoft.Storage.BlobCreated \
+  --subject-begins-with /blobServices/default/containers/landing/
+```
+
+## 5. Send a file and query it
+
+```bash
+cat > readings.csv <<'EOF'
+time,device_id,temp,humidity
+2026-01-05T10:00:00Z,pump-1,61.2,40
+2026-01-05T10:00:00Z,pump-2,58.9,42
+EOF
+az storage blob upload --account-name $ACCOUNT -c landing -n gateway-1/20260105T1000.csv -f readings.csv \
+  --auth-mode login
+
+timelake latest iot.readings
+```
+
+## Maintenance
+
+Each append already merges small files and removes duplicates. The `maintain` timer in the same app runs at the start of every hour: it also sorts each finished day into one file and deletes expired files. Remove it if you don't need it.
+
+## Cost
+
+Each append sends about 7 writes and 2 reads to the storage account. Blob Storage charges per 10,000 write and read operations. [Storage & configuration](/docs/storage#requests-and-cost) lists the requests per append and per query. To pay less, have gateways send fewer, larger files.

@@ -107,13 +107,16 @@ Then each query reads its data: one GET per byte range, a few per file, and none
 
 ## Conditional writes are required
 
-Commits create the next `vN.metadata.json` with put-if-absent: on S3 that is `If-None-Match: *`, which AWS S3 has supported since 2024; GCS and Azure use their own preconditions. A store that ignores the condition would let two concurrent writers both believe they committed. Timelake has been tested on local disk, RustFS, AWS S3, and S3 Express One Zone (correctness only). With a store you haven’t tested, check that creating the same table twice fails the second time:
+Commits create the next `vN.metadata.json` with put-if-absent: on S3 that is `If-None-Match: *`, which AWS S3 has supported since 2024; GCS and Azure use their own preconditions. A store that ignores the condition would let two concurrent writers both believe they committed. Timelake has been tested on local disk, RustFS, AWS S3, and S3 Express One Zone (correctness only). With an S3-compatible store you haven’t tested, check that a second put-if-absent of the same key fails (add `--endpoint-url` for the store):
 
 ```bash
-timelake -w s3://my-bucket/test create t --schema "x:int"     # created t
-timelake -w s3://my-bucket/test create t --schema "x:int"     # must fail: already exists
-timelake -w s3://my-bucket/test drop t
+echo probe > probe.txt
+aws s3api put-object --bucket my-bucket --key probe.txt --body probe.txt --if-none-match '*'   # succeeds
+aws s3api put-object --bucket my-bucket --key probe.txt --body probe.txt --if-none-match '*'   # must fail: PreconditionFailed
+aws s3api delete-object --bucket my-bucket --key probe.txt
 ```
+
+Creating the same table twice is not a test: `create` sees the first table before it tries the conditional write.
 
 ## Environment
 

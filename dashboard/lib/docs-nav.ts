@@ -1,9 +1,21 @@
-export const DOCS_NAV: { title: string; items: { href: string; label: string }[] }[] = [
+export type DocsLink = { href: string; label: string; items?: DocsLink[] }
+
+export const DOCS_NAV: { title: string; items: DocsLink[] }[] = [
   {
     title: "Getting started",
     items: [
       { href: "/docs", label: "Introduction" },
-      { href: "/docs/quick-start", label: "Quick start" },
+      {
+        href: "/docs/quick-start",
+        label: "Quick start",
+        items: [
+          { href: "/docs/quick-start/local", label: "Local" },
+          { href: "/docs/quick-start/aws", label: "AWS" },
+          { href: "/docs/quick-start/azure", label: "Azure" },
+          { href: "/docs/quick-start/gcp", label: "Google Cloud" },
+          { href: "/docs/quick-start/cloudflare", label: "Cloudflare" },
+        ],
+      },
       { href: "/docs/how-it-works", label: "How it works" },
       { href: "/docs/concepts", label: "Concepts" },
       { href: "/docs/glossary", label: "Glossary" },
@@ -36,3 +48,6 @@ export const DOCS_NAV: { title: string; items: { href: string; label: string }[]
     ],
   },
 ]
+
+/** Every docs page in sidebar order, sub-pages right after their parent. */
+export const DOCS_PAGES: DocsLink[] = DOCS_NAV.flatMap((g) => g.items.flatMap((i) => [i, ...(i.items ?? [])]))

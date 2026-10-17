@@ -5,9 +5,7 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { Suspense } from "react"
 
-import { DOCS_NAV } from "@/lib/docs-nav"
-
-const PAGES = DOCS_NAV.flatMap((g) => g.items)
+import { DOCS_PAGES as PAGES } from "@/lib/docs-nav"
 
 function PagerLinks() {
   const pathname = usePathname()

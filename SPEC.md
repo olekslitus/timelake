@@ -787,7 +787,7 @@ Documented patterns with trade-offs and examples:
 
 Plus examples for credential vending via the REST catalog, per-tenant retention and rollups, and per-tenant ingestion quotas.
 
-**Planned setup guides, one per object store:** AWS S3 (and S3 Express One Zone), Cloudflare R2, Tigris, Wasabi, Backblaze B2, Azure Blob, Google Cloud Storage, and self-hosted RustFS. Each covers the bucket, credentials, endpoint and region settings, conditional-write support, and the cost to expect.
+**Planned setup guides, one per object store:** AWS S3 (and S3 Express One Zone), Cloudflare R2, Tigris, Wasabi, Backblaze B2, Azure Blob, Google Cloud Storage, and self-hosted RustFS. Each covers the bucket, credentials, endpoint and region settings, conditional-write support, and the cost to expect. Ingestion quick starts already cover Local, AWS (S3 + Lambda), Azure (Blob + Functions), Google Cloud (Cloud Storage + Cloud Run functions), and Cloudflare (R2 + a Worker and a writer script), written 2026-10-16.
 
 **Other planned doc recipes:** factory sensor monitoring, fleet/GPS tracking, energy metering (counters → `counter_diff`), building management, observability metrics, crypto/stock ticks, migrating from S3 Tables + Glue, and migrating from TimescaleDB/InfluxDB.
 

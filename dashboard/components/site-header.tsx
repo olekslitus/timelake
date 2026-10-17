@@ -101,9 +101,16 @@ export function SiteHeader() {
                 <div key={g.title} className="space-y-1">
                   <div className="text-xs font-medium text-muted-foreground">{g.title}</div>
                   {g.items.map((i) => (
-                    <Link key={i.href} href={i.href} className="block py-1 text-sm">
-                      {i.label}
-                    </Link>
+                    <div key={i.href}>
+                      <Link href={i.href} className="block py-1 text-sm">
+                        {i.label}
+                      </Link>
+                      {i.items?.map((c) => (
+                        <Link key={c.href} href={c.href} className="block border-l py-1 pl-3 text-sm">
+                          {c.label}
+                        </Link>
+                      ))}
+                    </div>
                   ))}
                 </div>
               ))}
