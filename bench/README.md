@@ -100,7 +100,7 @@ uv run timebench history --workload tsbs-iot                  # one line per run
   the newest finished commit each probe was (`lag_s`).
 - `--concurrency 1,4,16`: after the last checkpoint, that many client processes per system, each keeping a reader open
   and running the dashboard queries in turn for `--concurrency-seconds` (30): queries per second and p50/p95/p99, as
-  `concurrency` records.
+  `concurrency` records. A query that fails counts as one error per client and is left out of that client's turns.
 - Cost: on AWS targets, every query, ingest and maintenance record carries `usd` (its requests at S3 list prices,
   `timebench/cost.py`), and ingest and maintenance `storage_usd_month`. Machines aren't priced yet.
 
