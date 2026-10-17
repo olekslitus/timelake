@@ -1,0 +1,20 @@
+export const metadata = { title: "Local: A local S3" }
+
+# A local S3
+
+Do the [Local setup](/docs/quick-start/local/setup) first.
+
+## Rehearsing with a local S3
+
+To try the cloud setup without a cloud account, run [RustFS](https://rustfs.com), an S3-compatible server, in Docker:
+
+```bash
+docker run -d --name rustfs -p 9000:9000 -v rustfs-data:/data \
+  -e RUSTFS_ACCESS_KEY=localkey -e RUSTFS_SECRET_KEY=localsecret123 rustfs/rustfs:latest
+export AWS_ACCESS_KEY_ID=localkey AWS_SECRET_ACCESS_KEY=localsecret123 AWS_REGION=us-east-1
+export AWS_ENDPOINT=http://localhost:9000 AWS_ALLOW_HTTP=true
+aws --endpoint-url http://localhost:9000 s3 mb s3://lake
+export TIMELAKE_WAREHOUSE=s3://lake/warehouse
+```
+
+The steps above then work unchanged against the bucket.

@@ -1,0 +1,50 @@
+export const metadata = { title: "Quick start: AWS" }
+
+# AWS
+
+On AWS, Timelake runs inside Lambda functions and keeps its tables in an S3 bucket. Data reaches the functions in one of several ways, depending on how your devices send it. Every design below appends to the same table with the same container image, so you can start with one and add another later.
+
+| Design | Devices send | Visible to queries after | Fits |
+| --- | --- | --- | --- |
+| [Files to S3](/docs/quick-start/aws/files) | CSV, Parquet, or JSON files | each upload | gateways that buffer readings and upload every few minutes |
+| [Kinesis Data Streams](/docs/quick-start/aws/kinesis) | records through the AWS SDK | the batching window (seconds) | steady, high-volume streams; replay; order per device |
+| [SQS](/docs/quick-start/aws/sqs) | messages through the AWS SDK or HTTP | the batching window (seconds) | bursty or low volume; the simplest queue |
+| [IoT Core](/docs/quick-start/aws/iot-core) | MQTT messages | the batching window (seconds) | devices with certificates that speak MQTT |
+| [Data Firehose](/docs/quick-start/aws/firehose) | records through the AWS SDK | the buffer interval (60 s or more) | many small senders; AWS does the batching |
+
+Then [scheduled checks](/docs/quick-start/aws/checks#scheduled-checks-on-recent-data) read recent data and alert, and [maintenance](/docs/quick-start/aws/checks#maintenance) runs every hour. [Other designs](#other-designs) lists a long-running consumer, HTTP intake, and backfills.
+
+## S3 or S3 Tables
+
+AWS offers two places to keep Iceberg tables. Timelake writes to the first.
+
+|  | S3 general-purpose bucket, with Timelake | S3 Tables (table buckets) |
+| --- | --- | --- |
+| What it is | Ordinary objects: Parquet data and Iceberg metadata, written by the Timelake library | A bucket type for Iceberg tables, with an AWS-managed catalog |
+| Commits | A conditional write of the next metadata file | Through the S3 Tables API (an Iceberg REST endpoint) |
+| Compaction | In the writer, after appends; `maintain` for a full pass | Managed by AWS in the background (2.4–2.6 hours after ingest in our run) |
+| Writers | Timelake (CLI, Python, Rust) | Any Iceberg client: Spark, PyIceberg, Firehose |
+| Readers | Timelake, DuckDB, and other engines that open Iceberg tables by path | Athena, Redshift, and EMR through the Glue Data Catalog; Spark, PyIceberg, and DuckDB through the REST endpoint |
+| Time-series features | Latest values, deduplication, rollups, retention by time | Plain Iceberg |
+| Runs on | Any object store, or local disk | AWS only |
+| You pay for | S3 storage and requests, Lambda time | Table-bucket storage and requests, plus monitoring and compaction fees |
+
+Measured on the same data ([TSBS IoT](/benchmarks/tsbs-iot), 1,728 five-minute commits, laptop to us-east-2, [details](https://github.com/polythings/timelake/blob/main/bench/results/S3.md)):
+
+| | Timelake on S3 | S3 Tables |
+| --- | ---: | ---: |
+| Query right after ingest | 1.5 s, 65 requests | 21.6 s, 1,547 requests |
+| Query after S3 Tables' compaction (2.4–2.6 h later) | 1.2 s | 2.4 s |
+| Median commit | 0.48 s | 1.46 s |
+
+Choose S3 Tables if your queries go through Athena or Redshift, your writes come in large batches, and waiting hours for compaction is acceptable. Choose Timelake on S3 for frequent small appends that need fast queries straight away, for time-series queries, or to keep the same setup on other clouds. Timelake can't yet write into a table bucket or register its tables in Glue: both are planned through an Iceberg REST catalog.
+
+## Other designs
+
+- **A long-running consumer.** For a stream busy enough to keep a function running all the time, run the same code in a loop on ECS Fargate or EC2: poll SQS or read Kinesis, append every few seconds. It holds the table open between appends, and a container has no 250 MB package limit.
+- **Lambda behind API Gateway, appending directly.** Simple, but every request becomes a commit. Fine for a handful of requests a minute. Beyond that, put a queue in between ([SQS](/docs/quick-start/aws/sqs)).
+- **Backfill.** Load history from an EC2 instance in the same region: `aws s3 sync` the old files to disk, then `timelake import iot.readings ./history --batch-id backfill-2025`. Appends of history don't conflict with live ingestion. [Settings](/docs/settings) covers partition size for old data.
+
+## Cost
+
+Each commit sends about 7 PUTs and 2 GETs to the lake bucket. At one commit per second that is about $3 a day in S3 requests; at one per minute, about 5 cents. So the batching settings above (upload interval, batching window, buffer interval) are the main cost control. [Storage & configuration](/docs/storage#requests-and-cost) breaks the requests down. Kinesis, SQS, IoT Core, and Firehose have their own per-message or per-GB prices. Lambda bills for the seconds each function runs.

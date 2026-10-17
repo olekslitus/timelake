@@ -1,0 +1,46 @@
+export const metadata = { title: "Tigris setup" }
+
+# Tigris setup
+
+The commands use the [Tigris CLI](https://www.tigrisdata.com/docs/cli/) (`tigris`, or `t3` for short), the AWS CLI for one check, [uv](https://docs.astral.sh/uv/), and the `timelake` command ([install](/docs/quick-start#1-install)).
+
+## The buckets
+
+```bash
+tigris login
+tigris buckets create my-lake --locations iad            # the lake: one region, next to the writers
+tigris buckets create my-lake-landing --locations iad    # files from gateways (Files and a poller and Object notifications)
+```
+
+Bucket names are global: choose your own. **Create the lake in a single region (such as `iad`) or a multi-region geography (`usa`, `eur`), not the default `global`.** Each Timelake commit is a conditional write ("create the next metadata file only if it doesn't exist"). Tigris evaluates conditions against the latest state everywhere only for single-region and multi-region buckets. In a `global` bucket, writers in two regions could both see their commit succeed ([Tigris consistency](https://www.tigrisdata.com/docs/concepts/consistency/)). A single-region bucket also gives every reader the newest version straight away.
+
+## An access key
+
+```bash
+tigris access-keys create timelake --bucket my-lake,my-lake-landing --role Editor,Editor --env timelake.env --for aws
+set -a; . ./timelake.env; set +a
+export AWS_ENDPOINT=$AWS_ENDPOINT_URL_S3
+```
+
+The key may read, write, and delete in both buckets. `timelake.env` holds `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL_S3` (`https://t3.storage.dev`), and `AWS_REGION=auto`; keep it private, since the secret is shown only once. Timelake, boto3, and the AWS CLI read these variables. The last line also sets `AWS_ENDPOINT`, so Timelake recognises Tigris and uses its faster freshness check ([Tigris settings](#tigris-settings-for-timelake)).
+
+## Check conditional writes and create the table
+
+The second `put-object` must fail with `PreconditionFailed`:
+
+```bash
+echo probe > probe.txt
+aws s3api put-object --bucket my-lake --key probe.txt --body probe.txt --if-none-match '*'
+aws s3api put-object --bucket my-lake --key probe.txt --body probe.txt --if-none-match '*'
+aws s3api delete-object --bucket my-lake --key probe.txt
+
+export TIMELAKE_WAREHOUSE=s3://my-lake/warehouse
+timelake create iot.readings --schema "time:timestamptz,device_id:string,temp:double,humidity:int" \
+  --time-column time --series-key device_id
+```
+
+## Tigris settings for Timelake
+
+- **Freshness check.** A reader that already has a table version checks for a newer one before each query. On most stores that is a HEAD request. On Tigris a HEAD of a missing key took about 285 ms and a LIST of the same name about 40 ms ([Storage & configuration](/docs/storage#request-options-trade-offs)), so Timelake uses `list` on Tigris. It recognises Tigris when the S3 endpoint option (`AWS_ENDPOINT` or `-o aws_endpoint=…`) contains `tigris` or `storage.dev`. An endpoint given only as `AWS_ENDPOINT_URL_S3`, as the Tigris CLI and Fly.io set it, is not recognised. Every check then takes the slower HEAD. Set `AWS_ENDPOINT` as well (Shared setup does), or pass `-o timelake_freshness_check=list`.
+- **Bucket location.** Use a single-region or multi-region bucket for the lake, as above.
+- **Region.** `AWS_REGION=auto`; Tigris routes each request.

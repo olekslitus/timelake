@@ -1,0 +1,55 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "AWS: Data Firehose" }
+
+# Data Firehose
+
+Do the [AWS setup](/docs/quick-start/aws/setup) first.
+
+<IngestFlow
+  nodes={[
+    { label: "Devices", sub: "PutRecordBatch" },
+    { label: "Firehose" },
+    { label: "S3 landing bucket", sub: ".jsonl files" },
+    { label: "Lambda", sub: "ingest_s3", accent: true },
+    { label: "S3 lake bucket", sub: "Iceberg tables" },
+  ]}
+  edges={["SDK", "every 60 s", "event", "commit"]}
+/>
+
+Firehose collects records from many senders and writes them to the landing bucket as one file per buffer interval. The function from [Files to S3](/docs/quick-start/aws/files) appends each file, so each interval becomes one commit, however many devices send. Set up [Files to S3](/docs/quick-start/aws/files) first.
+
+```bash
+aws iam create-role --role-name timelake-firehose --assume-role-policy-document '{
+  "Version": "2012-10-17",
+  "Statement": [{"Effect": "Allow", "Principal": {"Service": "firehose.amazonaws.com"}, "Action": "sts:AssumeRole"}]
+}'
+aws iam put-role-policy --role-name timelake-firehose --policy-name landing --policy-document '{
+  "Version": "2012-10-17",
+  "Statement": [
+    {"Effect": "Allow", "Action": ["s3:PutObject", "s3:AbortMultipartUpload"], "Resource": "arn:aws:s3:::'$LANDING'/*"},
+    {"Effect": "Allow", "Action": ["s3:GetBucketLocation", "s3:ListBucket", "s3:ListBucketMultipartUploads"],
+     "Resource": "arn:aws:s3:::'$LANDING'"}
+  ]
+}'
+aws firehose create-delivery-stream --delivery-stream-name timelake-readings --delivery-stream-type DirectPut \
+  --extended-s3-destination-configuration '{
+    "RoleARN": "arn:aws:iam::'$ACCOUNT':role/timelake-firehose",
+    "BucketARN": "arn:aws:s3:::'$LANDING'",
+    "Prefix": "firehose/",
+    "FileExtension": ".jsonl",
+    "BufferingHints": {"IntervalInSeconds": 60, "SizeInMBs": 64},
+    "ProcessingConfiguration": {"Enabled": true, "Processors": [{"Type": "AppendDelimiterToRecord"}]}
+  }'
+```
+
+`AppendDelimiterToRecord` puts each record on its own line, which `read_file` reads as JSON lines. A longer buffer interval (up to 900 s) means fewer, larger commits.
+
+Try it:
+
+```bash
+aws firehose put-record --delivery-stream-name timelake-readings --cli-binary-format raw-in-base64-out \
+  --record '{"Data": "{\"time\": \"2026-01-05T10:20:00Z\", \"device_id\": \"pump-2\", \"temp\": 61.0, \"humidity\": 43}"}'
+```
+
+Firehose can also write into S3 Tables directly. Through Timelake, the same data gets the time-series layout and is queryable as soon as each file is appended.

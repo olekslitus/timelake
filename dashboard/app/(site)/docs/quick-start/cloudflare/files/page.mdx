@@ -1,0 +1,40 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "Cloudflare: Files to R2" }
+
+# Files to R2
+
+Do the [Cloudflare setup](/docs/quick-start/cloudflare/setup) first.
+
+<IngestFlow
+  nodes={[
+    { label: "Gateways", sub: "CSV / Parquet" },
+    { label: "Worker", sub: "PUT /files/…" },
+    { label: "R2 landing/" },
+    { label: "Writer", sub: "writer.py files", accent: true },
+    { label: "R2 lake/", sub: "Iceberg tables" },
+  ]}
+  edges={["HTTPS", "put", "every minute", "commit"]}
+/>
+
+Gateways upload files through the Worker. Every minute the writer lists `landing/`, appends each file, and deletes it. The cron line (`crontab -e`):
+
+```
+* * * * * cd $HOME/timelake && . ./timelake.env && flock -n files.lock $HOME/.local/bin/uv run --with timelake --with boto3 writer.py files >> writer.log 2>&1
+```
+
+Try it:
+
+```bash
+cat > readings.csv <<'EOF'
+time,device_id,temp,humidity
+2026-01-05T10:00:00Z,pump-1,61.2,40
+2026-01-05T10:00:00Z,pump-2,58.9,42
+EOF
+curl -X PUT --data-binary @readings.csv -H "authorization: Bearer <token>" \
+  "https://timelake-intake.<your subdomain>.workers.dev/files/gateway-1-20260105T1000.csv"
+uv run --with timelake --with boto3 writer.py files      # or wait for cron
+timelake latest iot.readings
+```
+
+Give every file a unique name, such as the gateway and a sequence number, and send corrections as new files: a name that was already loaded is skipped.

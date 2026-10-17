@@ -1,0 +1,28 @@
+export const metadata = { title: "Quick start: Azure" }
+
+# Azure
+
+On Azure, Timelake runs inside Azure Functions and keeps its tables in a Blob Storage container. Data reaches the functions in one of several ways, depending on how your devices send it. Every design below appends to the same table from the same function app, so you can start with one and add another later.
+
+| Design | Devices send | Visible to queries after | Fits |
+| --- | --- | --- | --- |
+| [Files to Blob Storage](/docs/quick-start/azure/files) | CSV, Parquet, or JSON files | each upload | gateways that buffer readings and upload every few minutes |
+| [Event Hubs](/docs/quick-start/azure/event-hubs) | events through the SDK, AMQP, or Kafka | the batch wait (up to 30 s) | steady, high-volume streams; replay; order per device |
+| [Service Bus](/docs/quick-start/azure/service-bus) | messages through the SDK or HTTPS | the batch wait (up to 30 s) | bursty or low volume; a dead-letter queue for bad messages |
+| [IoT Hub](/docs/quick-start/azure/iot-hub) | MQTT or AMQP messages | the batch wait (up to 30 s) | devices registered in IoT Hub, with per-device credentials |
+
+**Which to start with.** If gateways can write files, start with [Files to Blob Storage](/docs/quick-start/azure/files): it has the fewest moving parts, and each file is one commit. If devices send readings one at a time, use Event Hubs ([Event Hubs](/docs/quick-start/azure/event-hubs)) for a steady stream and Service Bus ([Service Bus](/docs/quick-start/azure/service-bus)) for a trickle or bursts. Use IoT Hub ([IoT Hub](/docs/quick-start/azure/iot-hub)) when you already manage devices there; it feeds the Event Hubs function.
+
+Then [scheduled checks](/docs/quick-start/azure/checks#scheduled-checks-on-recent-data) read recent data and alert, and [maintenance](/docs/quick-start/azure/checks#maintenance) runs every hour. [Other designs](#other-designs) lists a long-running consumer, Event Hubs Capture, and backfills.
+
+Timelake hasn't been tested on Azure Blob Storage yet ([Limitations](/docs/limitations)). It reaches Azure through the same storage library as S3, and commits use Azure's `If-None-Match` precondition.
+
+## Other designs
+
+- **A long-running consumer.** For a stream busy enough to keep a function running all the time, run the same code in a loop on Azure Container Apps: read Event Hubs with the `azure-eventhub` SDK and append every few seconds. It holds the table open between appends.
+- **Event Hubs Capture.** On the Standard tier, Capture writes each partition's events to Blob Storage as Avro files every few minutes. Point [Files to Blob Storage](/docs/quick-start/azure/files) at the capture container and add an Avro reader (such as `fastavro`) to `read_file`.
+- **Backfill.** Load history from a VM in the same region: `az storage blob download-batch` the old files to disk, then `timelake import iot.readings ./history --batch-id backfill-2025`. Appends of history don't conflict with live ingestion. [Settings](/docs/settings) covers partition size for old data.
+
+## Cost
+
+Each commit sends about 7 writes and 2 reads to the storage account. Blob Storage charges per 10,000 write and read operations, so the batch settings in `host.json` and the upload interval are the main cost control. [Storage & configuration](/docs/storage#requests-and-cost) lists the requests per append and per query. Event Hubs charges per throughput unit-hour and per million events, Service Bus per million operations, and IoT Hub per unit of its tier. Flex Consumption bills for executions and the memory-seconds they use.

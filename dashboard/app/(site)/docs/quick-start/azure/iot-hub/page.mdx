@@ -1,0 +1,43 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "Azure: IoT Hub" }
+
+# IoT Hub
+
+Do the [Azure setup](/docs/quick-start/azure/setup) first.
+
+<IngestFlow
+  nodes={[
+    { label: "Devices", sub: "MQTT / AMQP" },
+    { label: "IoT Hub route" },
+    { label: "Event hub" },
+    { label: "Azure Function", sub: "ingest_event_hub", accent: true },
+    { label: "lake container", sub: "Iceberg tables" },
+  ]}
+  edges={["device messages", "send", "batch", "commit"]}
+/>
+
+Devices registered in IoT Hub send readings with their own credentials. A message route forwards them to the event hub from [Event Hubs](/docs/quick-start/azure/event-hubs), so the rest is the same. IoT Hub also has a built-in endpoint that Functions can read directly, but only with a connection string; routing to your own event hub keeps managed identities throughout. Set up [Event Hubs](/docs/quick-start/azure/event-hubs) first. Registering real devices is covered in the [IoT Hub docs](https://learn.microsoft.com/azure/iot-hub/iot-hub-create-through-portal).
+
+```bash
+export HUB=timelake-$RANDOM
+az iot hub create -g $RG -n $HUB --sku S1
+az iot hub identity assign -g $RG -n $HUB --system-assigned \
+  --role "Azure Event Hubs Data Sender" --scopes $EH_SCOPE
+az iot hub message-endpoint create eventhub -g $RG -n $HUB --en readings \
+  --endpoint-uri sb://$EH_NAMESPACE.servicebus.windows.net --entity-path readings --identity '[system]'
+az iot hub message-route create -g $RG -n $HUB --route-name readings --endpoint-name readings \
+  --source devicemessages
+```
+
+The `message-endpoint` and `message-route` commands come with the `azure-iot` CLI extension, which installs on first use. The free tier (`--sku F1`, 8,000 messages a day, one per subscription) works for trying it.
+
+Try it, sending as a registered device:
+
+```bash
+az iot hub device-identity create -n $HUB -d pump-1
+az iot device send-d2c-message -n $HUB -d pump-1 \
+  --data '{"time": "2026-01-05T10:15:00Z", "device_id": "pump-1", "temp": 64.0, "humidity": 40}'
+```
+
+Include `device_id` in each message, as above. IoT Hub also stamps every message with the sending device's id (`iothub-connection-device-id`).

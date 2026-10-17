@@ -1,0 +1,43 @@
+export const metadata = { title: "Quick start: Cloudflare" }
+
+# Cloudflare
+
+On Cloudflare, Timelake keeps its tables in an R2 bucket. A Worker takes uploads from devices. Readings are appended either by a consumer Worker, with the WebAssembly writer in `@timelake/client`, or by a writer script that runs from cron on any Linux host with Python and talks to R2 through its S3-compatible API. The script also runs the hourly `timelake maintain`, which the WebAssembly writer can't do yet.
+
+| Design | Devices send | Visible to queries after | Fits |
+| --- | --- | --- | --- |
+| [Queue with a consumer Worker](/docs/quick-start/cloudflare/worker-writer) | JSON readings over HTTPS | the batch timeout (up to 30 s) | devices that send single readings; ingestion entirely on Cloudflare |
+| [Files to R2](/docs/quick-start/cloudflare/files) | CSV or Parquet files over HTTPS | the next writer run (a minute) | gateways that buffer readings and upload every few minutes |
+| [Queue with a pull consumer](/docs/quick-start/cloudflare/queues) | JSON readings over HTTPS | the next writer run (a minute) | the same devices, appended by the writer script |
+| [R2 event notifications](/docs/quick-start/cloudflare/notifications) | files over HTTPS or the S3 API | the next writer run (a minute) | many files, or gateways that upload to R2 directly |
+
+**Which to choose.** When devices send readings one at a time, use [Queue with a consumer Worker](/docs/quick-start/cloudflare/worker-writer): appends run on Cloudflare within seconds, and only maintenance needs a host. Use [Files to R2](/docs/quick-start/cloudflare/files) if your gateways already batch readings into files: it needs no queue. Choose [Queue with a pull consumer](/docs/quick-start/cloudflare/queues) to keep every append in the native writer. Choose [R2 event notifications](/docs/quick-start/cloudflare/notifications) over [Files to R2](/docs/quick-start/cloudflare/files) when the landing area holds many files at once: the writer learns about each file from a notification instead of listing the bucket every minute.
+
+Then [scheduled checks](/docs/quick-start/cloudflare/checks#scheduled-checks-on-recent-data) read recent data and alert, and [maintenance](/docs/quick-start/cloudflare/checks#maintenance) runs every hour. [Other designs](#other-designs) covers running the writer in a Cloudflare Container, and Basin Pipelines.
+
+## R2 or Basin Catalog
+
+Cloudflare offers two ways to keep Iceberg tables in R2. Timelake writes the first.
+
+|  | R2 bucket, with Timelake | Basin Catalog (formerly R2 Data Catalog) |
+| --- | --- | --- |
+| What it is | Ordinary objects: Parquet data and Iceberg metadata, written by the Timelake library | A managed Iceberg catalog built into an R2 bucket, with an Iceberg REST interface |
+| Commits | A conditional write of the next metadata file | Through the REST catalog |
+| Compaction | In the writer, after appends; `maintain` for a full pass | Opt-in per catalog or table, to a target file size (default 128 MB) |
+| Snapshot expiry | In the writer, by age and count | Opt-in per catalog or table, by age and count |
+| Writers | Timelake (CLI, Python, Rust) | Iceberg engines such as Spark and PyIceberg; Basin Pipelines (Parquet, a commit every 60 s or more) |
+| Readers | Timelake, DuckDB, and other engines that open Iceberg tables by path | Spark, PyIceberg, Snowflake, and other engines through the REST interface; Basin SQL |
+| Time-series features | Latest values, deduplication, rollups, retention by time | Plain Iceberg |
+| Runs on | Any object store, or local disk | Cloudflare only |
+
+Choose Basin Catalog if your writers and readers are Iceberg engines that connect through a REST catalog, or if Basin Pipelines already carries your data. Choose Timelake on R2 for frequent small appends that need fast queries straight away, for time-series queries, or to keep the same setup on other clouds. Timelake can't yet write through an Iceberg REST catalog; that is planned.
+
+## Other designs
+
+- **The writer in a Cloudflare Container.** A Worker's Cron Trigger can start a container on a schedule ([Cron Container example](https://developers.cloudflare.com/containers/examples/cron)). Built from an image with `timelake` and `writer.py`, and with internet access turned on so it can reach R2 and the Queues API, it replaces the host and its cron. The example doesn't queue overlapping runs, so keep the interval longer than a run.
+- **A long-running writer.** For lower latency, run the queue mode in a loop as a service on the host, pulling every few seconds.
+- **Basin Pipelines.** Pipelines take records over HTTP or from a Worker and write Parquet into Basin Catalog tables, with a commit every 60 seconds or more. That gives plain Iceberg tables in R2 without a writer host; see [R2 or Basin Catalog](#r2-or-basin-catalog) for the trade-offs.
+
+## Cost
+
+R2 charges per million writes and per million reads, and nothing for data read out of it. Each commit sends about 7 writes and 2 reads to the bucket; [Storage & configuration](/docs/storage#requests-and-cost) breaks the requests down. Each file in [Files to R2](/docs/quick-start/cloudflare/files) and [R2 event notifications](/docs/quick-start/cloudflare/notifications) adds an upload, a read, a delete, and in [Files to R2](/docs/quick-start/cloudflare/files) a share of the minute's list. Queues bill per 64 KB written, read, or deleted, so a delivered message usually costs 3 operations: Workers Free includes 10,000 operations a day, and Workers Paid 1 million a month, then $0.40 per million. Workers bill per request. Fewer, larger uploads and messages cost less on every line.

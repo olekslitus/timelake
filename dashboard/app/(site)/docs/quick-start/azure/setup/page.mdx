@@ -1,0 +1,184 @@
+export const metadata = { title: "Azure setup" }
+
+# Azure setup
+
+Do this once for every design. The commands use the Azure CLI, [Azure Functions Core Tools](https://learn.microsoft.com/azure/azure-functions/functions-run-local), and the `timelake` command ([install](/docs/quick-start#1-install)).
+
+```bash
+export RG=timelake LOCATION=eastus
+export ACCOUNT=timelake$RANDOM APP=timelake-ingest-$RANDOM     # names must be unique across Azure
+```
+
+## The storage account and the table
+
+```bash
+az group create -n $RG -l $LOCATION
+az storage account create -n $ACCOUNT -g $RG -l $LOCATION --sku Standard_LRS --allow-blob-public-access false
+export SCOPE=$(az storage account show -n $ACCOUNT -g $RG --query id -o tsv)
+
+# Owners of the account still need a data role to read and write blobs
+az role assignment create --role "Storage Blob Data Contributor" --scope $SCOPE \
+  --assignee $(az ad signed-in-user show --query id -o tsv)
+az storage container create --account-name $ACCOUNT -n lake --auth-mode login
+```
+
+A new role assignment can take a few minutes to apply. Then create the table, signed in through the Azure CLI:
+
+```bash
+export AZURE_STORAGE_ACCOUNT_NAME=$ACCOUNT AZURE_USE_AZURE_CLI=true
+export TIMELAKE_WAREHOUSE=az://lake/warehouse
+timelake create iot.readings --schema "time:timestamptz,device_id:string,temp:double,humidity:int" \
+  --time-column time --series-key device_id
+```
+
+## The function code
+
+In a new folder, `function_app.py` has one function per design, plus the maintenance and check timers:
+
+```python
+"""Timelake on Azure Functions: append from Blob Storage, Event Hubs, or Service Bus; maintain; check recent data."""
+
+import datetime as dt
+import io
+import json
+import os
+import urllib.request
+
+import azure.functions as func
+import pyarrow as pa
+import pyarrow.csv as csv
+import pyarrow.json as pj
+import pyarrow.parquet as pq
+import timelake
+
+app = func.FunctionApp()
+lake = timelake.Lake(os.environ["TIMELAKE_WAREHOUSE"])
+table = lake.table(os.environ["TIMELAKE_TABLE"])
+
+
+def read_file(name, body):
+    if name.endswith(".parquet"):
+        return pq.read_table(io.BytesIO(body))
+    if name.endswith(".csv"):
+        return csv.read_csv(io.BytesIO(body))
+    return pj.read_json(io.BytesIO(body))  # newline-delimited JSON
+
+
+def read_messages(payloads):
+    """Readings from JSON messages, each one reading or a list of readings."""
+    rows = []
+    for payload in payloads:
+        try:
+            message = json.loads(payload)
+        except ValueError:
+            print("skipped, not JSON:", payload[:200])
+            continue
+        rows.extend(message if isinstance(message, list) else [message])
+    return pa.Table.from_pylist(rows)
+
+
+@app.blob_trigger(arg_name="blob", path="landing/{name}", connection="AzureWebJobsStorage", source=func.BlobSource.EVENT_GRID)
+def ingest_blob(blob: func.InputStream):
+    # The blob name is the batch id: a redelivered event loads nothing twice.
+    print(blob.name, table.append(read_file(blob.name, blob.read()), batch_id=blob.name))
+
+
+@app.event_hub_message_trigger(
+    arg_name="events", event_hub_name="readings", connection="EventHubConnection", cardinality=func.Cardinality.MANY
+)
+@app.retry(strategy="exponential_backoff", max_retry_count="10", minimum_interval="00:00:05", maximum_interval="00:05:00")
+def ingest_event_hub(events: list[func.EventHubEvent]):
+    # A replayed batch can start and end elsewhere, so it has no stable id. Deduplication keeps
+    # one row per device and time instead.
+    data = read_messages(e.get_body() for e in events)
+    if data.num_rows:
+        print(len(events), "events", table.append(data))
+
+
+@app.service_bus_queue_trigger(
+    arg_name="messages", queue_name="readings", connection="ServiceBusConnection", cardinality=func.Cardinality.MANY
+)
+def ingest_service_bus(messages: list[func.ServiceBusMessage]):
+    # Service Bus regroups messages when it redelivers them; deduplication handles the repeats.
+    data = read_messages(m.get_body() for m in messages)
+    if data.num_rows:
+        print(len(messages), "messages", table.append(data))
+
+
+@app.timer_trigger(arg_name="timer", schedule="0 0 * * * *")
+def maintain(timer: func.TimerRequest):
+    for name in lake.tables():
+        print(name, lake.table(name).maintain())
+
+
+@app.timer_trigger(arg_name="timer", schedule="0 */5 * * * *")
+def check(timer: func.TimerRequest):
+    """Alert on pumps running hot over the last 10 minutes and on pumps silent for 15."""
+    hot = lake.sql("""
+        SELECT device_id, avg(temp) AS avg_temp, max(temp) AS max_temp
+        FROM iot.readings
+        WHERE time > now() - INTERVAL '10 minutes'
+        GROUP BY device_id
+        HAVING avg(temp) > 80
+    """).to_pylist()
+    now = dt.datetime.now(dt.timezone.utc)
+    latest = lake.latest("iot.readings").to_pylist()
+    silent = [r["device_id"] for r in latest if now - r["time"] > dt.timedelta(minutes=15)]
+    print({"hot": hot, "silent": silent})
+    if hot or silent:
+        text = json.dumps({"hot": hot, "silent": silent}, default=str, indent=2)
+        request = urllib.request.Request(
+            os.environ["ALERT_WEBHOOK"],
+            data=json.dumps({"text": f"Timelake check\n{text}"}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        urllib.request.urlopen(request, timeout=10)
+```
+
+Messages are JSON, one reading or a list of readings, with the table's columns:
+
+```json
+{"time": "2026-01-05T10:00:00Z", "device_id": "pump-1", "temp": 61.2, "humidity": 40}
+```
+
+`requirements.txt`:
+
+```
+azure-functions
+timelake
+```
+
+`host.json` sets how many messages each call collects. The function waits up to 30 seconds for 500 of them, then takes what has arrived:
+
+```json
+{
+  "version": "2.0",
+  "extensionBundle": { "id": "Microsoft.Azure.Functions.ExtensionBundle", "version": "[4.*, 5.0.0)" },
+  "extensions": {
+    "eventHubs": { "maxEventBatchSize": 1000, "minEventBatchSize": 500, "maxWaitTime": "00:00:30" },
+    "serviceBus": { "maxMessageBatchSize": 1000, "minMessageBatchSize": 500, "maxBatchWaitTime": "00:00:30" }
+  }
+}
+```
+
+Delete the functions of designs you won't set up: a trigger whose connection settings are missing fails to start and logs errors.
+
+## The function app
+
+The app runs on the Flex Consumption plan, with a managed identity that may read and write the storage account:
+
+```bash
+az functionapp create -g $RG -n $APP --storage-account $ACCOUNT --flexconsumption-location $LOCATION \
+  --runtime python --runtime-version 3.12 --assign-identity '[system]'
+export PRINCIPAL=$(az functionapp identity show -g $RG -n $APP --query principalId -o tsv)
+az role assignment create --role "Storage Blob Data Contributor" --scope $SCOPE \
+  --assignee-object-id $PRINCIPAL --assignee-principal-type ServicePrincipal
+az functionapp config appsettings set -g $RG -n $APP --settings \
+  TIMELAKE_WAREHOUSE=az://lake/warehouse TIMELAKE_TABLE=iot.readings AZURE_STORAGE_ACCOUNT_NAME=$ACCOUNT
+az functionapp scale config set -g $RG -n $APP --maximum-instance-count 4
+func azure functionapp publish $APP
+```
+
+Timelake gets the managed identity's credentials from the function host. Run `func azure functionapp publish $APP` again after any change to the code or `host.json`.
+
+**Retries and concurrency.** Every source here delivers at least once. Where a batch has a stable name (a blob name), it is the batch id, and a repeat is skipped. Batch ids are remembered while their commits are kept: by default the last hour, and at most 100 commits. Beyond that, and for Event Hubs and Service Bus, deduplication keeps one row per device and time. Commits to one table happen one at a time: when two instances commit together, one retries. `--maximum-instance-count 4` keeps those retries rare.

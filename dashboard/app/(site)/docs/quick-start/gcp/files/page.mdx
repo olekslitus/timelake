@@ -1,0 +1,47 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "Google Cloud: Files to Cloud Storage" }
+
+# Files to Cloud Storage
+
+Do the [Google Cloud setup](/docs/quick-start/gcp/setup) first.
+
+<IngestFlow
+  nodes={[
+    { label: "Gateways", sub: "CSV / Parquet / JSON" },
+    { label: "Landing bucket" },
+    { label: "Cloud Run function", sub: "ingest_gcs", accent: true },
+    { label: "Lake bucket", sub: "Iceberg tables" },
+  ]}
+  edges={["upload", "Eventarc", "commit"]}
+/>
+
+Gateways buffer readings and upload a file every few minutes. Each upload triggers the function. A separate landing bucket keeps the lake's own writes from triggering it. The landing bucket must be in the same region as the trigger.
+
+```bash
+gcloud storage buckets create gs://$LANDING --location=$REGION --uniform-bucket-level-access
+gcloud storage buckets add-iam-policy-binding gs://$LANDING --member=serviceAccount:$SA --role=roles/storage.objectViewer
+# Cloud Storage publishes the upload events
+gcloud projects add-iam-policy-binding $PROJECT --role=roles/pubsub.publisher \
+  --member=serviceAccount:$(gcloud storage service-agent --project=$PROJECT)
+
+run_function timelake-gcs ingest_gcs --max-instances 4
+gcloud eventarc triggers create timelake-gcs --location=$REGION --destination-run-service=timelake-gcs \
+  --event-filters=type=google.cloud.storage.object.v1.finalized --event-filters=bucket=$LANDING \
+  --service-account=$SA
+```
+
+Try it:
+
+```bash
+cat > readings.csv <<'EOF'
+time,device_id,temp,humidity
+2026-01-05T10:00:00Z,pump-1,61.2,40
+2026-01-05T10:00:00Z,pump-2,58.9,42
+EOF
+gcloud storage cp readings.csv gs://$LANDING/gateway-1/20260105T1000.csv
+gcloud run services logs read timelake-gcs --region=$REGION --limit=5
+timelake latest iot.readings
+```
+
+Give every upload a unique name, such as the gateway and the time, and send corrections as new files: a name that was already loaded is skipped.

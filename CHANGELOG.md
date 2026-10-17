@@ -22,6 +22,14 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
   request for the table's version, and can miss commits by other processes; the process's own commits are seen at
   once, and writers always check. The default, 1 second, is the old fixed behaviour; `0s` checks on every query
   (`SET timelake.version_check_interval = '30s'`, `--set`, `Lake(settings=…)`, or `timelake alter --set`).
+- **Ingestion guides.** The [Quick start](https://timelake.dev/docs/quick-start) has eight sub-pages that set up
+  continuous ingestion, each with several designs, a recommendation, scheduled checks on recent data, and
+  maintenance: Local, AWS (S3, Kinesis, SQS, IoT Core, and Firehose into Lambda), Azure (Blob Storage, Event Hubs,
+  Service Bus, and IoT Hub into Azure Functions), Google Cloud (Cloud Storage and Pub/Sub into Cloud Run functions),
+  Cloudflare (R2 and Queues, appended by a consumer Worker with `TableWriter` or by a writer script), Fly.io, Vercel,
+  and Tigris. Each platform has an
+  overview, a setup page, a page per design, and a checks page; the docs sidebar opens and closes nested pages. The
+  Quick start compares the platforms and designs. The AWS page compares S3 with S3 Tables.
 
 ### Changed
 
@@ -31,6 +39,14 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
 - **Columns are encoded in parallel.** Timelake writes Parquet with its own writer (shared with the coming WebAssembly
   writer), encoding each row group's columns on threads of their own. The files are the same, byte for byte. The
   compaction above takes 1.17 s instead of 2.37 s; importing 11.7M rows 4.7 s instead of 6.0 s.
+
+### Fixed
+
+- Docs: the storage page's check for conditional writes created a table twice, which fails the second time on any
+  store. It now sends a put-if-absent twice with the AWS CLI. The quick start no longer says that Timelake reads AWS
+  profiles: it reads the `AWS_*` environment variables (`aws configure export-credentials` exports a profile's). The
+  storage page says to create a Tigris lake bucket as single-region or multi-region: on Tigris's default `global`
+  buckets, conditional writes are checked within one region only.
 
 ## 0.5.0 – 2026-10-17
 

@@ -1,0 +1,78 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "Tigris: Object notifications" }
+
+# Object notifications
+
+Do the [Tigris setup](/docs/quick-start/tigris/setup) first.
+
+<IngestFlow
+  nodes={[
+    { label: "Gateways", sub: "CSV / Parquet" },
+    { label: "Landing bucket" },
+    { label: "Your endpoint", sub: "table.append", accent: true },
+    { label: "Lake bucket", sub: "Iceberg tables" },
+  ]}
+  edges={["PUT", "webhook", "commit"]}
+/>
+
+Tigris can POST a JSON notification to a URL whenever an object is created, renamed, or deleted ([object notifications](https://www.tigrisdata.com/docs/buckets/object-notifications/)). Each request carries a list of events with the bucket, the key, the size, and the ETag. A small HTTP server appends each new file as soon as it lands. It needs a public HTTPS address: a VM behind a TLS proxy, a [Fly.io](/docs/quick-start/fly) app, or anything else that keeps a process running.
+
+`notify.py`:
+
+```python
+"""Receives Tigris object notifications and appends each new CSV or Parquet file to a Timelake table."""
+
+import hmac
+import io
+import json
+import os
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+import boto3
+import pyarrow.csv as csv
+import pyarrow.parquet as pq
+import timelake
+
+TOKEN = os.environ["NOTIFY_TOKEN"]
+s3 = boto3.client("s3")  # endpoint and region from AWS_ENDPOINT_URL_S3 and AWS_REGION
+table = timelake.Lake(os.environ["TIMELAKE_WAREHOUSE"]).table(os.environ["TIMELAKE_TABLE"])
+
+
+def read(name, body):
+    return pq.read_table(io.BytesIO(body)) if name.endswith(".parquet") else csv.read_csv(io.BytesIO(body))
+
+
+class Notifications(BaseHTTPRequestHandler):
+    def do_POST(self):
+        if not hmac.compare_digest(self.headers.get("Authorization", ""), f"Bearer {TOKEN}"):
+            self.send_response(401)
+            self.end_headers()
+            return
+        events = json.loads(self.rfile.read(int(self.headers["Content-Length"])))["events"]
+        for event in events:
+            if not event["eventName"].startswith("OBJECT_CREATED"):
+                continue
+            bucket, key = event["bucket"], event["object"]["key"]
+            body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
+            # The object key is the batch id: a redelivered notification loads nothing twice.
+            print(key, table.append(read(key, body), batch_id=key), flush=True)
+        self.send_response(200)
+        self.end_headers()
+
+
+# One request at a time, so appends to the table never wait for each other.
+HTTPServer(("", int(os.environ.get("PORT", "8080"))), Notifications).serve_forever()
+```
+
+Start it with a random token:
+
+```bash
+set -a; . ./timelake.env; set +a
+export NOTIFY_TOKEN=$(openssl rand -hex 32) && echo $NOTIFY_TOKEN    # for the dashboard
+uv run --with timelake --with boto3 notify.py
+```
+
+Then, in the Tigris dashboard, open the **landing** bucket's **Settings**, enable object notifications, and enter your endpoint's URL. Choose token authentication with the same token: Tigris sends it as `Authorization: Bearer <token>`. Set notifications on the landing bucket only. On the lake bucket, every Timelake write would send an event.
+
+Tigris counts any response other than 2xx, and any request that takes longer than 10 seconds, as failed, and retries it. Delivery is at least once and not always in order. With the key as the batch id, a repeated notification is skipped. An append of a file of a few MB usually takes well under a second.

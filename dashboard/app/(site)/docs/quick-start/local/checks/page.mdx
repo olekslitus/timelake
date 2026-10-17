@@ -1,0 +1,40 @@
+export const metadata = { title: "Local: scheduled checks" }
+
+# Local: scheduled checks
+
+Do the [Local setup](/docs/quick-start/local/setup) first.
+
+## Scheduled checks
+
+A second script asks the table two questions every 5 minutes: which pumps averaged above 80° over the last 10 minutes, and which have sent nothing for 15. It prints what it finds and exits with 1, so cron can raise an alert. Save as `check.sh` next to `ingest.sh` and make it executable:
+
+```sh
+#!/bin/sh
+# Print pumps that ran hot over the last 10 minutes or have been silent for 15. Exit 1 if any.
+cd "$(dirname "$0")"
+export TIMELAKE_WAREHOUSE=./warehouse
+found=$(timelake sql --format json "
+  SELECT device_id, 'hot' AS problem, avg(temp) AS avg_temp FROM iot.readings
+  WHERE time > now() - INTERVAL '10 minutes' GROUP BY device_id HAVING avg(temp) > 80
+  UNION ALL
+  SELECT device_id, 'silent', NULL FROM iot.readings
+  GROUP BY device_id HAVING max(time) < now() - INTERVAL '15 minutes'")
+[ -z "$found" ] && exit 0
+echo "$found"
+exit 1
+```
+
+```console
+$ ./check.sh
+{"device_id":"pump-1","problem":"hot","avg_temp":85.5}
+{"device_id":"pump-9","problem":"silent","avg_temp":null}
+```
+
+In cron, post what it finds to a chat webhook (or let cron mail the output to `MAILTO`):
+
+```
+WEBHOOK_URL=https://hooks.example.com/your-channel
+*/5 * * * * PATH=$HOME/.cargo/bin:$PATH; out=$($HOME/timelake-ingest/check.sh) || curl -s --data-binary "$out" "$WEBHOOK_URL"
+```
+
+The first query reads only files whose time range overlaps the last 10 minutes. The second reads every pump's newest time; on a large table, `timelake latest` gets the newest row per pump from an index instead.

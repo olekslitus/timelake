@@ -1,0 +1,101 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "Cloudflare: Queue with a consumer Worker" }
+
+# Queue with a consumer Worker
+
+Do the [Cloudflare setup](/docs/quick-start/cloudflare/setup) first.
+
+<IngestFlow
+  nodes={[
+    { label: "Devices", sub: "JSON readings" },
+    { label: "Worker", sub: "POST /readings" },
+    { label: "Queue" },
+    { label: "Consumer Worker", sub: "TableWriter", accent: true },
+    { label: "R2 lake/", sub: "Iceberg tables" },
+  ]}
+  edges={["HTTPS", "send", "batch", "commit"]}
+/>
+
+Devices post readings to the intake Worker, which puts each request on a Cloudflare Queue. A second Worker consumes the queue and appends each batch to the table with `TableWriter` from `@timelake/client` (0.6.0 or later), which runs Timelake's write path in WebAssembly. Ingestion then runs entirely on Cloudflare. Two things still need the `timelake` command on a host: creating the table (in the setup) and the hourly `timelake maintain`, because appends from JavaScript don't compact yet ([TypeScript client](/docs/typescript#writing)).
+
+A queue has one kind of consumer. If you set up [Queue with a pull consumer](/docs/quick-start/cloudflare/queues), remove its HTTP consumer first (`npx wrangler queues consumer http remove timelake-readings`); otherwise create the queues:
+
+```bash
+npx wrangler queues create timelake-readings-dlq
+npx wrangler queues create timelake-readings
+```
+
+Bind the queue to the intake Worker as a producer, as in [Queue with a pull consumer](/docs/quick-start/cloudflare/queues), and deploy it again. Then make the consumer in a new folder:
+
+```bash
+mkdir timelake-writer && cd timelake-writer
+npm init -y && npm install @timelake/client
+```
+
+`src/index.js`:
+
+```js
+// Consumer for the timelake-readings queue: appends each batch of messages to iot.readings in R2.
+import { TableWriter, r2Store } from "@timelake/client"
+
+// The warehouse root as the table's metadata records it: the TIMELAKE_WAREHOUSE the table was created with.
+const WAREHOUSE = "s3://timelake/lake"
+
+// A batch id from every message id in the batch. Queues may regroup messages when it redelivers them; a regrouped
+// batch then gets a new id, and deduplication keeps one row per device and time.
+async function batchId(messages) {
+  const ids = messages.map((m) => m.id).sort().join(",")
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(ids))
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("")
+}
+
+export default {
+  async queue(batch, env) {
+    const writer = new TableWriter(r2Store(env.LAKE), WAREHOUSE, "iot.readings")
+    // Each message is one reading or a list of readings, as the intake Worker sent it.
+    const rows = batch.messages.flatMap((m) => (Array.isArray(m.body) ? m.body : [m.body]))
+    const result = await writer.append(rows, { batchId: await batchId(batch.messages) })
+    console.log(batch.messages.length, "messages", JSON.stringify(result))
+  },
+}
+```
+
+`wrangler.jsonc`:
+
+```json
+{
+  "name": "timelake-writer",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-01",
+  "r2_buckets": [{ "binding": "LAKE", "bucket_name": "timelake" }],
+  "queues": {
+    "consumers": [
+      {
+        "queue": "timelake-readings",
+        "max_batch_size": 100,
+        "max_batch_timeout": 30,
+        "max_retries": 5,
+        "dead_letter_queue": "timelake-readings-dlq",
+        "max_concurrency": 1
+      }
+    ]
+  }
+}
+```
+
+```bash
+npx wrangler deploy
+```
+
+Each call gets up to 100 messages, or what arrived in 30 seconds, and makes one commit. `max_concurrency: 1` keeps one consumer running at a time, so commits never wait for each other. If a call fails, Queues delivers the batch again; after 5 tries its messages move to the dead-letter queue. A batch delivered again as it was has the same batch id and is skipped.
+
+Try it:
+
+```bash
+curl -X POST -H "authorization: Bearer <token>" "https://timelake-intake.<your subdomain>.workers.dev/readings" \
+  --data '{"time": "2026-01-05T10:05:00Z", "device_id": "pump-1", "temp": 62.0, "humidity": 41}'
+npx wrangler tail timelake-writer      # the append result
+```
+
+Keep the hourly `timelake maintain` from [checks and maintenance](/docs/quick-start/cloudflare/checks#maintenance): it merges the small files the consumer writes into one sorted file per day.

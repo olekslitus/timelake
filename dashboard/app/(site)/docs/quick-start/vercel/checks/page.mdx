@@ -1,0 +1,36 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "Vercel: checks and maintenance" }
+
+# Vercel: checks and maintenance
+
+Do the [Vercel setup](/docs/quick-start/vercel/setup) first.
+
+## Scheduled checks on recent data
+
+<IngestFlow
+  nodes={[
+    { label: "Cron job", sub: "*/5 * * * *" },
+    { label: "Vercel function", sub: "/api/cron/check", accent: true },
+    { label: "Tigris bucket", sub: "iot.readings" },
+    { label: "Webhook", sub: "Slack, Teams, …" },
+  ]}
+  edges={["GET", "query", "alert"]}
+/>
+
+The `check` route runs every 5 minutes and asks two questions of the table:
+
+- Which pumps averaged above 80° over the last 10 minutes? A SQL query over recent data. The time filter skips every file whose time range lies outside the window, before any data is read.
+- Which pumps have sent nothing for 15 minutes? `lake.latest()` answers from the last-value index, without scanning the table.
+
+When either has an answer, it posts a JSON message with a `text` field to `ALERT_WEBHOOK_URL`, the format Slack and Teams incoming webhooks accept. Change the SQL to check anything the table holds; over longer windows, a [rollup](/docs/rollups) keeps the query small.
+
+Vercel doesn't retry a failed cron run, and may occasionally run one twice or let two overlap. Every job here is safe to repeat: the drain claims each message once, the landing job skips files already loaded, and a repeated check sends the alert again.
+
+## Maintenance
+
+Each append already merges small files and removes duplicates. The hourly `maintain` job also sorts each finished day into one file, applies retention, and deletes files no version needs. To run it by hand:
+
+```bash
+curl $URL/api/cron/maintain -H "authorization: Bearer $CRON_SECRET"
+```

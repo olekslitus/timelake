@@ -1,0 +1,29 @@
+export const metadata = { title: "Quick start: Tigris" }
+
+# Tigris
+
+[Tigris](https://www.tigrisdata.com) is S3-compatible object storage, and it can hold the lake. It runs no code, so the Timelake writer runs wherever you have compute: a VM, a laptop, a container on [Fly.io](/docs/quick-start/fly), or a function on [Vercel](/docs/quick-start/vercel). This page covers the Tigris side: the bucket, credentials, settings, and three ways to feed it.
+
+| Design | Devices send | Visible to queries after | Fits |
+| --- | --- | --- | --- |
+| [Files and a poller](/docs/quick-start/tigris/files-poller) | CSV or Parquet files to a landing bucket | the next poll (every minute) | gateways that upload files; no public endpoint to run |
+| [Object notifications](/docs/quick-start/tigris/notifications) | CSV or Parquet files to a landing bucket | seconds after each upload | the same gateways, with an HTTPS endpoint you run |
+| [Direct appends](/docs/quick-start/tigris/direct) | readings to your own Python process | each append | an app or gateway that already runs your code |
+
+**Which to choose.** If the readings already pass through a process you run, append from it directly ([Direct appends](/docs/quick-start/tigris/direct)). For a fleet of gateways that upload files, use object notifications ([Object notifications](/docs/quick-start/tigris/notifications)) if you can run an HTTPS endpoint, and the poller ([Files and a poller](/docs/quick-start/tigris/files-poller)) if you can't. Whichever you choose, create the lake bucket in one region or one multi-region geography, as [Shared setup](/docs/quick-start/tigris/setup) explains.
+
+## Cost
+
+Tigris prices, as of October 2026 ([pricing](https://www.tigrisdata.com/pricing/)):
+
+| | Price |
+| --- | ---: |
+| Standard storage | $0.02 per GB-month |
+| Class A requests (PUT, COPY, POST, LIST) | $0.005 per 1,000 |
+| Class B requests (GET, HEAD, and all others) | $0.0005 per 1,000 |
+| DELETE | free |
+| Object notifications | $0.01 per 1,000 events |
+| Egress | free |
+| Free each month | 5 GB storage, 10,000 Class A and 100,000 Class B requests |
+
+Each commit sends about 7 Class A and 2 Class B requests: at one commit per second about $3.10 a day, at one per minute about 5 cents. The free tier covers about 1,400 commits a month. On Tigris each freshness check is a LIST, a Class A request: a dashboard refreshing one table every 5 seconds sends about 17,000 a day, about 9 cents. Reading data out costs only the GETs, from any cloud or the internet.

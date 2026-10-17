@@ -1,0 +1,38 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "Cloudflare: R2 event notifications" }
+
+# R2 event notifications
+
+Do the [Cloudflare setup](/docs/quick-start/cloudflare/setup) first.
+
+<IngestFlow
+  nodes={[
+    { label: "Gateways", sub: "files" },
+    { label: "R2 landing/" },
+    { label: "Queue", sub: "object-create events" },
+    { label: "Writer", sub: "writer.py events", accent: true },
+    { label: "R2 lake/", sub: "Iceberg tables" },
+  ]}
+  edges={["upload", "notify", "pull, ack", "commit"]}
+/>
+
+R2 puts a message on a queue for every object created under `landing/`. The writer pulls those messages, appends each named file, and deletes it, so it never lists the bucket. Files can arrive through the Worker from [Files to R2](/docs/quick-start/cloudflare/files), or straight through R2's S3 API from gateways that have their own R2 token. Use this mode instead of `writer.py files`, not alongside it.
+
+```bash
+npx wrangler queues create timelake-events
+npx wrangler queues consumer http add timelake-events --batch-size 100 --message-retries 5 --visibility-timeout-secs 120
+npx wrangler r2 bucket notification create timelake --event-type object-create --queue timelake-events --prefix landing/
+npx wrangler queues info timelake-events      # note the queue ID
+cat >> timelake.env <<'EOF'
+export EVENTS_QUEUE_ID="<queue id>"
+EOF
+```
+
+The writer's own writes go under `lake/` and its deletes aren't `object-create` events, so they don't trigger notifications. The cron line:
+
+```
+* * * * * cd $HOME/timelake && . ./timelake.env && flock -n events.lock $HOME/.local/bin/uv run --with timelake --with boto3 writer.py events >> writer.log 2>&1
+```
+
+Try it with an upload through the Worker, as in [Files to R2](/docs/quick-start/cloudflare/files). A notification delivered twice finds the file already appended and deleted, and is skipped.

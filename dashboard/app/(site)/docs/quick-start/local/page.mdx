@@ -1,0 +1,17 @@
+export const metadata = { title: "Quick start: Local" }
+
+# Local
+
+On one machine, such as an edge server next to the equipment or a laptop, tables live in a folder on disk and need no cloud account.
+
+| Design | Data arrives as | Visible to queries after | Fits |
+| --- | --- | --- | --- |
+| [A folder and cron](/docs/quick-start/local/folder) | CSV or Parquet files in a folder | the next cron run (a minute) | gateways that write files; no code to write |
+| [Appending from Python](/docs/quick-start/local/python) | readings in your own program | each append (every few seconds) | an MQTT client, a Modbus poller, or any program that reads sensors |
+| [A local S3](/docs/quick-start/local/local-s3#rehearsing-with-a-local-s3) | either of the above | the same | trying the cloud setups without an account |
+
+Start with the folder and cron: it needs only the `timelake` command and a shell script. Move to Python when readings come from your own code rather than files. The cloud guides use the same pattern as the folder, with a bucket as the folder and a function as the script. [Scheduled checks](/docs/quick-start/local/checks#scheduled-checks) work with any of them.
+
+## Next
+
+The same pattern on a cloud: [AWS](/docs/quick-start/aws), [Azure](/docs/quick-start/azure), [Google Cloud](/docs/quick-start/gcp), [Cloudflare](/docs/quick-start/cloudflare), [Fly.io](/docs/quick-start/fly), [Vercel](/docs/quick-start/vercel), or [Tigris](/docs/quick-start/tigris). [Quick start](/docs/quick-start#ingestion-setups) compares them.

@@ -1,0 +1,30 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "Fly.io: HTTP intake, buffered" }
+
+# HTTP intake, buffered
+
+Do the [Fly.io setup](/docs/quick-start/fly/setup) first.
+
+<IngestFlow
+  nodes={[
+    { label: "Devices", sub: "POST /readings" },
+    { label: "web Machine", sub: "buffer, 10 s", accent: true },
+    { label: "Tigris bucket", sub: "lake/" },
+  ]}
+  edges={["HTTPS", "commit"]}
+/>
+
+Devices POST JSON, one reading or a list. The `web` process keeps readings in memory and appends them every 10 seconds, so a thousand devices sending once a second still make one commit every 10 seconds. A reading is visible to queries at most 10 seconds after it arrives.
+
+The cost is that readings in memory are lost if the Machine crashes or its host fails: up to `FLUSH_SECONDS` of data. A normal stop flushes them. `auto_stop_machines = "off"` keeps the Machine running so the buffer isn't emptied and refilled with each idle period; `"stop"` also works, because a stop sends `kill_signal` first.
+
+This is the default (`INTAKE=memory`). Try it:
+
+```bash
+curl -X POST https://$APP.fly.dev/readings -H "authorization: Bearer $INGEST_TOKEN" \
+  -d '[{"time": "2026-01-05T10:00:00Z", "device_id": "pump-1", "temp": 61.2, "humidity": 40},
+       {"time": "2026-01-05T10:00:00Z", "device_id": "pump-2", "temp": 58.9, "humidity": 42}]'
+sleep 10
+timelake latest iot.readings
+```

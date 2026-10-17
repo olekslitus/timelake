@@ -1,0 +1,23 @@
+export const metadata = { title: "Quick start: Vercel" }
+
+# Vercel
+
+On Vercel, Timelake runs inside a Python function, a FastAPI app, and keeps its tables in an S3-compatible bucket. Vercel Blob doesn't work as the store: Timelake can read a warehouse over HTTPS but needs the S3 API to write. This guide uses [Tigris](https://www.tigrisdata.com) and shows how to switch to S3 or R2. Every design below appends to the same table from the same project, so you can start with one and add another later.
+
+| Design | Devices send | Visible to queries after | Fits |
+| --- | --- | --- | --- |
+| [HTTP, appended directly](/docs/quick-start/vercel/http-direct) | JSON over HTTPS | each request | a few gateways, a few requests a minute |
+| [Vercel Queues, pushed](/docs/quick-start/vercel/queues-push) | a batch of readings per HTTPS request | seconds | gateways that batch readings; bursts and retries |
+| [Vercel Queues, drained by cron](/docs/quick-start/vercel/queues-cron) | one reading per HTTPS request | up to a minute | many devices sending single readings |
+| [Files, appended by cron](/docs/quick-start/vercel/files-cron) | CSV, Parquet, or JSON files to the bucket | up to a minute | gateways that upload files with the S3 API |
+
+**Which to choose.** If gateways batch readings, use [Vercel Queues, pushed](/docs/quick-start/vercel/queues-push): the queue absorbs bursts and retries, and each batch becomes one commit. If devices send one reading at a time, use [Vercel Queues, drained by cron](/docs/quick-start/vercel/queues-cron), which turns a minute of messages into one commit. Use [HTTP, appended directly](/docs/quick-start/vercel/http-direct) only for a handful of senders, and [Files, appended by cron](/docs/quick-start/vercel/files-cron) when gateways already upload files. [Vercel Queues, drained by cron](/docs/quick-start/vercel/queues-cron) and [Files, appended by cron](/docs/quick-start/vercel/files-cron), the [scheduled checks](/docs/quick-start/vercel/checks#scheduled-checks-on-recent-data), and hourly [maintenance](/docs/quick-start/vercel/checks#maintenance) need cron jobs that run every few minutes, which the Pro plan allows. Hobby runs cron jobs at most once a day.
+
+## Other designs
+
+- **A long-running consumer.** Vercel Queues can also be polled from outside Vercel. A container on Fly.io, a VM, or a Kubernetes job can run `poll_and_handle` and append every few seconds, holding the table open between appends.
+- **Dashboards.** A Next.js app can read the lake with the [TypeScript client](/docs/typescript), which reads warehouses served over HTTPS.
+
+## Cost
+
+Each commit sends about 7 writes and 2 reads to the bucket. Tigris prices writes like S3 ($0.005 per 1,000) and reads at $0.0005 per 1,000. At one commit per second that is about $3 a day in requests; at one per minute, as in [Vercel Queues, drained by cron](/docs/quick-start/vercel/queues-cron) and [Files, appended by cron](/docs/quick-start/vercel/files-cron), about 5 cents. [Storage & configuration](/docs/storage#requests-and-cost) breaks the requests down. On Vercel, functions bill for active CPU time and invocations. Queues bill per operation: sending, receiving, acknowledging, and each push, counted per 4 KiB of message, with idempotency keys and `max_concurrency` pushes at twice the rate. Hobby includes the first million queue operations.

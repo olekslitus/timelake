@@ -1,0 +1,44 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "Cloudflare: checks and maintenance" }
+
+# Cloudflare: checks and maintenance
+
+Do the [Cloudflare setup](/docs/quick-start/cloudflare/setup) first.
+
+## Scheduled checks on recent data
+
+<IngestFlow
+  nodes={[
+    { label: "cron", sub: "every 5 minutes" },
+    { label: "Writer", sub: "writer.py check", accent: true },
+    { label: "R2 lake/", sub: "iot.readings" },
+    { label: "Webhook", sub: "chat, paging" },
+  ]}
+  edges={["run", "query", "POST"]}
+/>
+
+The `check` mode runs every 5 minutes. It asks two questions of the table and posts to a webhook when either has an answer:
+
+- Which pumps averaged above 80° over the last 10 minutes? A SQL query over recent data. The time filter skips every file whose time range lies outside the window, before any data is read.
+- Which pumps have sent nothing for 15 minutes? `lake.latest()` answers from the last-value index, without scanning the table.
+
+```bash
+cat >> timelake.env <<'EOF'
+export ALERT_WEBHOOK="<incoming webhook url>"
+EOF
+```
+
+```
+*/5 * * * * cd $HOME/timelake && . ./timelake.env && $HOME/.local/bin/uv run --with timelake --with boto3 writer.py check >> check.log 2>&1
+```
+
+The body is `{"text": "…"}`, which a Slack incoming webhook takes as is; change it for other services. Change the SQL to check anything the table holds: a rate of change, a counter that stopped increasing, or readings outside a band per site (join a devices table). Over longer windows, a [rollup](/docs/rollups) keeps the query small.
+
+## Maintenance
+
+Each append already merges small files and removes duplicates. An hourly `timelake maintain` also sorts each finished day into one file, applies retention, and deletes files no version needs:
+
+```
+0 * * * * cd $HOME/timelake && . ./timelake.env && $HOME/.cargo/bin/timelake maintain >> maintain.log 2>&1
+```

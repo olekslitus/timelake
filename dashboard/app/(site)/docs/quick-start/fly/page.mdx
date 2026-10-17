@@ -1,0 +1,24 @@
+export const metadata = { title: "Quick start: Fly.io" }
+
+# Fly.io
+
+On Fly.io, Timelake runs inside an app on Fly Machines and keeps its tables in a Tigris bucket that `fly storage create` makes for the app. Unlike a function, a Machine keeps running, so it can collect readings for a few seconds and append them in one commit. One Python file has a role per process group: `web` takes HTTP requests and Tigris notifications, `worker` subscribes to MQTT, and `jobs` runs scheduled work.
+
+| Design | Devices send | Visible to queries after | Fits |
+| --- | --- | --- | --- |
+| [HTTP intake, buffered](/docs/quick-start/fly/http-buffered) | JSON over HTTPS | the flush interval (10 s) | many small senders; the readings in memory at a crash are lost |
+| [HTTP intake to landing objects](/docs/quick-start/fly/http-landing) | JSON over HTTPS | the next `jobs` run (1 minute) | a reading must be stored before the device gets its answer |
+| [MQTT worker](/docs/quick-start/fly/mqtt) | MQTT messages to your broker | the flush interval (10 s) | devices that already speak MQTT |
+| [Tigris notifications](/docs/quick-start/fly/tigris-notifications) | files uploaded to Tigris | each upload | gateways that buffer readings and upload files |
+
+**Recommendation.** For devices that send readings over HTTPS, start with [HTTP intake to landing objects](/docs/quick-start/fly/http-landing): each reading is stored in Tigris before the device gets a response, and one commit a minute keeps requests low. Choose [HTTP intake, buffered](/docs/quick-start/fly/http-buffered) when 10-second freshness matters more than losing the readings in memory if a Machine crashes. Use [MQTT worker](/docs/quick-start/fly/mqtt) for MQTT devices and [Tigris notifications](/docs/quick-start/fly/tigris-notifications) for gateways that upload files. The [scheduled checks](/docs/quick-start/fly/checks#scheduled-checks-on-recent-data) and [maintenance](/docs/quick-start/fly/checks#maintenance) run in the `jobs` process for every design.
+
+## Other designs
+
+- **Scheduled Machines.** `fly machine run --schedule` starts a Machine hourly, daily, weekly, or monthly, counted from when it was created rather than at fixed clock times. That fits a daily `maintain` or backfill, not a 5-minute check, which is why the checks here run in the long-running `jobs` process. For cron syntax, Fly's [task scheduling guide](https://fly.io/docs/blueprints/task-scheduling/) covers Supercronic in a process group and its Cron Manager app.
+- **Machines that stop when idle.** For low traffic with [HTTP intake to landing objects](/docs/quick-start/fly/http-landing), set `auto_stop_machines = "stop"` on the `web` group: the Machine starts on the next request, and `jobs` keeps appending. The `jobs` and `worker` groups have no HTTP service, so they run until you scale them down.
+- **Readers on Fly.** A dashboard or API in another Fly app reads the same table from the bucket with the Python package or the [TypeScript client](/docs/typescript), with no load on the writers.
+
+## Cost
+
+Each commit sends about 7 writes and 2 reads to Tigris. Tigris charges $0.005 per 1,000 writes and LISTs and $0.0005 per 1,000 reads, and nothing for data transfer out. At one commit every 10 seconds ([HTTP intake, buffered](/docs/quick-start/fly/http-buffered) and [MQTT worker](/docs/quick-start/fly/mqtt)), that is about 30 cents a day; at one a minute, about 5 cents. [HTTP intake to landing objects](/docs/quick-start/fly/http-landing) adds a PUT per request, and [Tigris notifications](/docs/quick-start/fly/tigris-notifications) a PUT and a GET per file. [Storage & configuration](/docs/storage#requests-and-cost) breaks the requests down. Fly bills each Machine per second while it runs, by its CPU and memory size.

@@ -1,0 +1,303 @@
+export const metadata = { title: "Fly.io setup" }
+
+# Fly.io setup
+
+Do this once for every design. The commands use [flyctl](https://fly.io/docs/flyctl/install/), the [Tigris CLI](https://www.tigrisdata.com/docs/cli/), and the `timelake` command ([install](/docs/quick-start#1-install)).
+
+```bash
+export APP=timelake-ingest BUCKET=timelake-ingest-lake     # names must be unique on Fly and Tigris
+export INGEST_TOKEN=$(openssl rand -hex 32)                  # devices and Tigris send it as a bearer token
+fly apps create $APP
+fly storage create --app $APP --name $BUCKET
+fly secrets set --app $APP --stage AWS_ENDPOINT_URL_S3=https://t3.storage.dev AWS_ENDPOINT=https://t3.storage.dev \
+  AWS_REGION=auto INGEST_TOKEN=$INGEST_TOKEN
+```
+
+`fly storage create` makes a Tigris bucket, billed on your Fly bill, and sets four secrets on the app: `BUCKET_NAME`, `AWS_ENDPOINT_URL_S3`, `AWS_ACCESS_KEY_ID`, and `AWS_SECRET_ACCESS_KEY`. It prints the keys once; note them. The second command points the endpoint at `t3.storage.dev`, which Fly recommends for new code, and adds `AWS_ENDPOINT`: Timelake recognises Tigris from `AWS_ENDPOINT`, not from `AWS_ENDPOINT_URL_S3`, and on Tigris it checks for new table versions with a LIST, which is faster there than a HEAD ([Storage](/docs/storage#request-options-trade-offs)).
+
+## The table
+
+Create it from your machine with the keys `fly storage create` printed:
+
+```bash
+export AWS_ACCESS_KEY_ID="<access key id>" AWS_SECRET_ACCESS_KEY="<secret access key>"
+export AWS_ENDPOINT=https://t3.storage.dev AWS_REGION=auto
+export TIMELAKE_WAREHOUSE=s3://$BUCKET/lake
+timelake create iot.readings --schema "time:timestamptz,device_id:string,temp:double,humidity:int" \
+  --time-column time --series-key device_id
+```
+
+Timelake's commits and queries have run against Tigris in its [performance runs](/docs/performance), but Tigris isn't yet among the [tested stores](/docs/limitations). Each commit is a conditional write (`If-None-Match: *`), which Tigris supports. On a bucket with a Global or Dual-region location, Tigris evaluates that condition against the latest state only within one region ([conditional operations](https://www.tigrisdata.com/docs/objects/conditionals)). So run every writer in the app's `primary_region`, as this guide does. For writers in several regions, use a bucket with a Single-region or Multi-region location, chosen in the Tigris dashboard.
+
+## The app
+
+`app.py`:
+
+```python
+"""Timelake on Fly.io: HTTP intake, an MQTT worker, Tigris notifications, and scheduled jobs.
+
+Each process group runs one role: python app.py web | worker | jobs
+"""
+
+import datetime as dt
+import io
+import json
+import os
+import signal
+import sys
+import threading
+import time
+import urllib.request
+import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+import boto3
+import pyarrow as pa
+import pyarrow.csv as csv
+import pyarrow.parquet as pq
+import timelake
+
+BUCKET = os.environ["BUCKET_NAME"]
+INTAKE = os.environ.get("INTAKE", "memory")  # memory: buffer and append; landing: store each request first
+FLUSH_SECONDS = int(os.environ.get("FLUSH_SECONDS", "10"))
+
+s3 = boto3.client("s3")  # reads AWS_ENDPOINT_URL_S3, AWS_REGION, and the keys from the environment
+lake = timelake.Lake(os.environ.get("TIMELAKE_WAREHOUSE", f"s3://{BUCKET}/lake"))
+table = lake.table("iot.readings")
+stop = threading.Event()
+
+
+def read_messages(payloads):
+    """Readings from JSON messages, each one reading or a list of readings."""
+    rows = []
+    for payload in payloads:
+        message = json.loads(payload)
+        rows.extend(message if isinstance(message, list) else [message])
+    return rows
+
+
+def read_file(name, body):
+    if name.endswith(".parquet"):
+        return pq.read_table(io.BytesIO(body))
+    if name.endswith(".csv"):
+        return csv.read_csv(io.BytesIO(body))
+    return pa.Table.from_pylist(read_messages(body.splitlines()))
+
+
+class Buffer:
+    """Readings held in memory and appended every FLUSH_SECONDS: one commit per interval."""
+
+    def __init__(self):
+        self.rows, self.lock = [], threading.Lock()
+
+    def add(self, rows):
+        with self.lock:
+            self.rows.extend(rows)
+
+    def flush(self):
+        with self.lock:
+            rows, self.rows = self.rows, []
+        if not rows:
+            return
+        try:
+            print("appended", table.append(pa.Table.from_pylist(rows)), flush=True)
+        except Exception as e:
+            print("append failed, keeping", len(rows), "rows:", e, flush=True)
+            with self.lock:
+                self.rows[:0] = rows
+
+    def run(self):
+        while not stop.wait(FLUSH_SECONDS):
+            self.flush()
+
+
+buffer = Buffer()
+
+
+def on_signal(signum, frame):
+    stop.set()
+
+
+# --- web: devices POST readings; Tigris POSTs object notifications ---
+
+
+class Intake(BaseHTTPRequestHandler):
+    def do_POST(self):
+        if self.headers.get("authorization") != f"Bearer {os.environ['INGEST_TOKEN']}":
+            return self.reply(401, "unauthorized")
+        body = self.rfile.read(int(self.headers.get("content-length", 0)))
+        try:
+            if self.path == "/readings":
+                self.readings(body)
+            elif self.path == "/tigris":
+                self.notification(json.loads(body))
+            else:
+                return self.reply(404, "POST /readings or /tigris")
+        except ValueError as e:
+            return self.reply(400, str(e))
+        self.reply(202, "ok")
+
+    def readings(self, body):
+        if INTAKE == "landing":
+            # Durable: one object per request, appended by the jobs process every minute.
+            key = f"landing/{dt.datetime.now(dt.timezone.utc):%Y%m%dT%H%M%S%f}-{uuid.uuid4().hex[:8]}.json"
+            s3.put_object(Bucket=BUCKET, Key=key, Body=body)
+        else:
+            buffer.add(read_messages([body]))
+
+    def notification(self, payload):
+        for event in payload["events"]:
+            key = event["object"]["key"]
+            if event["eventName"].startswith("OBJECT_CREATED") and key.startswith("uploads/"):
+                body = s3.get_object(Bucket=BUCKET, Key=key)["Body"].read()
+                # The object key is the batch id: a repeated notification loads nothing twice.
+                print(key, table.append(read_file(key, body), batch_id=key), flush=True)
+
+    def reply(self, status, text):
+        self.send_response(status)
+        self.end_headers()
+        self.wfile.write(text.encode() + b"\n")
+
+
+def web():
+    server = ThreadingHTTPServer(("0.0.0.0", int(os.environ.get("PORT", "8080"))), Intake)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    threading.Thread(target=buffer.run, daemon=True).start()
+    stop.wait()
+    server.shutdown()
+    buffer.flush()  # Fly sends kill_signal and waits up to kill_timeout before stopping the machine
+
+
+# --- worker: an MQTT subscriber ---
+
+
+def worker():
+    import paho.mqtt.client as mqtt
+
+    def on_connect(client, userdata, flags, reason_code, properties):
+        client.subscribe("devices/+/readings", qos=1)
+
+    def on_message(client, userdata, message):
+        rows = read_messages([message.payload])
+        for row in rows:
+            row["device_id"] = message.topic.split("/")[1]
+        buffer.add(rows)
+
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    client.username_pw_set(os.environ["MQTT_USERNAME"], os.environ["MQTT_PASSWORD"])
+    client.tls_set()
+    client.on_connect, client.on_message = on_connect, on_message
+    client.connect(os.environ["MQTT_HOST"], 8883)
+    client.loop_start()
+    threading.Thread(target=buffer.run, daemon=True).start()
+    stop.wait()
+    client.loop_stop()
+    client.disconnect()
+    buffer.flush()
+
+
+# --- jobs: append landing objects every minute, check every 5 minutes, maintain every hour ---
+
+
+def append_landing():
+    pages = s3.get_paginator("list_objects_v2").paginate(Bucket=BUCKET, Prefix="landing/")
+    keys = sorted(obj["Key"] for page in pages for obj in page.get("Contents", []))
+    if not keys:
+        return
+    bodies = [s3.get_object(Bucket=BUCKET, Key=k)["Body"].read() for k in keys]
+    # All objects in one commit. The key range is the batch id: if the deletes below fail,
+    # the next run skips the same set.
+    data = pa.Table.from_pylist(read_messages(bodies))
+    print(len(keys), "objects", table.append(data, batch_id=f"{keys[0]}..{keys[-1]}"), flush=True)
+    for i in range(0, len(keys), 1000):
+        s3.delete_objects(Bucket=BUCKET, Delete={"Objects": [{"Key": k} for k in keys[i : i + 1000]]})
+
+
+def check():
+    """Alert on pumps running hot over the last 10 minutes and on pumps silent for 15."""
+    hot = lake.sql("""
+        SELECT device_id, avg(temp) AS avg_temp, max(temp) AS max_temp
+        FROM iot.readings
+        WHERE time > now() - INTERVAL '10 minutes'
+        GROUP BY device_id
+        HAVING avg(temp) > 80
+    """).to_pylist()
+    now = dt.datetime.now(dt.timezone.utc)
+    latest = lake.latest("iot.readings").to_pylist()
+    silent = [r["device_id"] for r in latest if now - r["time"] > dt.timedelta(minutes=15)]
+    print({"hot": hot, "silent": silent}, flush=True)
+    if (hot or silent) and os.environ.get("ALERT_WEBHOOK"):
+        text = json.dumps({"hot": hot, "silent": silent}, default=str)
+        request = urllib.request.Request(
+            os.environ["ALERT_WEBHOOK"], json.dumps({"text": text}).encode(), {"content-type": "application/json"}
+        )
+        urllib.request.urlopen(request, timeout=10)
+
+
+def maintain():
+    for name in lake.tables():
+        print(name, lake.table(name).maintain(), flush=True)
+
+
+def jobs():
+    every = {append_landing: 60, check: 300, maintain: 3600}
+    due = {job: 0.0 for job in every}
+    while not stop.is_set():
+        for job, seconds in every.items():
+            if time.monotonic() >= due[job]:
+                due[job] = time.monotonic() + seconds
+                try:
+                    job()
+                except Exception as e:
+                    print(job.__name__, "failed:", e, flush=True)
+        stop.wait(5)
+
+
+if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, on_signal)
+    signal.signal(signal.SIGINT, on_signal)
+    {"web": web, "worker": worker, "jobs": jobs}[sys.argv[1]]()
+```
+
+`Dockerfile`:
+
+```dockerfile
+FROM python:3.13-slim
+RUN pip install --no-cache-dir timelake boto3 paho-mqtt
+WORKDIR /app
+COPY app.py .
+```
+
+`fly.toml`, with one process group per role. Keep only the groups for the designs you use:
+
+```toml
+app = "timelake-ingest"
+primary_region = "iad"
+kill_signal = "SIGTERM"
+kill_timeout = 60
+
+[processes]
+  web = "python app.py web"
+  worker = "python app.py worker"
+  jobs = "python app.py jobs"
+
+[http_service]
+  processes = ["web"]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  memory = "1gb"
+```
+
+```bash
+fly deploy --app $APP
+fly scale count web=1 worker=1 jobs=1 --app $APP
+```
+
+When Fly stops a Machine, on a deploy, a restart, or an automatic stop, it sends `kill_signal` and waits up to `kill_timeout` seconds before it stops it. The app then appends what it holds. Run exactly one `jobs` Machine: two would run every check twice and append the same landing objects at the same time. Commits to one table happen one at a time, so every extra `web` or `worker` Machine adds commits that may have to retry; one of each is plenty for most fleets.
+
+**Retries.** A repeated Tigris notification and a repeated `jobs` run carry the same batch id, so they load nothing twice. Batch ids are remembered while their commits are kept: by default the last hour, and at most 100 commits. Beyond that, deduplication keeps one row per device and time.

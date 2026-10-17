@@ -1,0 +1,238 @@
+export const metadata = { title: "Cloudflare setup" }
+
+# Cloudflare setup
+
+Do this once for every design. Timelake hasn't been tested on R2 yet ([Limitations](/docs/limitations)), and the probe below checks the one feature it depends on. The commands use [Wrangler](https://developers.cloudflare.com/workers/wrangler/), the AWS CLI (for the probe), [uv](https://docs.astral.sh/uv/), and the `timelake` command ([install](/docs/quick-start#1-install)).
+
+## The bucket and the credentials
+
+```bash
+npx wrangler r2 bucket create timelake
+```
+
+In the Cloudflare dashboard, open **R2 → Manage API tokens → Create API token**, choose **Object Read & Write**, and limit it to the `timelake` bucket. Note the access key ID, the secret access key, and your account ID. Timelake and the writer use them as S3 credentials. Keep them in a file that cron can read too:
+
+```bash
+mkdir -p ~/timelake && cd ~/timelake
+cat > timelake.env <<'EOF'
+export AWS_ACCESS_KEY_ID="<access key id>" AWS_SECRET_ACCESS_KEY="<secret access key>" AWS_REGION=auto
+export AWS_ENDPOINT="https://<account id>.r2.cloudflarestorage.com"
+export TIMELAKE_WAREHOUSE=s3://timelake/lake TIMELAKE_TABLE=iot.readings R2_BUCKET=timelake
+EOF
+. ./timelake.env
+```
+
+## Conditional writes and the table
+
+Each commit is a put-if-absent. The second `put-object` must fail with `PreconditionFailed`:
+
+```bash
+echo probe > probe.txt
+aws s3api put-object --endpoint-url $AWS_ENDPOINT --bucket timelake --key probe.txt --body probe.txt --if-none-match '*'
+aws s3api put-object --endpoint-url $AWS_ENDPOINT --bucket timelake --key probe.txt --body probe.txt --if-none-match '*'
+aws s3api delete-object --endpoint-url $AWS_ENDPOINT --bucket timelake --key probe.txt
+
+timelake create iot.readings --schema "time:timestamptz,device_id:string,temp:double,humidity:int" \
+  --time-column time --series-key device_id
+```
+
+## The writer
+
+One script, `~/timelake/writer.py`, has a mode per design. Cron runs it with `uv`, which installs `timelake` and `boto3` on first use.
+
+```python
+"""Timelake writer for Cloudflare: appends from R2 or a Queue, and checks recent data.
+
+Usage: python writer.py files | queue | events | check
+"""
+
+import base64
+import datetime as dt
+import io
+import json
+import os
+import sys
+import urllib.request
+
+import boto3
+import pyarrow as pa
+import pyarrow.csv as csv
+import pyarrow.json as pj
+import pyarrow.parquet as pq
+import timelake
+
+BUCKET = os.environ["R2_BUCKET"]
+r2 = boto3.client("s3", endpoint_url=os.environ["AWS_ENDPOINT"], region_name="auto")
+lake = timelake.Lake(os.environ["TIMELAKE_WAREHOUSE"])
+table = lake.table(os.environ["TIMELAKE_TABLE"])
+
+
+def read_file(name, body):
+    if name.endswith(".parquet"):
+        return pq.read_table(io.BytesIO(body))
+    if name.endswith(".csv"):
+        return csv.read_csv(io.BytesIO(body))
+    return pj.read_json(io.BytesIO(body))  # newline-delimited JSON
+
+
+def read_messages(payloads):
+    """Readings from JSON messages, each one reading or a list of readings."""
+    rows = []
+    for payload in payloads:
+        try:
+            message = json.loads(payload)
+        except ValueError:
+            print("skipped, not JSON:", payload[:200])
+            continue
+        rows.extend(message if isinstance(message, list) else [message])
+    return pa.Table.from_pylist(rows)
+
+
+def queues_api(queue_id, action, body):
+    account = os.environ["CF_ACCOUNT_ID"]
+    request = urllib.request.Request(
+        f"https://api.cloudflare.com/client/v4/accounts/{account}/queues/{queue_id}/messages/{action}",
+        data=json.dumps(body).encode(),
+        headers={"Authorization": f"Bearer {os.environ['CF_QUEUES_TOKEN']}", "Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(request) as response:
+        return json.load(response)["result"]
+
+
+def pull(queue_id, limit):
+    """Up to `limit` messages, 100 per request, leased for 2 minutes."""
+    messages = []
+    while len(messages) < limit:
+        batch = queues_api(queue_id, "pull", {"batch_size": 100, "visibility_timeout_ms": 120_000})["messages"]
+        messages += batch
+        if len(batch) < 100:
+            break
+    return messages
+
+
+def ack(queue_id, messages):
+    for i in range(0, len(messages), 100):
+        leases = [{"lease_id": m["lease_id"]} for m in messages[i : i + 100]]
+        queues_api(queue_id, "ack", {"acks": leases, "retries": []})
+
+
+def append_file(key):
+    try:
+        body = r2.get_object(Bucket=BUCKET, Key=key)["Body"].read()
+    except r2.exceptions.NoSuchKey:
+        print(key, "already appended and deleted")
+        return
+    # The object key is the batch id: if the writer stops before the delete, the next run skips the file.
+    print(key, table.append(read_file(key, body), batch_id=key))
+    r2.delete_object(Bucket=BUCKET, Key=key)
+
+
+def files():
+    for page in r2.get_paginator("list_objects_v2").paginate(Bucket=BUCKET, Prefix="landing/"):
+        for obj in page.get("Contents", []):
+            append_file(obj["Key"])
+
+
+def queue():
+    queue_id = os.environ["READINGS_QUEUE_ID"]
+    messages = pull(queue_id, limit=1000)
+    data = read_messages(base64.b64decode(m["body"]) for m in messages)
+    if data.num_rows:
+        # Lease ids change on every delivery, so a batch has no stable id. Messages delivered
+        # again after a failed ack are kept once by deduplication.
+        print(len(messages), "messages", table.append(data))
+    ack(queue_id, messages)
+
+
+def events():
+    queue_id = os.environ["EVENTS_QUEUE_ID"]
+    messages = pull(queue_id, limit=100)
+    for m in messages:
+        append_file(json.loads(base64.b64decode(m["body"]))["object"]["key"])
+    ack(queue_id, messages)
+
+
+def check():
+    """Alert on pumps running hot over the last 10 minutes and on pumps silent for 15."""
+    hot = lake.sql("""
+        SELECT device_id, avg(temp) AS avg_temp, max(temp) AS max_temp
+        FROM iot.readings
+        WHERE time > now() - INTERVAL '10 minutes'
+        GROUP BY device_id
+        HAVING avg(temp) > 80
+    """).to_pylist()
+    now = dt.datetime.now(dt.timezone.utc)
+    latest = lake.latest("iot.readings").to_pylist()
+    silent = [r["device_id"] for r in latest if now - r["time"] > dt.timedelta(minutes=15)]
+    print({"hot": hot, "silent": silent})
+    if hot or silent:
+        text = json.dumps({"hot": hot, "silent": silent}, default=str)
+        request = urllib.request.Request(
+            os.environ["ALERT_WEBHOOK"],
+            data=json.dumps({"text": text}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        urllib.request.urlopen(request)
+
+
+if __name__ == "__main__":
+    {"files": files, "queue": queue, "events": events, "check": check}[sys.argv[1]]()
+```
+
+## The Worker
+
+One Worker takes uploads for [Files to R2](/docs/quick-start/cloudflare/files) and [Queue with a pull consumer](/docs/quick-start/cloudflare/queues). `src/index.js`:
+
+```js
+// Intake for gateways and devices:
+//   PUT  /files/<name>.csv (or .parquet)  stores the file under landing/ in R2 (Files to R2)
+//   POST /readings                        puts a JSON reading, or a list of readings, on a queue (Queue with a pull consumer)
+const NAME = /^[\w.-]+\.(csv|parquet)$/
+
+export default {
+  async fetch(request, env) {
+    if (request.headers.get("authorization") !== `Bearer ${env.INGEST_TOKEN}`) {
+      return new Response("unauthorized", { status: 401 })
+    }
+    const path = new URL(request.url).pathname
+    if (request.method === "PUT" && path.startsWith("/files/") && NAME.test(path.slice(7))) {
+      // The gateway names each file (gateway id + sequence number), so a retried upload
+      // overwrites the same object and the writer loads it once.
+      const key = `landing/${path.slice(7)}`
+      await env.LAKE.put(key, await request.arrayBuffer())
+      return new Response(`${key}\n`, { status: 201 })
+    }
+    if (request.method === "POST" && path === "/readings" && env.READINGS) {
+      const bytes = await request.arrayBuffer()
+      if (bytes.byteLength > 128_000) return new Response("over 128 KB: split it", { status: 413 })
+      let body
+      try {
+        body = JSON.parse(new TextDecoder().decode(bytes))
+      } catch {
+        return new Response("not JSON", { status: 400 })
+      }
+      await env.READINGS.send(body)
+      return new Response("queued\n", { status: 202 })
+    }
+    return new Response("PUT /files/<name>.csv or POST /readings", { status: 400 })
+  },
+}
+```
+
+`wrangler.jsonc`:
+
+```json
+{
+  "name": "timelake-intake",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-01",
+  "r2_buckets": [{ "binding": "LAKE", "bucket_name": "timelake" }]
+}
+```
+
+```bash
+openssl rand -hex 32 | npx wrangler secret put INGEST_TOKEN     # note the token for the devices
+npx wrangler deploy
+```
+
+**Retries and concurrency.** Every path here can deliver the same data twice: a device retries an upload, or a message comes back after its lease runs out. Files have a stable name, which is the batch id, so a repeat is skipped. Batch ids are remembered while their commits are kept: by default the last hour, and at most 100 commits. Beyond that, and for queue messages, deduplication keeps one row per device and time. Each append is one commit, and commits to one table happen one at a time. `flock -n` in the cron lines below skips a run while the previous one is still going, so each mode has one writer.

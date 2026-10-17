@@ -1,0 +1,47 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "Azure: Files to Blob Storage" }
+
+# Files to Blob Storage
+
+Do the [Azure setup](/docs/quick-start/azure/setup) first.
+
+<IngestFlow
+  nodes={[
+    { label: "Gateways", sub: "CSV / Parquet / JSON" },
+    { label: "landing container" },
+    { label: "Azure Function", sub: "ingest_blob", accent: true },
+    { label: "lake container", sub: "Iceberg tables" },
+  ]}
+  edges={["upload", "Event Grid", "commit"]}
+/>
+
+Gateways buffer readings and upload a file every few minutes to a `landing` container in the same storage account. Event Grid tells the function about each new blob. The subscription only covers `landing`, so the lake's own writes never trigger it.
+
+```bash
+az provider register --namespace Microsoft.EventGrid
+az storage container create --account-name $ACCOUNT -n landing --auth-mode login
+az eventgrid system-topic create -g $RG -n timelake-storage -l $LOCATION \
+  --topic-type Microsoft.Storage.StorageAccounts --source $SCOPE
+KEY=$(az functionapp keys list -g $RG -n $APP --query systemKeys.blobs_extension -o tsv)
+HOST=$(az functionapp show -g $RG -n $APP --query defaultHostName -o tsv)
+az eventgrid system-topic event-subscription create -g $RG --system-topic-name timelake-storage -n landing \
+  --endpoint "https://$HOST/runtime/webhooks/blobs?functionName=Host.Functions.ingest_blob&code=$KEY" \
+  --included-event-types Microsoft.Storage.BlobCreated \
+  --subject-begins-with /blobServices/default/containers/landing/
+```
+
+Try it:
+
+```bash
+cat > readings.csv <<'EOF'
+time,device_id,temp,humidity
+2026-01-05T10:00:00Z,pump-1,61.2,40
+2026-01-05T10:00:00Z,pump-2,58.9,42
+EOF
+az storage blob upload --account-name $ACCOUNT -c landing -n gateway-1/20260105T1000.csv -f readings.csv \
+  --auth-mode login
+timelake latest iot.readings
+```
+
+Give every upload a unique name, such as the gateway and the time, and send corrections as new files: a name that was already loaded is skipped.

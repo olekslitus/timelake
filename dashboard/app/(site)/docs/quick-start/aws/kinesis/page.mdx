@@ -1,0 +1,53 @@
+import { IngestFlow } from "@/components/docs/ingest-flow"
+
+export const metadata = { title: "AWS: Kinesis Data Streams" }
+
+# Kinesis Data Streams
+
+Do the [AWS setup](/docs/quick-start/aws/setup) first.
+
+<IngestFlow
+  nodes={[
+    { label: "Devices", sub: "PutRecords" },
+    { label: "Kinesis stream" },
+    { label: "Lambda", sub: "ingest_kinesis", accent: true },
+    { label: "S3 lake bucket", sub: "Iceberg tables" },
+  ]}
+  edges={["SDK", "batch", "commit"]}
+/>
+
+Devices put records on a stream, with the device id as the partition key so each device's readings stay in order. Lambda reads each shard in batches: one function per shard at a time, one commit per batch. The stream keeps records for 24 hours by default, so a failed batch is retried and a broken function can catch up.
+
+```bash
+aws kinesis create-stream --stream-name timelake-readings --stream-mode-details StreamMode=ON_DEMAND
+aws iam attach-role-policy --role-name timelake \
+  --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaKinesisExecutionRole
+lambda_function timelake-kinesis ingest_kinesis
+aws lambda create-event-source-mapping --function-name timelake-kinesis \
+  --event-source-arn arn:aws:kinesis:$AWS_REGION:${ACCOUNT}:stream/timelake-readings \
+  --starting-position LATEST --batch-size 10000 --maximum-batching-window-in-seconds 30 \
+  --maximum-retry-attempts 10
+```
+
+`--maximum-batching-window-in-seconds` sets the trade-off: a longer window means fewer, larger commits and fewer requests, and data reaches queries later. A batch that still fails after 10 retries is dropped; add `--destination-config` with an SQS queue to keep it. An on-demand stream starts with 4 shards, so up to 4 functions commit at once.
+
+Try it:
+
+```bash
+aws kinesis put-record --stream-name timelake-readings --partition-key pump-1 --cli-binary-format raw-in-base64-out \
+  --data '{"time": "2026-01-05T10:05:00Z", "device_id": "pump-1", "temp": 62.0, "humidity": 41}'
+```
+
+From a device or gateway with the AWS SDK, send readings in batches:
+
+```python
+import json
+
+import boto3
+
+kinesis = boto3.client("kinesis")
+kinesis.put_records(
+    StreamName="timelake-readings",
+    Records=[{"Data": json.dumps(r), "PartitionKey": r["device_id"]} for r in readings],
+)
+```
