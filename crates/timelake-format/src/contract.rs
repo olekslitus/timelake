@@ -180,6 +180,9 @@ pub struct Contract {
     /// For a rollup: inline maintenance of its raw table refreshes it once its last refresh is this
     /// old (`None`: never).
     pub rollup_refresh_interval: Option<Duration>,
+    /// The Timelake reader uses a table version it loaded or checked for this long before
+    /// checking for a newer one.
+    pub version_check_interval: Duration,
 }
 
 impl Contract {
@@ -194,6 +197,7 @@ impl Contract {
     const DEFAULT_HEAD_FORMAT: &str = "arrow";
     const DEFAULT_HEAD_INLINE_BYTES: u64 = 1 << 20;
     const DEFAULT_ROLLUP_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
+    const DEFAULT_VERSION_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 
     /// Reads the contract from Iceberg table properties, with defaults for what isn't set.
     pub fn from_properties(properties: &HashMap<String, String>) -> Result<Self> {
@@ -233,6 +237,9 @@ impl Contract {
                 Some(s) => Some(parse_duration(s)?),
                 None => Some(Self::DEFAULT_ROLLUP_REFRESH_INTERVAL),
             },
+            version_check_interval: p
+                .duration(property::VERSION_CHECK_INTERVAL)?
+                .unwrap_or(Self::DEFAULT_VERSION_CHECK_INTERVAL),
         })
     }
 

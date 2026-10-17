@@ -4197,10 +4197,11 @@ dependencies = [
 
 [[package]]
 name = "timelake"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "arrow",
  "async-trait",
+ "blake3",
  "bytes",
  "chrono",
  "datafusion",
@@ -4222,7 +4223,7 @@ dependencies = [
 
 [[package]]
 name = "timelake-cli"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4236,21 +4237,30 @@ dependencies = [
 
 [[package]]
 name = "timelake-format"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
+ "apache-avro",
+ "arrow-arith",
  "arrow-array",
+ "arrow-cast",
  "arrow-ipc",
  "arrow-json",
+ "arrow-ord",
+ "arrow-row",
  "arrow-schema",
  "arrow-select",
+ "bytes",
  "chrono",
+ "futures-executor",
+ "futures-util",
+ "parquet",
  "serde",
  "serde_json",
 ]
 
 [[package]]
 name = "timelake-py"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "arrow-array",
  "arrow-pyarrow",

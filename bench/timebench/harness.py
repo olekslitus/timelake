@@ -131,7 +131,8 @@ class RunSpec:
 
 def run(spec: RunSpec) -> Path:
     """Runs everything and returns the run file."""
-    spec.workload.prepare()
+    if not spec.reuse:  # the tables exist; the data files may not
+        spec.workload.prepare()
     if spec.target.s3 and spec.ttfb_ms is not None:
         set_ttfb(spec.ttfb_ms)
     started = dt.datetime.now(dt.timezone.utc)
@@ -145,6 +146,8 @@ def run(spec: RunSpec) -> Path:
     if spec.reuse:
         for checkpoint in spec.checkpoints or (*spec.workload.checkpoints(), "maintained"):
             results += query_pass(spec, path, list(spec.systems), At(checkpoint, now))
+        for s in spec.systems:
+            run_dashboards(spec, path, s, now)
     else:
         # One system at a time, start to finish, so a database server has the machine to itself (``server``).
         for s in spec.systems:
@@ -178,6 +181,12 @@ def run_system(spec: RunSpec, path: Path, name: str, now: int | None, earlier: l
         if not record(path, maintain(spec.system(name))):
             return results
         results += query_pass(spec, path, [name], At("maintained", now), [*earlier, *results])
+    run_dashboards(spec, path, name, now)
+    return results
+
+
+def run_dashboards(spec: RunSpec, path: Path, name: str, now: int | None) -> None:
+    """Concurrent dashboards on one system at the last checkpoint, if the run asks for them."""
     last = spec.last_checkpoint()
     if spec.concurrency and spec.workload.dashboard_queries() and last and name != REFERENCE:
         reader = systems()[name].readers[0]
@@ -186,7 +195,6 @@ def run_system(spec: RunSpec, path: Path, name: str, now: int | None, earlier: l
             c = dashboards(spec.system(name), queries, last, clients, spec.concurrency_seconds)
             append_jsonl(path, c)
             print(concurrency_line(c), flush=True)
-    return results
 
 
 @contextlib.contextmanager

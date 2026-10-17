@@ -61,6 +61,7 @@ export const DOCS_NAV: { title: string; items: DocsLink[] }[] = [
             label: "Cloudflare",
             items: [
               { href: "/docs/quick-start/cloudflare/setup", label: "Setup" },
+              { href: "/docs/quick-start/cloudflare/worker-writer", label: "Queue with a consumer Worker" },
               { href: "/docs/quick-start/cloudflare/files", label: "Files to R2" },
               { href: "/docs/quick-start/cloudflare/queues", label: "Queue with a pull consumer" },
               { href: "/docs/quick-start/cloudflare/notifications", label: "R2 event notifications" },

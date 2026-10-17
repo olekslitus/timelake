@@ -73,7 +73,9 @@ def single(job: dict[str, Any], sql: str) -> QueryRecord:
 def client(job: dict[str, Any]) -> dict[str, Any]:
     """A dashboard backend: one reader kept open, the queries in turn (starting at ``offset``) until the deadline.
 
-    Prints each query's name and seconds, and the errors.
+    A query that fails is counted once and left out from then on (a dashboard panel showing an error isn't retried in
+    a loop), so a failure that comes back at once doesn't spin the client. Prints each query's name and seconds, and
+    the errors.
     """
     place = Place(Target(job["target"]), job["dataset"], job["system"])
     setup_start = time.perf_counter()
@@ -84,15 +86,17 @@ def client(job: dict[str, Any]) -> dict[str, Any]:
     errors: list[str] = []
     deadline = time.monotonic() + job["seconds"]
     i = job.get("offset", 0)
-    while time.monotonic() < deadline:
-        name, sql = queries[i % len(queries)]
-        i += 1
+    while queries and time.monotonic() < deadline:
+        i %= len(queries)
+        name, sql = queries[i]
         start = time.perf_counter()
         try:
             run(sql)
-        except Exception as e:  # noqa: BLE001 (a failed query is counted, and the client goes on)
+        except Exception as e:  # noqa: BLE001 (a failed query is counted, and the client goes on without it)
             errors.append(f"{name}: {type(e).__name__}: {e}"[:200])
+            queries.pop(i)
             continue
+        i += 1
         latencies.append((name, time.perf_counter() - start))
     return {"setup_s": setup_s, "latencies": latencies, "errors": errors}
 

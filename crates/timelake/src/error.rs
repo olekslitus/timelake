@@ -63,6 +63,21 @@ impl Error {
     }
 }
 
+impl From<timelake_format::error::WriteError> for Error {
+    fn from(e: timelake_format::error::WriteError) -> Self {
+        use timelake_format::error::WriteError as W;
+        match e {
+            W::Invalid(m) => Self::Invalid(m),
+            W::Conflict(m) => Self::Conflict(m),
+            W::NotFound(m) => Self::NotFound(m),
+            W::Store(m) | W::Corrupt(m) => Self::Io(std::io::Error::other(m)),
+            W::Format(e) => Self::Format(e),
+            W::Arrow(e) => Self::Arrow(e),
+            W::Parquet(e) => Self::Parquet(e),
+        }
+    }
+}
+
 /// Lets APIs that take `impl TryInto<TableName>` also accept a `TableName`.
 impl From<Infallible> for Error {
     fn from(e: Infallible) -> Self {

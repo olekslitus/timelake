@@ -2,15 +2,16 @@ export const metadata = { title: "Quick start: Cloudflare" }
 
 # Cloudflare
 
-On Cloudflare, Timelake keeps its tables in an R2 bucket. A Worker takes uploads from devices, and a writer script appends them to the table. The writer is native code, so it can't run inside a Worker (the WebAssembly build of Timelake only reads). It runs from cron on any Linux host with Python, such as a small VM, and talks to R2 through R2's S3-compatible API.
+On Cloudflare, Timelake keeps its tables in an R2 bucket. A Worker takes uploads from devices. Readings are appended either by a consumer Worker, with the WebAssembly writer in `@timelake/client`, or by a writer script that runs from cron on any Linux host with Python and talks to R2 through its S3-compatible API. The script also runs the hourly `timelake maintain`, which the WebAssembly writer can't do yet.
 
 | Design | Devices send | Visible to queries after | Fits |
 | --- | --- | --- | --- |
+| [Queue with a consumer Worker](/docs/quick-start/cloudflare/worker-writer) | JSON readings over HTTPS | the batch timeout (up to 30 s) | devices that send single readings; ingestion entirely on Cloudflare |
 | [Files to R2](/docs/quick-start/cloudflare/files) | CSV or Parquet files over HTTPS | the next writer run (a minute) | gateways that buffer readings and upload every few minutes |
-| [Queue with a pull consumer](/docs/quick-start/cloudflare/queues) | JSON readings over HTTPS | the next writer run (a minute) | devices that send single readings or small lists |
+| [Queue with a pull consumer](/docs/quick-start/cloudflare/queues) | JSON readings over HTTPS | the next writer run (a minute) | the same devices, appended by the writer script |
 | [R2 event notifications](/docs/quick-start/cloudflare/notifications) | files over HTTPS or the S3 API | the next writer run (a minute) | many files, or gateways that upload to R2 directly |
 
-**Which to choose.** Start with [Files to R2](/docs/quick-start/cloudflare/files) if your gateways already batch readings into files: it needs no queue. Choose [Queue with a pull consumer](/docs/quick-start/cloudflare/queues) when devices send readings one at a time. Choose [R2 event notifications](/docs/quick-start/cloudflare/notifications) over [Files to R2](/docs/quick-start/cloudflare/files) when the landing area holds many files at once: the writer learns about each file from a notification instead of listing the bucket every minute.
+**Which to choose.** When devices send readings one at a time, use [Queue with a consumer Worker](/docs/quick-start/cloudflare/worker-writer): appends run on Cloudflare within seconds, and only maintenance needs a host. Use [Files to R2](/docs/quick-start/cloudflare/files) if your gateways already batch readings into files: it needs no queue. Choose [Queue with a pull consumer](/docs/quick-start/cloudflare/queues) to keep every append in the native writer. Choose [R2 event notifications](/docs/quick-start/cloudflare/notifications) over [Files to R2](/docs/quick-start/cloudflare/files) when the landing area holds many files at once: the writer learns about each file from a notification instead of listing the bucket every minute.
 
 Then [scheduled checks](/docs/quick-start/cloudflare/checks#scheduled-checks-on-recent-data) read recent data and alert, and [maintenance](/docs/quick-start/cloudflare/checks#maintenance) runs every hour. [Other designs](#other-designs) covers running the writer in a Cloudflare Container, and Basin Pipelines.
 

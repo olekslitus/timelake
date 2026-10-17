@@ -16,6 +16,8 @@ const config = { first: { label: "First run", color: "var(--chart-2)" } } satisf
 
 /** Bars within 5% of the fastest get no "× slower" tag. */
 const SAME_AS_FASTEST = 1.05
+/** Pixels per bar, enough for a two-line label. */
+const BAR_ROOM = 30
 
 function BarTooltip({ active, payload }: TooltipContentProps) {
   const bar = active ? (payload[0]?.payload as (BenchBar & { unit: TimeUnit }) | undefined) : undefined
@@ -25,6 +27,7 @@ function BarTooltip({ active, payload }: TooltipContentProps) {
     ["best repeat", formatTime(bar.best, bar.unit)],
   ]
   if (bar.requests != null) rows.push(["requests", formatNumber(Math.round(bar.requests))])
+  if (bar.wrong > 0) rows.push(["wrong answers", String(bar.wrong)])
   return <ChartTooltipCard title={bar.label} rows={rows} />
 }
 
@@ -37,24 +40,41 @@ function PanelChart({ panel }: { panel: BenchPanel }) {
     .map((b) => ({
       ...b,
       unit,
-      tag: `${formatTime(b.first, unit)}${b.first > fastest * SAME_AS_FASTEST ? ` · ${(b.first / fastest).toFixed(1)}×` : ""}`,
+      tag: [
+        formatTime(b.first, unit),
+        ...(b.first > fastest * SAME_AS_FASTEST ? [`${(b.first / fastest).toFixed(1)}×`] : []),
+        ...(b.wrong > 0 ? [`${b.wrong} wrong`] : []),
+      ].join(" · "),
     }))
+  const anyWrong = data.some((b) => b.wrong > 0)
   const engines = panel.bars.map((b) => b.engine)
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-base">{panel.state}</CardTitle>
-        <CardDescription>First run, geometric mean over {panel.queries} queries. Lower is better.</CardDescription>
+        <CardDescription>
+          First run, geometric mean over {panel.queries} queries. Lower is better.
+          {anyWrong && " Faded bars gave wrong answers to some of them: the count follows the time."}
+        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
-        <ChartContainer config={config} className="aspect-auto h-56 w-full">
-          <BarChart data={data} layout="vertical" margin={{ left: 0, right: 120 }} barCategoryGap={6}>
+        {/* Room for every label: two lines each, however many engines ran. */}
+        <ChartContainer
+          config={config}
+          className="aspect-auto w-full"
+          style={{ height: Math.max(224, data.length * BAR_ROOM + 16) }}
+        >
+          <BarChart data={data} layout="vertical" margin={{ left: 0, right: 160 }} barCategoryGap={6}>
             <XAxis type="number" hide domain={[0, "dataMax"]} />
-            <YAxis type="category" dataKey="label" width={150} tickLine={false} axisLine={false} />
+            <YAxis type="category" dataKey="label" width={150} tickLine={false} axisLine={false} interval={0} />
             <ChartTooltip cursor={false} content={BarTooltip} />
             <Bar dataKey="first" radius={[0, 4, 4, 0]} isAnimationActive={false}>
               {data.map((d) => (
-                <Cell key={d.engine} fill={d.timelake ? "var(--chart-1)" : "var(--chart-2)"} />
+                <Cell
+                  key={d.engine}
+                  fill={d.timelake ? "var(--chart-1)" : "var(--chart-2)"}
+                  fillOpacity={d.wrong > 0 ? 0.35 : 1}
+                />
               ))}
               <LabelList dataKey="tag" position="right" className="fill-foreground font-mono" fontSize={11} />
             </Bar>

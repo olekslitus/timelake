@@ -18,20 +18,11 @@
 
 import type { z } from "zod"
 
-import { wasmBase64 } from "./wasm/inline.js"
-import { ParquetFile, Query, Table as WasmTable, initSync, version as wasmVersion } from "./wasm/timelake_wasm.js"
+import { ensureWasm } from "./init.js"
+import { ParquetFile, Query, Table as WasmTable, version as wasmVersion } from "./wasm/timelake_wasm.js"
 
-// --- WASM init -------------------------------------------------------------------------------------
-
-let ready = false
-function ensureWasm() {
-  if (ready) return
-  const bin = atob(wasmBase64)
-  const bytes = new Uint8Array(bin.length)
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
-  initSync({ module: bytes })
-  ready = true
-}
+export { memoryStore, r2Store, TableWriter } from "./writer.js"
+export type { AppendReport, AppendRowsOptions, R2BucketLike, Store, StoredObject, Upload } from "./writer.js"
 
 /** Version of the embedded WASM reader. */
 export function readerVersion(): string {

@@ -11,7 +11,7 @@ keywords = ["time-series", "iceberg", "lakehouse", "object-storage", "parquet"]
 categories = ["database-implementations", "database"]
 
 [dependencies]
-timelake-format = { workspace = true, features = ["head"] }
+timelake-format = { workspace = true, features = ["head", "write"] }
 iceberg.workspace = true
 datafusion.workspace = true
 arrow.workspace = true
@@ -20,6 +20,7 @@ object_store.workspace = true
 tokio.workspace = true
 futures.workspace = true
 bytes.workspace = true
+blake3.workspace = true
 async-trait.workspace = true
 typetag.workspace = true
 serde.workspace = true

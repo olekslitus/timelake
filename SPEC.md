@@ -581,6 +581,31 @@ A logical delete hides data but is not erasure: the bytes still exist in the ori
 
 These tasks can be triggered by a schedule, by commit events (catalog events, S3 notifications), or inline from the writer for small deployments. The core is concurrency-safe via Iceberg optimistic commits and conflict-aware retries.
 
+### 10.1 Streaming compaction (decided 2026-10-17, built in the engine 2026-10-17)
+
+**Status:** the engine compacts by streaming merge (`timelake_format::merge`, `maintain.rs`). Full compaction of TSBS IoT, 72 hourly files into 3 days: 3.65 → 2.37 s, peak memory 1.95 → 0.53 GB, identical output ([`bench/results/PERFORMANCE.md`](bench/results/PERFORMANCE.md)). Per open input about 10 MB (its row group). Writing was 80% of the time on one thread; the shared file writer (`timelake_format::file`) now encodes columns in parallel: 2.37 → 1.17 s, byte-identical files. Next: the byte cap per run, and page-window reads in WASM (an input's pages fetched a window at a time, by the offset index, so its memory doesn't depend on its row group).
+
+**Why.** Compaction read every file of a run into memory, concatenated, sorted, and deduplicated it, so its memory grew with the partition: fine on a server, too much for a 128 MB Cloudflare Worker (F10), and wasteful everywhere.
+
+**Design.** Every data file Timelake writes is sorted by the write order `(series…, time, insertion time)` and free of duplicates on its own (§9.1). Compaction becomes a k-way merge of its input files:
+- Each input is read as a stream of small batches; the merge keeps the next batch of each input and emits rows in write order. Inputs are taken in commit order, so among rows with the same `(series…, time)` the later commit wins, then the later insertion time, as before.
+- Duplicates are dropped as they meet: the last row of each `(series…, time)` is kept when dedup is on.
+- Memory is one batch per input, the row group being written, and one upload part, whatever the partition's size. Outputs larger than an upload part go up as multipart uploads.
+- An input not sorted in the table's order (written by another engine, or before the table declared one) is sorted on its own first: memory is then bounded by the largest such file, not the partition.
+- The merge is a state machine with no I/O (it says which input needs its next batch, and takes batches as they come), so the engine (async, object store) and the WASM writer (JS store) run the same code.
+
+**Optimizations to try, kept if measured faster:**
+- Runs, not rows: where the current batch of one input ends before the next key of every other input, the whole run is emitted as a slice, without comparing rows one by one (found by binary search on row-encoded keys). Time-series files mostly cover different series or times, so most of a merge should be runs.
+- Copy without decoding: a whole row group, or a whole file, whose key range overlaps no other input is copied to the output as encoded column chunks. This needs each file's (or row group's) first and last composite key; the per-column bounds in Iceberg metadata are too weak for a multi-column series key. If it pays off, the format gains them (below).
+- Parallel decoding of inputs on native targets.
+- Smaller read batches and row groups where memory is tight (WASM), as settings.
+
+**Format extensions considered** (added to the table format only if a measurement needs them; readers that don't know them ignore them):
+- In each data file's Parquet key-value metadata: `timelake.sort` (the write order) and `timelake.unique = true` (no two rows share `(series…, time)`), so compaction and dedup on read can trust a file without the table's history.
+- Per data file in the head (and per row group in the footer metadata): the first and last composite key, for copying non-overlapping inputs without decoding.
+
+**Limits per run.** A setting caps the bytes one maintenance run rewrites (needed on Workers, where a request has at most 5 minutes of CPU; useful anywhere inline maintenance shouldn't hold up appends). A run that stops at the cap commits what it rewrote; the next run continues.
+
 ---
 
 ## 11. Materialized rollups and the function library (R5)
@@ -1117,7 +1142,7 @@ Open from v0:
 | Later | Computed metrics from user-defined Python functions (F4, §21.4) |
 
 ### 19.1 Performance plan (in progress)
-**Status:** P4 done (2026-10-13); P1–P3 done (2026-10-14, §19.2). P3 measured no clear gain and is off by default. P7's first version done (2026-10-16, §11.1.1). Next: P5, P6, P8, and the rest of P7. The history of each step and its effect is on the docs page "Performance history". The codebase and CI/CD cleanup it waited for is done (2026-10-13; the audit and plan are in git history at `2d66939`). Gains below are estimates until measured; measurements are in [`bench/results/PERFORMANCE.md`](bench/results/PERFORMANCE.md).
+**Status:** P4 done (2026-10-13); P1–P3 done (2026-10-14, §19.2). P3 measured no clear gain and is off by default. P7's first version done (2026-10-16, §11.1.1); P5 done (2026-10-17, §19.3). P6's staleness bound built (2026-10-17, below). Next: P8, the rest of P7, and P6's S3 Express pointer. The history of each step and its effect is on the docs page "Performance history". The codebase and CI/CD cleanup it waited for is done (2026-10-13; the audit and plan are in git history at `2d66939`). Gains below are estimates until measured; measurements are in [`bench/results/PERFORMANCE.md`](bench/results/PERFORMANCE.md).
 
 **Where time goes today** (Timelake reader, laptop → AWS S3 us-east-2, after maintenance, [`bench/results/S3.md`](bench/results/S3.md)):
 
@@ -1141,8 +1166,8 @@ Open from v0:
 | P2 | **Done.** **Footers in the head object.** Store the Parquet footers and page indexes of live files next to the file list, so scans skip the footer round trip. | Cold scans 2 round trips instead of 3; Tigris `one-truck-history` 1,187 → 522 ms (with P1) |
 | P3 | **Done.** **Connection pre-warm.** Open the scan's connections while the head object is in flight. | Measured at most about 20 ms on cold scans, nothing on point queries: off by default |
 | P4 | **Done.** **Two-step commit.** Upload data, manifest, index and manifest list in parallel (all are known locally), then make the one conditional write. Update the hint asynchronously. | Commit p50 483 ms → 243 ms measured (whole v0 ingest 1,307 s → 795 s) |
-| P5 | **Local disk cache across processes** for metadata, footers and recent data (§12.2 item 6). | Repeat queries at best-run speed |
-| P6 | **Optional staleness bound** (e.g. "at most 1 s old") to skip the per-query version check, and the head pointer on S3 Express where available. | Warm `last-loc` 68 ms → a few ms |
+| P5 | **Done (§19.3).** **Block cache**, in memory and optionally on local disk across processes, for data files, manifests and the last-value index (§12.2 item 6). | Repeat queries at best-run speed; measured: TSBS IoT repeats on S3 54 → 16 ms, 16 clients 288 → 398 queries/s |
+| P6 | **Staleness bound built (2026-10-17):** setting `version-check-interval` (table, session; default 1 s, the planning cache's old lifetime). A reader uses a version it loaded or checked that long without the per-query check; writers always check, and a process sees its own commits at once. `0s` checks on every query (one query's lookups share one check). **Not built:** the head pointer on S3 Express. | One request and round trip less per warm query within the interval (unit test: warm `latest` 1 → 0 round trips); not measured on S3 yet |
 | P7 | **First version done (§11.1.1).** **Rollups (§11.1).** TSBS daily queries read hourly or daily rollups instead of raw data. | Likely 10–100× on bandwidth-bound dashboard queries; an hourly query over a week of 200 devices went 113 → 21 ms on a laptop (debug build) |
 | P8 | **Scan tuning:** late materialization (`pushdown_filters`, now off), Q4's hidden `_series_id`, fewer and larger parallel range reads. | Less data decoded and fetched on selective scans |
 
@@ -1185,7 +1210,45 @@ Open from v0:
 
 **TypeScript client and WASM reader.** The client GETs the head and the hint together; the WASM reader decodes heads written with the built-in codecs (the codecs and header live in `timelake-format` under its `head` feature, shared with the engine). A HEAD for `vN+1` runs alongside the query's data reads; if a newer version exists, the result is dropped and the query reruns on the metadata chain from `vN+1`. `latest` answers from the inline index without a request, and scans open files from inline footers.
 
-### 19.3 Versions, releases and demos
+### 19.3 Block cache (P5)
+
+**Status:** built 2026-10-17. Measured on the benchmark instance on S3 (`bench/results/PERFORMANCE.md`, "P5"):
+repeat runs of TSBS IoT 54 → 16 ms (geometric mean) with no requests, 1 / 4 / 16 clients 22 / 94 / 288 → 133 / 339 /
+398 queries/s; TSBS DevOps repeats 85 → 27 ms. A second process with the disk cache warm: IoT first runs 151 → 71 ms.
+256 KiB blocks gained nothing and cost more requests on first runs, so 1 MiB is the default.
+
+**Why.** Within one process, table metadata, manifests and footers are already cached in memory, but every repeat
+query on object storage fetches its data again. In the weekly run of 2026-10-16 on S3, repeat runs took 32 ms
+(`one-truck-last-hour`, 4 requests) against 3 ms on local disk, and 135 ms (`cpu-max-all-8`, 8 requests) against
+14 ms; 16 clients on S3 reached about half the local throughput. One request per query remains either way: the check
+for a newer table version, which P6 addresses.
+
+**Design.**
+- A caching layer wraps the object store, so every read goes through it: DataFusion's Parquet reads, manifests,
+  manifest lists, the last-value index and footers.
+- Only immutable objects are cached: `*.parquet` and `*.avro` (data files, manifests, manifest lists, last-value
+  index files), whose names carry a UUID and which Timelake never rewrites. The version hint, the head, table
+  listings, `vN.metadata.json` and `timelake-tables.json` always go to the store, so freshness is as before.
+- Objects are cached in aligned blocks (`timelake_cache_block_bytes`, default 1 MiB). A read takes the blocks it
+  covers; missing blocks next to each other are fetched in one ranged GET, and concurrent reads of the same missing
+  block share one fetch. The store's answer also gives the object's size, recorded with its blocks; a block whose
+  length doesn't fit that size is treated as missing.
+- Writes of cacheable objects put their blocks in the cache too, so a process reads what it just wrote without a
+  request. Deleting an object drops its blocks.
+- Two levels: memory (least recently used blocks evicted past `timelake_cache_memory_bytes`, default 256 MiB), and
+  optionally local disk, shared by every process on the machine (`timelake_cache_disk_bytes`, default 4 GiB, in
+  `timelake_cache_dir`, default the OS cache directory). Disk blocks are written to a temporary name and renamed into
+  place; a process that finds the directory over its cap deletes the least recently used blocks (by modification
+  time, refreshed on use at most once a minute). A block deleted while another process reads it is fetched again.
+- `timelake_cache = off | memory | disk`: memory by default for object stores and HTTPS, off for local disk.
+- Hits, misses and bytes fetched are counted per lake (`Storage::cache_stats`, `Lake.cache_stats()` in Python, and
+  per run in the benchmark output).
+- Not covered: the WASM reader and the TypeScript client (the browser has its own HTTP cache).
+
+**Measure:** the S3 query-only runs and the 16-client test on the benchmark instance, and a new CLI process running
+`one-truck-last-hour` against a warm disk cache, before and after; block sizes of 256 KiB and 1 MiB.
+
+### 19.4 Versions, releases and demos
 
 **Decided 2026-10-14:**
 - **One version for everything** (crates, CLI, Python package, WASM reader, TypeScript client, website), following [Cargo's semver rules](https://doc.rust-lang.org/cargo/reference/semver.html). `cargo-semver-checks` runs on the library crates in the release script (`scripts/release.py`) against the previous tag. Every version is a git tag `vX.Y.Z` with a GitHub release, so performance claims name a version that can be checked out and re-measured. 0.1.0 (before the performance work) and 0.2.0 (two-step commit) were tagged after the fact; 0.3.0 is the first release cut with the script.
@@ -1226,6 +1289,7 @@ New product features beyond the original requirements, recorded on 2026-10-13. N
 | F7 | Edge gateway: local endpoints for data, metrics, logs and blobs, plus a local cache | R25 | Ingest (§13), reader | 6 |
 | F8 | Server mode: Timelake as a database on local disk, the bucket as the durable copy (experiment first) | R26 | Reader, hot tier (§8), F7 | Experiment after §17.6 |
 | F9 | Settings: every engine feature can be turned on or off or tuned, per table, per session or per call | — | Table properties (§7.1) | Now (design for review) |
+| F10 | Writes from WebAssembly: append and maintain tables from Cloudflare Workers and other JS runtimes | — | `@timelake/client`, streaming compaction (§10.1) | Now |
 
 ### 21.1 F1: Agent access with permission sets (R19)
 
@@ -1389,8 +1453,9 @@ A setting declares which levels it allows: the time column and series key only a
 | `latest-by` | a column (`_ingest_ts`) | table | Which copy of a row is the latest write (§7.4, proposed) |
 | `as_of_inserted` | a timestamp, or none | session | Leave out rows inserted after it, before dedup (§7.4, proposed) |
 | `compact-cold-after` | a duration, or off (1h) | table, call | Full compaction of partitions whose time range has ended (§9.1) |
+| `version-check-interval` | a duration (1s) | table, session | How long the reader uses a table version without checking for a newer one (§19.1 P6), built |
 
-The existing `timelake.*` properties become registry entries unchanged. Hard-coded behaviour moves into settings as it's touched: compaction tiers, the small-file ratio, scan parallelism, the planning cache's lifetime.
+The existing `timelake.*` properties become registry entries unchanged. Hard-coded behaviour moves into settings as it's touched: compaction tiers, the small-file ratio, scan parallelism. The planning cache's lifetime became `version-check-interval`.
 
 **Decided 2026-10-16:**
 - **Names in SQL** use underscores (`SET timelake.read_dedup = off`); every spelling (dashes, underscores, with or without `timelake.`) names the same setting.
@@ -1403,3 +1468,22 @@ The existing `timelake.*` properties become registry entries unchanged. Hard-cod
 - Session level: every setting the registry allows there can be `SET`, shown with `SHOW`, passed with `--set`, or given to Python's `Lake(settings=…)`. The CLI's `--set` no longer panics on a bad key.
 - `timelake settings [table] [--json]` lists them; the docs page "Settings" renders the same list (`dashboard/lib/settings.json`, checked by a test).
 - Changes from the proposal: `dedup` is fixed at creation (files written with it off may hold copies, which dedup on read assumes they don't). `append-dedup` isn't built for the same reason: an append that keeps copies would need its files marked for the reader. `format-version` is managed by Timelake (create, upgrade) and can't be set by hand. `latest-by` and `as_of_inserted` wait for §7.4. Storage options (`timelake_freshness_check`, …) stay lake options, documented on the Storage page.
+
+### 21.10 F10: Writes from WebAssembly (decided 2026-10-17, in progress)
+
+**Goal.** Append to Timelake tables, and keep them maintained, from JavaScript runtimes where the Rust engine can't run: Cloudflare Workers first, then browsers, Deno, Bun, and Node. Workers run JavaScript and WebAssembly; Python Workers can't load the native Python package.
+
+**Limits it is designed for** (Cloudflare, October 2026): 128 MB of memory per isolate, WebAssembly included; CPU time 10 ms per request on the free plan, 30 s by default and up to 5 minutes on paid plans; 64 MiB per Worker uncompressed. The read bundle is 8.9 MB.
+
+**Design.**
+- **Who does what.** The WASM module builds every file and decides every step; it does no I/O. The TypeScript client (`@timelake/client`) sends the requests through a store: an R2 binding, a local directory (Node, tests), memory (tests), or one the application supplies (`get`, `getRange`, `put`, `putIfAbsent`, `delete`, `list`).
+- **Append.** The same path as the engine: rows (JavaScript objects, or Arrow IPC) are aligned to the table's schema, given `_ingest_ts`, sorted by `(partition, series…, time)`, deduplicated within the append, and written as Parquet with the engine's settings (ZSTD, page statistics, delta and byte-stream-split encodings, the sort order). Then the manifest, manifest list, updated last-value index and head.
+- **Commit.** The two-step commit (P4): upload everything in parallel, then make the one conditional write of `vN+1.metadata.json` (R2 and S3 support create-if-absent). On a conflict, the WASM side rebases onto the new version and retries, reusing the data files. The version hint and head are written after.
+- **Iceberg metadata in our own code.** iceberg-rust pulls in tokio, reqwest and ring and doesn't build for `wasm32-unknown-unknown`, so the shared core writes manifests, manifest lists and table metadata itself, as the WASM reader already reads them. Tests keep the two writers equivalent: the engine (iceberg-rust) loads tables the WASM writer wrote and the other way round, plain DuckDB reads them, and the same input gives the same rows.
+- **One core for both.** Writing files (sort, split, dedup, Parquet settings, last-value index, head) and the streaming merge (§10.1) move to a crate without I/O that the engine and `timelake-wasm` both use, so they can't drift.
+- **Inline maintenance.** After an append, the same thresholds as the engine (`auto-maintain`, `compact-min-files`, `compact-cold-after`) run streaming compaction within the per-run byte cap, then retention and snapshot expiry with file cleanup. `timelake maintain` elsewhere is optional, not required.
+- **Not in the first version:** rollup refresh (it needs the SQL engine; rollups stay correct, since changed buckets are read from the raw table, and are refreshed by the next engine append or `timelake maintain`), schema changes, and request signing for S3 from the client (applications pass a store that signs).
+
+**Recommended deployment.** One writer per table: a Queues consumer or a Durable Object that batches incoming rows into appends of a few thousand rows or more. Concurrent writers are safe (optimistic commits), but each conflict costs a retry, and many tiny appends make many tiny files.
+
+**Measured before it ships:** peak memory and CPU time per append and per maintenance run in workerd, for appends of 1k, 10k and 100k rows and compaction of 8 small files and of a cold partition, to set the defaults (byte cap, batch and row-group sizes).

@@ -97,6 +97,10 @@ class QueryRecord(TypedDict, total=False):
     requests: list[int]
     """S3 requests per run (through the counting proxy)."""
     bytes: list[int]
+    cache_hits: list[int]
+    """Timelake's block cache: blocks read from memory or disk, per run (when the cache is on)."""
+    cache_misses: list[int]
+    """Blocks the cache fetched from the store, per run."""
     ttfb_ms: int
     kinds: list[dict[str, int]]
     """S3 requests by kind, per run."""

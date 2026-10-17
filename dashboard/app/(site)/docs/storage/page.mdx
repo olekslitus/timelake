@@ -31,6 +31,10 @@ Timelake’s own options work with every backend:
 | `timelake_version_lookup` | How a table’s first load in a process finds the newest version: `list` (one LIST of `metadata/v…`, sent with the head GET) or `hint` (GET `version-hint.text` with the head, then a HEAD of the next version). Default `list` where the store can list by prefix. See [trade-offs](#request-options-trade-offs). |
 | `timelake_freshness_check` | How a reader that already has a table version checks for a newer one: `head` (a HEAD of the next metadata file) or `list` (a LIST of that exact name). Default `head`; `list` on Tigris. `list` needs S3, GCS, or Azure. |
 | `timelake_warm_connections` | How many connections a table’s first load opens ahead of the data reads, with small HEAD requests. Default `0`. |
+| `timelake_cache` | The [block cache](#block-cache): `off`, `memory`, or `disk` (memory and a directory shared by every process on the machine). Default `memory` for object stores and HTTPS, `off` for local disk. |
+| `timelake_cache_dir` | The disk cache's directory. Default `timelake` in the OS cache directory (`~/Library/Caches`, `$XDG_CACHE_HOME` or `~/.cache`, `%LOCALAPPDATA%`). |
+| `timelake_cache_memory_bytes`, `timelake_cache_disk_bytes` | The caches' budgets. Default 268435456 (256 MiB) and 4294967296 (4 GiB). |
+| `timelake_cache_block_bytes` | The block size. Default 1048576 (1 MiB). |
 | `timelake_local_root` | Write objects under a local directory (see below). |
 
 ```bash
@@ -80,10 +84,11 @@ So about 7 PUTs and 2 GETs: at one append per second, about $3 a day on S3. Each
 | --- | --- | --- |
 | First query on a table in this process, `timelake_version_lookup=list` (default) | 1 GET (head) + 1 LIST | 1 |
 | First query, `timelake_version_lookup=hint`, or plain HTTPS (can’t list) | 2 GETs (head, version hint) + 1 HEAD | 2 |
-| Later queries (after 1 s) | 1 HEAD (a LIST with `timelake_freshness_check=list`) | 1, while the query is planned |
+| Later queries, after `version-check-interval` (1 s) | 1 HEAD (a LIST with `timelake_freshness_check=list`) | 1, while the query is planned |
+| Later queries within `version-check-interval` | none | none |
 | Table without a head | + GETs of the metadata, manifest list, and manifests | + 2 |
 
-Then each query reads its data: one GET per byte range, a few per file, and none for footers the head carried. A dashboard that refreshes one table every 5 seconds sends about 17,000 checks a day plus its data reads: a few cents a day on S3.
+Then each query reads its data: one GET per run of missing blocks, a few per file, none for footers the head carried, and none for blocks already in the [block cache](#block-cache). A dashboard that refreshes one table every 5 seconds sends about 17,000 checks a day plus its data reads: a few cents a day on S3. With `version-check-interval = 1m` it sends 1,440.
 
 ### Request options: trade-offs
 
@@ -99,11 +104,30 @@ Then each query reads its data: one GET per byte range, a few per file, and none
 - `list` lists that exact name. It costs about 12× a HEAD on S3, but on Tigris a HEAD of a missing key takes about 285 ms and the LIST about 40 ms.
 - **Why the default is per store:** `head` everywhere, except Tigris, where `list` is about 245 ms faster on every check. Set `head` on Tigris to pay less per check and wait longer.
 
+**`version-check-interval`** (a [setting](/docs/settings) of a table or session, not a storage option). How long a reader uses a table version without checking for a newer one.
+
+- Within the interval a query sends no request for the table’s version: that saves one HEAD and its round trip (about 55 ms from a laptop to S3) on each query.
+- The price is freshness: a query can miss commits other processes made in the last interval. The process’s own commits are always seen, and writers always check, since a commit is a conditional write.
+- **Why the default is 1 second:** results then lag other writers by at most a second, as they did before the setting existed, and the queries of one dashboard refresh share one check. Raise it for dashboards that refresh often and can be that far behind.
+
 **`timelake_warm_connections`.** Opens connections early so data reads don’t wait for TCP and TLS setup.
 
 - **Why it is off:** measured on S3 and Tigris, it saved at most about 20 ms on first scans and nothing on point queries, and each connection costs a HEAD request. Try it if your client is far from the store.
 
 **`timelake.head-format=none`** (a table property, for writers). No head: 1 PUT and 2 GETs fewer per commit, and first queries fall back to the metadata chain (3 round trips instead of 1 for `latest`).
+
+## Block cache
+
+Files a table never changes are cached: data files, manifests, manifest lists, and last-value index files (`*.parquet` and `*.avro`, named with a UUID). They are cached in blocks (1 MiB by default): a read takes the blocks it covers from the cache, and fetches the missing ones next to each other in one ranged GET. Reads of the same missing block at the same time share one fetch. What a process writes goes into the cache as it is written, so it reads its own appends without requests.
+
+Nothing that can change is cached: the version hint, the head, listings, and `vN.metadata.json`. A query still checks for a newer table version as before, so cached blocks never make an answer stale.
+
+- **Memory** (the default for object stores): the least recently used blocks go when the budget (256 MiB) is reached. Repeat queries in a long-lived process, such as a Python service or a notebook, read their data from memory.
+- **Disk** (`timelake_cache=disk`): a directory that every process on the machine shares, so a new CLI or Python process starts with the blocks earlier ones read. Any process deletes the least recently used blocks once the directory passes its budget (4 GiB).
+
+Measured on S3 from an EC2 instance in the same region: TSBS IoT repeat queries took 16 ms instead of 54 (geometric mean) and sent no requests, and 16 clients ran 398 queries per second instead of 288. With the disk cache, a new process's first queries took 71 ms instead of 151. See [Performance history](/docs/performance).
+
+`Lake.cache_stats()` in Python and `Storage::cache_stats()` in Rust count blocks read from memory and disk, blocks fetched, and bytes fetched. The WebAssembly reader and the TypeScript client don't use it: the browser has its own cache.
 
 ## Conditional writes are required
 

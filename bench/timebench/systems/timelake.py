@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, Any, override
 
 from timebench import BENCH
@@ -88,7 +89,7 @@ class Timelake(System):
             # Timelake's reader in this process, for probes and long-lived clients; single queries run the CLI.
             import timelake
 
-            options = PROXY.object_store_options() if place.target.s3 else None
+            options = {**(PROXY.object_store_options() if place.target.s3 else {}), **reader_options()}
             lake = timelake.Lake(state["root"], storage_options=options)
             return lambda sql: arrow_result(lake.sql(sql, namespace=state["namespace"]))
         # Plain DuckDB over the Iceberg tables Timelake wrote.
@@ -101,9 +102,19 @@ class Timelake(System):
     @override
     @classmethod
     def reader_command(cls, reader: str, place: Place, state: dict[str, Any], runs: int) -> list[str]:
-        options = [x for k, v in PROXY.object_store_options().items() for x in ("-o", f"{k}={v}")]
-        cmd = [str(CLI), "-w", state["root"], *(options if place.target.s3 else [])]
+        store = PROXY.object_store_options() if place.target.s3 else {}
+        options = [x for k, v in {**store, **reader_options()}.items() for x in ("-o", f"{k}={v}")]
+        cmd = [str(CLI), "-w", state["root"], *options]
         cmd += ["sql", "--namespace", state["namespace"], "--bench-runs", str(runs)]
         if place.target.s3:
             cmd += ["--proxy-admin", str(PROXY.admin)]
         return cmd
+
+
+def reader_options() -> dict[str, str]:
+    """Extra storage options for Timelake's readers, from ``TIMEBENCH_TIMELAKE_OPTIONS`` (``key=value,...``).
+
+    For comparing settings such as ``timelake_cache=off`` on the same tables.
+    """
+    raw = os.environ.get("TIMEBENCH_TIMELAKE_OPTIONS", "")
+    return dict(kv.split("=", 1) for kv in raw.split(",") if "=" in kv)

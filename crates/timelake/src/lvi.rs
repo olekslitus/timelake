@@ -18,7 +18,6 @@ use parquet::file::properties::WriterProperties;
 use crate::contract::Contract;
 use crate::error::Result;
 use crate::schema::align_batch;
-use crate::sort::{last_per_group, stable_sort};
 use crate::table::Table;
 
 /// Newest row per series among `batches`, or `None` without a time column or rows. On equal
@@ -29,11 +28,7 @@ pub fn latest_per_series(
     contract: &Contract,
     batches: &[RecordBatch],
 ) -> Result<Option<RecordBatch>> {
-    if contract.time_column.is_none() || batches.iter().all(|b| b.num_rows() == 0) {
-        return Ok(None);
-    }
-    let sorted = stable_sort(&concat_batches(schema, batches)?, &contract.write_order())?;
-    Ok(Some(last_per_group(&sorted, &contract.series_key)?))
+    Ok(timelake_format::rows::latest_per_series(schema, contract, batches)?)
 }
 
 /// Reads an index (from the lake's cache when possible).

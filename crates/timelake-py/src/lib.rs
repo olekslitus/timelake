@@ -208,6 +208,16 @@ impl Lake {
         collect(py, async move { session.sql(&query).await })
     }
 
+    /// What the block cache did since the lake was opened, or None with the cache off.
+    fn cache_stats(&self) -> Option<CacheSummary> {
+        self.inner.storage().cache_stats().map(|s| CacheSummary {
+            memory_hits: s.memory_hits,
+            disk_hits: s.disk_hits,
+            misses: s.misses,
+            bytes_fetched: s.bytes_fetched,
+        })
+    }
+
     /// The newest row of every series of a table, as a pyarrow Table.
     fn latest(&self, py: Python<'_>, table: String) -> PyResult<Py<PyAny>> {
         let session = self.session(timelake::DEFAULT_NAMESPACE);
@@ -441,6 +451,15 @@ impl From<&timelake::MaintainReport> for MaintainSummary {
             seconds: report.duration.as_secs_f64(),
         }
     }
+}
+
+/// `Lake.cache_stats` result.
+#[derive(IntoPyObject)]
+struct CacheSummary {
+    memory_hits: u64,
+    disk_hits: u64,
+    misses: u64,
+    bytes_fetched: u64,
 }
 
 /// `Table.upgrade` result.

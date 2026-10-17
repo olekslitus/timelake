@@ -31,6 +31,7 @@ mod output;
 mod prune;
 mod query;
 mod spec;
+mod write;
 
 use std::collections::HashMap;
 
@@ -50,6 +51,7 @@ pub use meta::{
 pub use prune::plan_files;
 pub use query::Collector;
 pub use spec::{AggInput, AggOp, AggSpec, BucketSpec, QuerySpec};
+pub use write::Writer;
 
 impl From<Error> for JsValue {
     fn from(e: Error) -> Self {

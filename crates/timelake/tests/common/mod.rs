@@ -126,3 +126,14 @@ pub(crate) async fn plan(s: &Session, sql: &str) -> Plan {
     walk(&physical, &mut plan);
     plan
 }
+
+/// The `value` column of a result (or its only column), concatenated across batches.
+pub(crate) fn f64_values(batches: &[RecordBatch]) -> Vec<f64> {
+    batches
+        .iter()
+        .flat_map(|b| {
+            let c = b.column_by_name("value").unwrap_or_else(|| b.column(0));
+            c.as_any().downcast_ref::<Float64Array>().unwrap().values().to_vec()
+        })
+        .collect()
+}

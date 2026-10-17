@@ -73,6 +73,9 @@ uv run timebench history --workload tsbs-iot                  # one line per run
   stops it after, so one server uses the machine at a time; the run file records each server's version.
 - **Targets** (`--target`): `local` (tables under `data/lakes/`), or S3 through `tools/s3proxy` on `localhost:59100`:
   `s3` for a local RustFS, `aws-s3` / `aws-s3x` for real buckets (`infra/`). TimescaleDB ignores the target.
+- **Reusing tables** (`--reuse`): query the tables an earlier run left on the target, at the given checkpoints, and run
+  the concurrent dashboards if asked, without ingesting. `TIMEBENCH_TIMELAKE_OPTIONS=key=value,...` adds storage
+  options to Timelake's readers, to compare settings on the same tables (`timelake_cache=off`).
 - **Adding a workload or system:** subclass `Workload` or `System` and register it in its package's `__init__.py`.
   Queries go in `queries/<suite>/queries.sql` with the dialect placeholders of `timebench/queries.py`.
 
@@ -97,7 +100,7 @@ uv run timebench history --workload tsbs-iot                  # one line per run
   the newest finished commit each probe was (`lag_s`).
 - `--concurrency 1,4,16`: after the last checkpoint, that many client processes per system, each keeping a reader open
   and running the dashboard queries in turn for `--concurrency-seconds` (30): queries per second and p50/p95/p99, as
-  `concurrency` records.
+  `concurrency` records. A query that fails counts as one error per client and is left out of that client's turns.
 - Cost: on AWS targets, every query, ingest and maintenance record carries `usd` (its requests at S3 list prices,
   `timebench/cost.py`), and ingest and maintenance `storage_usd_month`. Machines aren't priced yet.
 

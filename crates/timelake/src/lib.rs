@@ -26,6 +26,7 @@
 mod alter;
 mod append;
 mod background;
+mod block_cache;
 mod cache;
 mod commit;
 mod error;

@@ -1,14 +1,13 @@
 //! Mapping Arrow data onto a table's schema: on create (types Iceberg can store) and on write
 //! (incoming batches cast and reordered to the table schema).
 
-use arrow::array::{ArrayRef, RecordBatch, new_null_array};
-use arrow::compute::cast;
+use arrow::array::RecordBatch;
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 
 use crate::error::{Error, Result};
 
 /// The time zone timestamps with any zone are stored in.
-pub(crate) const UTC: &str = "+00:00";
+pub(crate) const UTC: &str = timelake_format::rows::UTC;
 
 /// Maps Arrow types to ones with a lossless Iceberg equivalent: any timestamp → microseconds,
 /// small ints → int, dictionaries → their value type, large/view strings → strings. The time
@@ -47,22 +46,7 @@ fn normalize_type(dt: &DataType) -> Result<DataType> {
 /// Casts and reorders a batch to the table schema by column name. Missing nullable columns are
 /// filled with nulls; extra columns are an error (add them to the schema first).
 pub fn align_batch(batch: &RecordBatch, schema: &SchemaRef) -> Result<RecordBatch> {
-    let input = batch.schema();
-    if let Some(extra) = input.fields().iter().find(|f| schema.field_with_name(f.name()).is_err()) {
-        return Err(Error::invalid(format!("column {:?} is not in the table schema", extra.name())));
-    }
-    let columns = schema
-        .fields()
-        .iter()
-        .map(|f| match input.index_of(f.name()) {
-            Ok(i) if batch.column(i).data_type() == f.data_type() => Ok(batch.column(i).clone()),
-            Ok(i) => Ok(cast(batch.column(i), f.data_type())?),
-            Err(_) if f.is_nullable() => Ok(new_null_array(f.data_type(), batch.num_rows())),
-            Err(_) => Err(Error::invalid(format!("required column {:?} is missing", f.name()))),
-        })
-        .collect::<Result<Vec<ArrayRef>>>()?;
-    RecordBatch::try_new(schema.clone(), columns)
-        .map_err(|e| Error::invalid(format!("batch does not fit the table schema: {e}")))
+    Ok(timelake_format::rows::align_batch(batch, schema)?)
 }
 
 #[cfg(test)]

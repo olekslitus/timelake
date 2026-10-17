@@ -28,6 +28,7 @@ Opens a warehouse. `location` is a local path or an `s3://`, `gs://`, `az://`, o
 | `sql(query, namespace="default")` | `pyarrow.Table`. Unqualified names resolve in `namespace`. Also runs `CREATE`, `DROP`, and `REFRESH MATERIALIZED ROLLUP` ([Rollups](/docs/rollups)), which return one row with the rollup and the rows it took. |
 | `latest(table)` | `pyarrow.Table` with the newest row per series, from the last-value index (or a scan when the table has none). `table` is a full name such as `"iot.readings"`. |
 | `drop_table(name)` | Deletes the table and its files. Does nothing if the table doesn't exist. |
+| `cache_stats()` | dict: `memory_hits`, `disk_hits`, `misses` (blocks), `bytes_fetched`, counted since the lake was opened; `None` with the [block cache](/docs/storage#block-cache) off. |
 
 ## Table
 

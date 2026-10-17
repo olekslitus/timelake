@@ -12,17 +12,19 @@ use iceberg::spec::{DataFile, Datum, ManifestStatus, PrimitiveLiteral, SnapshotR
 use parquet::arrow::ParquetRecordBatchStreamBuilder;
 use parquet::arrow::async_reader::ParquetObjectReader;
 use parquet::file::properties::WriterProperties;
+use timelake_format::merge::{Merge, Step};
+use tokio::sync::mpsc;
 
 use crate::commit::{Change, commit, publish};
 use crate::error::{Error, Result};
 use crate::lake::metadata_uri;
 use crate::rollup::{RollupRefresh, refresh_all};
 use crate::schema::align_batch;
-use crate::sort::{last_per_group, stable_sort};
+use crate::sort::stable_sort;
 use crate::storage::Uploads;
 use crate::summary;
 use crate::table::{LiveEntry, Table};
-use crate::write::{file_partition, row_groups, write_partition, writer_properties};
+use crate::write::{PartitionWriter, file_partition, row_groups, writer_properties};
 
 /// Files smaller than this fraction of the target size count as small (worth compacting).
 const SMALL_FILE_NUMERATOR: u64 = 3;
@@ -34,10 +36,13 @@ const TIER_BASE_SHIFT: u32 = 16;
 const TIER_GROWTH: u64 = 4;
 /// A partition whose files total at most this many target sizes is rewritten whole.
 const REWRITE_WHOLE_PARTITION_TARGETS: u64 = 2;
-/// How many data files compaction reads at once.
-const CONCURRENT_FILE_READS: usize = 8;
-/// Rows per batch when reading a data file back for compaction.
-const READ_BATCH_ROWS: usize = 64 * 1024;
+/// Rows per batch when reading a data file back for compaction. Larger batches measured no faster
+/// and used more memory.
+const READ_BATCH_ROWS: usize = 4 * 1024;
+/// Batches each input of a compaction reads ahead of the merge (decoding overlaps merging).
+const READ_AHEAD: usize = 1;
+/// Rows per batch the merge hands the writer.
+const MERGED_BATCH_ROWS: usize = 64 * 1024;
 /// How many manifest lists or manifests expiry reads at once.
 const CONCURRENT_METADATA_READS: usize = 16;
 
@@ -215,7 +220,9 @@ async fn compact(table: &Table, opts: &MaintainOptions, report: &mut MaintainRep
     Ok(committed?.0)
 }
 
-/// Merges the rows of `files` (oldest commit first) into sorted, deduplicated new files.
+/// Merges the rows of `files` (oldest commit first) into sorted, deduplicated new files, as
+/// streams (SPEC §10.1): memory is a few batches per file and the row group being written,
+/// however large the partition.
 async fn rewrite_partition(
     table: &Table,
     partition: Option<i32>,
@@ -224,14 +231,36 @@ async fn rewrite_partition(
     uploads: &Uploads,
     report: &mut MaintainReport,
 ) -> Result<Vec<DataFile>> {
-    let batches = read_files(table, files).await?;
-    let rows_in: usize = batches.iter().map(RecordBatch::num_rows).sum();
-    let merged = sort_dedup(table, &batches)?;
-    report.duplicates_removed += (rows_in - merged.num_rows()) as u64;
-    report.rows_rewritten += rows_in as u64;
+    let contract = table.contract();
+    let order = contract.write_order();
+    let unique = if contract.dedup { contract.sort_columns().len() } else { 0 };
+    let sort_order_id = i32::try_from(table.metadata().default_sort_order_id()).ok();
+    let mut inputs: Vec<_> = files
+        .iter()
+        .map(|e| {
+            let sorted = order.is_empty() || e.data_file.sort_order_id() == sort_order_id;
+            read_ahead(table, &e.data_file, (!sorted).then(|| order.clone()))
+        })
+        .collect();
+    let keys: Vec<&str> = order.iter().map(String::as_str).collect();
+    let mut merge = Merge::new(table.schema(), &keys, unique, files.len(), MERGED_BATCH_ROWS)?;
+    let mut writer = PartitionWriter::new(table, partition, props, uploads);
+    loop {
+        match merge.step()? {
+            Step::Need(i) => {
+                let batch = inputs[i].recv().await.transpose()?;
+                merge.push(i, batch)?;
+            }
+            Step::Output(batch) => writer.write(&batch).await?,
+            Step::Done => break,
+        }
+    }
+    let (rows_in, rows_out, _) = merge.stats();
+    report.duplicates_removed += rows_in - rows_out;
+    report.rows_rewritten += rows_in;
     report.partitions_compacted += 1;
     report.files_rewritten += files.len();
-    write_partition(table, partition, row_groups(merged, table.contract().row_group_rows), props, uploads).await
+    writer.finish().await
 }
 
 /// Which files of which partitions to rewrite. Each group is a run of files next to each other in
@@ -308,30 +337,44 @@ fn cold_partitions(table: &Table, files: &[LiveEntry], opts: &MaintainOptions) -
     files.iter().filter_map(|f| file_partition(&f.data_file)).filter(|&p| ended_before_cutoff(p)).map(Some).collect()
 }
 
-/// Reads data files back, aligned to the table schema, in the given order.
-async fn read_files(table: &Table, files: &[LiveEntry]) -> Result<Vec<RecordBatch>> {
-    let reads: Vec<_> = files.iter().map(|e| read_file(table, &e.data_file)).collect();
-    let batches: Vec<Vec<RecordBatch>> =
-        futures::stream::iter(reads).buffered(CONCURRENT_FILE_READS).try_collect().await?;
-    Ok(batches.into_iter().flatten().collect())
-}
-
-async fn read_file(table: &Table, df: &DataFile) -> Result<Vec<RecordBatch>> {
-    let storage = table.lake().storage();
-    let reader = ParquetObjectReader::new(storage.object_store(), storage.path(df.file_path())?)
-        .with_file_size(df.file_size_in_bytes());
-    let stream = ParquetRecordBatchStreamBuilder::new(reader).await?.with_batch_size(READ_BATCH_ROWS).build()?;
-    let schema = table.schema();
-    let batches: Vec<RecordBatch> = stream.try_collect().await?;
-    batches.iter().map(|b| align_batch(b, &schema)).collect()
-}
-
-/// Sorts by `(series…, time, insertion time)` with input order as the tiebreak, then keeps the last
-/// row of each `(series…, time)` group if dedup is on.
-fn sort_dedup(table: &Table, batches: &[RecordBatch]) -> Result<RecordBatch> {
-    let columns = table.contract().sort_columns();
-    let sorted = stable_sort(&concat_batches(&table.schema(), batches)?, &table.contract().write_order())?;
-    if table.contract().dedup && !columns.is_empty() { last_per_group(&sorted, &columns) } else { Ok(sorted) }
+/// Reads a data file in a task of its own, a few batches ahead of the merge, aligned to the table
+/// schema. A file not in the table's sort order is read whole and sorted by `sort` first.
+fn read_ahead(table: &Table, df: &DataFile, sort: Option<Vec<String>>) -> mpsc::Receiver<Result<RecordBatch>> {
+    let (tx, rx) = mpsc::channel(READ_AHEAD);
+    let storage = table.lake().storage().clone();
+    let (schema, uri, size) = (table.schema(), df.file_path().to_string(), df.file_size_in_bytes());
+    tokio::spawn(async move {
+        let read = async {
+            let reader = ParquetObjectReader::new(storage.object_store(), storage.path(&uri)?).with_file_size(size);
+            let stream =
+                ParquetRecordBatchStreamBuilder::new(reader).await?.with_batch_size(READ_BATCH_ROWS).build()?;
+            Ok::<_, Error>(stream.map(|b| align_batch(&b?, &schema)))
+        };
+        let mut stream = match read.await {
+            Ok(s) => s.boxed(),
+            Err(e) => {
+                let _ = tx.send(Err(e)).await;
+                return;
+            }
+        };
+        if let Some(order) = sort {
+            let sorted = async {
+                let batches: Vec<RecordBatch> = stream.try_collect().await?;
+                stable_sort(&concat_batches(&schema, &batches)?, &order)
+            };
+            stream = match sorted.await {
+                Ok(b) => futures::stream::iter(row_groups(b, READ_BATCH_ROWS).map(Ok).collect::<Vec<_>>()).boxed(),
+                Err(e) => futures::stream::iter([Err(e)]).boxed(),
+            };
+        }
+        while let Some(batch) = stream.next().await {
+            // The merge stopped (an error elsewhere): stop reading.
+            if tx.send(batch).await.is_err() {
+                return;
+            }
+        }
+    });
+    rx
 }
 
 /// Expires old snapshots and deletes the files only they referenced.
@@ -514,5 +557,35 @@ mod tests {
         let (t, _) = t.maintain(MaintainOptions { expire: false, ..MaintainOptions::default() }).await.unwrap();
         assert_eq!(t.files().await.unwrap().len(), 1);
         assert_eq!(values_of_device_1(&lake).await, [2.0]);
+    }
+
+    /// Compaction streams sorted files and sorts an unsorted one (another engine's, repeating a
+    /// key) on its own first; the merged file is sorted, and the latest write of each key wins.
+    #[tokio::test]
+    async fn compaction_merges_sorted_and_unsorted_files() {
+        use crate::testing::append_unsorted;
+
+        let (lake, _store) = faulty_lake();
+        let t = lake.create_table("iot.r", &schema(), opts()).await.unwrap();
+        let (t, _) =
+            t.append(&[batch(&[(T0, 1, 1.0), (T0 + 2, 1, 1.0), (T0, 2, 1.0)])], no_maintenance()).await.unwrap();
+        let day = crate::write::sort_and_split(&t, &[batch(&[(T0, 1, 0.0)])]).unwrap()[0].0;
+        let t = append_unsorted(&t, day, batch(&[(T0 + 2, 1, 2.0), (T0 + 1, 1, 2.0), (T0 + 2, 1, 3.0)])).await;
+        let (t, _) = t.append(&[batch(&[(T0 + 1, 1, 4.0), (T0 + 3, 2, 4.0)])], no_maintenance()).await.unwrap();
+
+        let (t, report) = t.maintain(MaintainOptions { expire: false, ..MaintainOptions::default() }).await.unwrap();
+        assert_eq!((report.files_rewritten, report.files_written), (3, 1));
+        assert_eq!((report.rows_rewritten, report.duplicates_removed), (8, 3));
+        assert_eq!(t.files().await.unwrap().len(), 1);
+        // The unsorted file's rows carry insertion time 0, so at T0 + 2 the first append's row is
+        // the latest write; at T0 + 1 the last append's is.
+        assert_eq!(values_of_device_1(&lake).await, [1.0, 4.0, 1.0]);
+        let sql = "SELECT device, time FROM iot.r";
+        let rows = Session::new(lake.clone()).sql(sql).await.unwrap().collect().await.unwrap();
+        let devices: Vec<i32> = rows
+            .iter()
+            .flat_map(|b| b.column(0).as_any().downcast_ref::<arrow::array::Int32Array>().unwrap().values().to_vec())
+            .collect();
+        assert_eq!(devices, [1, 1, 1, 2, 2], "the merged file is sorted by series, then time");
     }
 }

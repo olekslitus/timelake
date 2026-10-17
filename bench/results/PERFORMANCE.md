@@ -3,6 +3,72 @@
 Measurements for the steps of the performance plan ([SPEC.md §19.1](../../SPEC.md)), newest first. Each step is
 measured from a laptop (M1 Pro) over the internet, against the numbers before it.
 
+## Columns encoded in parallel (2026-10-17)
+
+Same machine, data and method as streaming compaction below. The shared file writer (`timelake_format::file`)
+encodes each row group's columns on scoped threads; files are byte-identical to iceberg-rust's writer (test
+`write::tests::shared_writer_matches_iceberg_rust`).
+
+| | Before (streaming merge) | Parallel columns |
+|---|---:|---:|
+| `maintain` (72 files → 3), 3 runs | 2.41, 2.37, 2.37 s | 1.21, 1.16, 1.17 s |
+| Peak RSS | 529–542 MB | 424–480 MB |
+| `import` of `readings.parquet` (11.7M rows, one append, `--no-maintain`), 2 runs | 6.25, 5.82 s (`d703958`) | 4.82, 4.62 s |
+
+User CPU for `maintain` stays about 3.2 s: the same work on more cores.
+
+## Streaming compaction (2026-10-17, SPEC §10.1)
+
+Laptop (M1 Pro), local disk, release build. TSBS IoT readings (11,671,497 rows, 2026-01-01 to 01-03) split into 72
+hourly Parquet files and imported with `timelake import --no-maintain` (one file per commit, day partitions), then
+`timelake maintain tsbs.readings` on a fresh copy each run; time from the command's report, peak memory from
+`/usr/bin/time -l`.
+
+| | Time (3 runs) | Peak RSS |
+|---|---:|---:|
+| Before (in-memory sort, `d703958`) | 3.73, 3.65, 3.65 s | 1.95, 1.98, 1.95 GB |
+| Streaming merge | 2.41, 2.37, 2.37 s | 532, 542, 529 MB |
+| Streaming merge, without writing the output | 0.44 s | |
+| `maintain` with nothing to do | | 19 MB |
+
+- Output: the three compacted files hold the same rows in the same order as before (compared column by column).
+- One day alone (24 files): 362 MB. With `row-group-rows = 131072`: 390 MB for three days instead of 536 MB.
+- Read batch rows and read-ahead (1,024–16,384 rows, 1–4 batches): 2.34–2.43 s and 438–571 MB, no trend beyond
+  noise; defaults 4,096 rows and 1 batch.
+- Data page size (files written with 32 KiB, 128 KiB pages): 347 and 365 MB for one day, against 362 MB with 1 MiB.
+- Reading the same 24 files outside the engine (parquet-rs, 8,192-row batches, one batch from each in turn): 67 MB
+  synchronously from the files, 134 MB with each file in memory, 155 MB with the async reader. Per open input the
+  cost is its row group held while decoding.
+
+## P5: block cache (2026-10-17)
+
+Measured on the benchmark instance (c8gd.2xlarge, us-east-2) on the S3 tables of the weekly run of 2026-10-16, with
+`timebench run … --reuse --checkpoints maintained --runs 3 --concurrency 1,4,16` and `TIMEBENCH_TIMELAKE_OPTIONS`
+setting the cache; one run per setting, commit `7e38163` (branch `block-cache`). Geometric means over the queries,
+requests over all queries:
+
+| TSBS IoT, S3 | Cache off | Memory (default, 1 MiB blocks) | 256 KiB blocks | Disk, second process |
+|---|---:|---:|---:|---:|
+| First run (new process) | 151 ms, 279 requests | 150 ms, 251 | 150 ms, 279 | 71 ms, 58 |
+| Repeat runs | 54 ms, 221 requests | 16 ms, 0 | 16 ms, 0 | 16 ms, 0 |
+| Queries/s, 1 / 4 / 16 clients | 22 / 94 / 288 | 133 / 339 / 398 | 133 / 345 / 395 | 136 / 345 / 395 |
+
+| TSBS DevOps, S3 | Cache off | Memory (1 MiB) | 256 KiB blocks |
+|---|---:|---:|---:|
+| First run | 203 ms, 295 requests | 171 ms, 295 | 262 ms, 430 |
+| Repeat runs | 85 ms, 261 requests | 27 ms, 0 | 26 ms, 0 |
+| Queries/s, 1 / 4 / 16 clients | 9 / 19 / 21 | 18 / 22 / 21 | 18 / 22 / 21 |
+
+- Repeat runs read nothing from S3: the data comes from memory, and a repeat within a second of the last query reuses
+  the table version without the freshness check (as before). Examples: `one-truck-last-hour` 36 → 4 ms,
+  `cpu-max-all-8` 133 → 13 ms, `single-groupby-1-8-1` 55 → 8 ms.
+- DevOps at 16 clients stays at 21 queries/s: its dashboard queries are limited by computation, not reads.
+- 256 KiB blocks: no gain on repeats, and more requests on first runs (DevOps `cpu-max-all-8` 10 → 83 requests,
+  1,016 ms), since runs of missing blocks break up more often. 1 MiB stays the default.
+- First runs vary: `one-truck-last-hour` took 170 ms with the memory cache against 74 ms without it, in one run each,
+  with the same 6 requests; a 1 MiB block reads more bytes than the ranges it covers. Worth more runs.
+- A second process with the disk cache warm: first runs 151 → 71 ms, requests 279 → 58.
+
 ## P2 + P3: footers in the head, connections opened early (2026-10-14)
 
 - **P2:** the head also carries the Parquet footers (with page indexes) of the newest files, in what the last-value

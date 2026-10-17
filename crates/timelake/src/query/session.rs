@@ -1,5 +1,6 @@
 use std::fmt;
 use std::sync::Arc;
+use std::time::Duration;
 
 use arrow::array::{RecordBatch, StringArray, UInt64Array};
 use arrow::datatypes::{DataType, Field, Schema};
@@ -10,6 +11,7 @@ use datafusion::prelude::{DataFrame, SessionConfig, SessionContext, ident, lit};
 use datafusion::sql::TableReference;
 use datafusion::sql::sqlparser::dialect::dialect_from_str;
 
+use super::CATALOG;
 use super::catalog::{INFORMATION_SCHEMA, LakeCatalog};
 use super::provider::TimelakeProvider;
 use super::rewrite::LatestRewrite;
@@ -17,7 +19,6 @@ use super::rollup::{definition_of, refresh_session, rollup_frame};
 use super::route::{RollupRewrite, RouteMap, prepare};
 use super::settings::SessionSettings;
 use super::statement::{self, RollupStatement, Statement};
-use super::{CATALOG, PLAN_CACHE_TTL};
 use crate::error::{Error, Result};
 use crate::lake::Lake;
 use crate::name::{DEFAULT_NAMESPACE, TableName};
@@ -154,8 +155,10 @@ impl Session {
                 .filter(|r| r.catalog().is_none_or(|c| c == CATALOG))
                 .filter_map(|r| TableName::new(r.schema().unwrap_or(default_namespace), r.table()).ok())
                 .collect();
-            futures::future::join_all(names.iter().map(|n| self.prefetch(n))).await;
-            futures::future::join_all(names.iter().map(|n| prepare(&self.lake, n, &self.routes))).await;
+            let interval = self.version_check_interval();
+            self.catalog.set_interval(interval);
+            futures::future::join_all(names.iter().map(|n| self.prefetch(n, interval))).await;
+            futures::future::join_all(names.iter().map(|n| prepare(&self.lake, n, interval, &self.routes))).await;
         }
         let plan = state.statement_to_plan(statement).await?;
         Ok(self.ctx.execute_logical_plan(plan).await?)
@@ -230,10 +233,17 @@ impl Session {
         }
     }
 
-    /// Loads a table's metadata, file list and last-value index into the lake's caches. Errors
-    /// are left for planning to report.
-    async fn prefetch(&self, name: &TableName) {
-        let Ok(table) = self.lake.table_recent(name, PLAN_CACHE_TTL).await else { return };
+    /// The session's `version-check-interval`, if it sets one.
+    fn version_check_interval(&self) -> Option<Duration> {
+        let state = self.ctx.state();
+        state.config().options().extensions.get::<SessionSettings>()?.duration(property::VERSION_CHECK_INTERVAL)
+    }
+
+    /// Loads a table's metadata, file list and last-value index into the lake's caches: the
+    /// query's first lookup of the table, so it decides whether to check for a newer version.
+    /// Errors are left for planning to report.
+    async fn prefetch(&self, name: &TableName, interval: Option<Duration>) {
+        let Ok(table) = self.lake.table_recent(name, interval, Duration::ZERO).await else { return };
         let index = table.last_value_index();
         let read_index = async {
             if let Some(uri) = index {
@@ -249,7 +259,9 @@ impl Session {
         N: TryInto<TableName>,
         Error: From<N::Error>,
     {
-        let table = self.lake.table_recent(&table.try_into()?, PLAN_CACHE_TTL).await?;
+        let interval = self.version_check_interval();
+        self.catalog.set_interval(interval);
+        let table = self.lake.table_recent(&table.try_into()?, interval, Duration::ZERO).await?;
         let Some(time_column) = table.contract().time_column.clone() else {
             return Err(Error::invalid(format!("{} has no time column", table.name())));
         };

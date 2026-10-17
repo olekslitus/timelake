@@ -72,7 +72,7 @@ A `GROUP BY time_bucket(…)` query on a table with a [rollup](/docs/rollups) of
 
 ### Object storage
 
-Before planning, the reader loads every table a query references concurrently, each from one head object when it has one (otherwise version hint, metadata, manifests, and last-value index), and it reads each Parquet footer once, unless the head carried it. On remote stores it uses more scan partitions than cores (4× cores, at least 32) because the work is latency-bound. Table versions loaded for planning are reused for one second within a process; the process’s own commits are always visible immediately.
+Before planning, the reader loads every table a query references concurrently, each from one head object when it has one (otherwise version hint, metadata, manifests, and last-value index), and it reads each Parquet footer once, unless the head carried it. On remote stores it uses more scan partitions than cores (4× cores, at least 32) because the work is latency-bound. A table version the process loaded or checked is used without a new check for `version-check-interval` (default 1 second), so queries in that time send no request for it and can miss other processes’ commits. Raise it where dashboards can be a little behind (`SET timelake.version_check_interval = '30s'`, or the table setting), or set `0s` to check on every query. The process’s own commits are always visible immediately.
 
 ## Joins with plain tables
 

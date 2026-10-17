@@ -10,6 +10,46 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
 
 ### Added
 
+- **Writes from JavaScript.** `TableWriter` in `@timelake/client` appends to tables from Cloudflare Workers, Node,
+  Deno, Bun, or browsers, through a `Store` (`r2Store` for an R2 binding, `memoryStore`, or your own). The
+  WebAssembly module runs the engine's write path: the same row preparation, Parquet files, commits with retries, last-value
+  index and head. Rows are objects or an Arrow IPC stream; `batchId` makes retries safe. Tables are created
+  with the CLI or Python, and appends from JavaScript don't compact yet (SPEC §21.10).
+- **Version check interval.** The setting `version-check-interval` (table or session) says how long the Timelake
+  reader uses a table version it loaded or checked before checking for a newer one. Within it, queries send no
+  request for the table's version, and can miss commits by other processes; the process's own commits are seen at
+  once, and writers always check. The default, 1 second, is the old fixed behaviour; `0s` checks on every query
+  (`SET timelake.version_check_interval = '30s'`, `--set`, `Lake(settings=…)`, or `timelake alter --set`).
+- **Ingestion guides.** The [Quick start](https://timelake.dev/docs/quick-start) has eight sub-pages that set up
+  continuous ingestion, each with several designs, a recommendation, scheduled checks on recent data, and
+  maintenance: Local, AWS (S3, Kinesis, SQS, IoT Core, and Firehose into Lambda), Azure (Blob Storage, Event Hubs,
+  Service Bus, and IoT Hub into Azure Functions), Google Cloud (Cloud Storage and Pub/Sub into Cloud Run functions),
+  Cloudflare (R2 and Queues, appended by a consumer Worker with `TableWriter` or by a writer script), Fly.io, Vercel,
+  and Tigris. Each platform has an
+  overview, a setup page, a page per design, and a checks page; the docs sidebar opens and closes nested pages. The
+  Quick start compares the platforms and designs. The AWS page compares S3 with S3 Tables.
+
+### Changed
+
+- **Compaction streams.** Compaction merges its input files as sorted streams instead of loading a partition into
+  memory, so its memory no longer grows with the partition. Full compaction of TSBS IoT (72 hourly files into 3 days):
+  3.65 → 2.37 s, peak memory 1.95 → 0.53 GB, with identical files.
+- **Columns are encoded in parallel.** Timelake writes Parquet with its own writer (shared with the coming WebAssembly
+  writer), encoding each row group's columns on threads of their own. The files are the same, byte for byte. The
+  compaction above takes 1.17 s instead of 2.37 s; importing 11.7M rows 4.7 s instead of 6.0 s.
+
+### Fixed
+
+- Docs: the storage page's check for conditional writes created a table twice, which fails the second time on any
+  store. It now sends a put-if-absent twice with the AWS CLI. The quick start no longer says that Timelake reads AWS
+  profiles: it reads the `AWS_*` environment variables (`aws configure export-credentials` exports a profile's). The
+  storage page says to create a Tigris lake bucket as single-region or multi-region: on Tigris's default `global`
+  buckets, conditional writes are checked within one region only.
+
+## 0.5.0 – 2026-10-17
+
+### Added
+
 - **Dedup on read.** In tables with dedup on, the Timelake reader (CLI, Python, Rust) returns only the latest write of
   each `(series, time)`, before compaction has removed the older copies. Only files that may share a key are merged;
   the rest are read as before. DuckDB, other Iceberg readers and the TypeScript client still see the copies until
@@ -19,7 +59,6 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
 - **Cold partitions compact sooner.** Once newer data is `timelake.compact-cold-after` (default 1 hour) past a
   partition's end, inline maintenance rewrites the partition into sorted, duplicate-free files when it has two small
   files, even if the append didn't touch it.
-
 - **Insertion time.** Time-series tables get an `_ingest_ts` column: each append fills it with the time the append
   started, unless the input brings its own values (an import keeping arrival times). Among rows with the same
   `(series, time)` the latest insertion wins, then the later commit, everywhere: within an append, on read, in
@@ -43,16 +82,19 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
   the raw table, grouped by series-key columns, with `count`, `sum`, `min`, `max`, `avg`, `first_value` and
   `last_value`. `timelake maintain` and `Table.maintain()` report `rollups_refreshed` and `rollup_rows`
   (`--no-rollups`, `rollups=False` to skip). The docs have a new page, "Rollups".
-- **Ingestion guides.** The [Quick start](https://timelake.dev/docs/quick-start) has eight sub-pages that set up
-  continuous ingestion, each with several designs, a recommendation, scheduled checks on recent data, and
-  maintenance: Local, AWS (S3, Kinesis, SQS, IoT Core, and Firehose into Lambda), Azure (Blob Storage, Event Hubs,
-  Service Bus, and IoT Hub into Azure Functions), Google Cloud (Cloud Storage and Pub/Sub into Cloud Run functions),
-  Cloudflare (R2 and Queues, with a writer outside Workers), Fly.io, Vercel, and Tigris. Each platform has an
-  overview, a setup page, a page per design, and a checks page; the docs sidebar opens and closes nested pages. The
-  Quick start compares the platforms and designs. The AWS page compares S3 with S3 Tables.
+- **Block cache.** Reads of files a table never changes (data files, manifests, manifest lists, last-value index
+  files) go through a cache of 1 MiB blocks, in memory by default on object stores and HTTPS (256 MiB), and on local
+  disk with `timelake_cache=disk`, shared by every process on the machine (4 GiB). A query still checks for a newer
+  table version, so answers are as fresh as before. Storage options `timelake_cache`, `timelake_cache_dir`,
+  `timelake_cache_memory_bytes`, `timelake_cache_disk_bytes` and `timelake_cache_block_bytes`; `Lake.cache_stats()`
+  in Python and `Storage::cache_stats()` in Rust count hits and misses. On S3, TSBS IoT repeat queries went from
+  54 to 16 ms with no requests, and 16 clients from 288 to 398 queries per second.
 
 ### Changed
 
+- **Table format 0.3.0** for new tables (the insertion-time column). Timelake 0.4 and older can't open them: upgrade
+  every reader and writer first. `timelake upgrade` raises older tables to 0.3.0 but doesn't add `_ingest_ts` (a
+  table's columns are fixed at creation for now).
 - **Settings are checked.** Creating or altering a table with an unknown `timelake.*` property, a bad value, or a
   setting fixed at creation (`time-column`, `series-key`, `chunk-interval`, `dedup`, `ingest-time-column`) as a
   property is an error; use the table options for those. `timelake.format-version` can no longer be set by hand.
@@ -61,12 +103,11 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
 - Rust: `SessionSettings` has `get` and `flag` instead of public fields. `Session::parse` returns
   `timelake::Statement` (DataFusion's statement, or a rollup statement) for `Session::execute`.
   `MaintainOptions` has a `rollups` field and `MaintainReport` has `rollups_refreshed` and `rollup_rows`.
-
-- **Table format 0.3.0** for new tables (the insertion-time column). Timelake 0.4 and older can't open them: upgrade
-  every reader and writer first. `timelake upgrade` raises older tables to 0.3.0 but doesn't add `_ingest_ts` (a
-  table's columns are fixed at creation for now).
 - With dedup on, rows with the same `(series, time)` within one append keep only the last, so the append's `rows`
   counts them once. Files written by earlier versions may still hold such copies until compaction.
+- Benchmarks: Timelake's repeat runs on object storage now read from its memory cache, so their times drop from
+  this version on; first runs, in a fresh process, are unaffected. `timebench run --reuse` also runs the concurrent
+  dashboards, and `TIMEBENCH_TIMELAKE_OPTIONS` passes storage options to Timelake's readers.
 - The TypeScript client's WebAssembly reader is about 4% smaller (6.7 MB), built with Rust 1.99.
 
 ### Fixed
@@ -75,11 +116,6 @@ version is a [tag on GitHub](https://github.com/polythings/timelake/tags), so it
   another size was committed between them, and the merged file then counted as newer than that file: where both held
   the same `(series, time)`, the older value won from then on. Compaction now merges only files next to each other in
   commit order, and a merged file keeps the data sequence number of the newest file it replaces.
-- Docs: the storage page's check for conditional writes created a table twice, which fails the second time on any
-  store. It now sends a put-if-absent twice with the AWS CLI. The quick start no longer says that Timelake reads AWS
-  profiles: it reads the `AWS_*` environment variables (`aws configure export-credentials` exports a profile's). The
-  storage page says to create a Tigris lake bucket as single-region or multi-region: on Tigris's default `global`
-  buckets, conditional writes are checked within one region only.
 
 ## 0.4.0 – 2026-10-14
 

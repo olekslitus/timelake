@@ -21,6 +21,17 @@ export const NOW: RoadmapItem[] = [
     status: "next",
   },
   {
+    title: "Write from Cloudflare Workers",
+    description:
+      "Append to tables and keep them compacted from Workers and other JavaScript runtimes, with the WebAssembly library.",
+    status: "next",
+  },
+  {
+    title: "Compaction in fixed memory",
+    description: "Compaction merges sorted files as streams, so its memory no longer grows with the partition.",
+    status: "next",
+  },
+  {
     title: "Install from crates.io, PyPI, and npm",
     description: "Every release on the usual registries, with installers and binaries for Linux, macOS, and Windows.",
     status: "done",
@@ -56,7 +67,19 @@ export const NOW: RoadmapItem[] = [
     title: "Rows sent twice count once",
     description:
       "Timelake's reader keeps only the latest write of each reading, before compaction. Each row records when it arrived.",
-    status: "next",
+    status: "done",
+  },
+  {
+    title: "Local cache",
+    description:
+      "Repeat queries read their data from memory or local disk instead of the bucket: about 3× faster on S3.",
+    status: "done",
+  },
+  {
+    title: "Skip version checks",
+    description:
+      "Queries can reuse a table version for a set time instead of checking for a newer one, so warm queries send no requests.",
+    status: "done",
   },
   {
     title: "Rollups",
@@ -97,7 +120,6 @@ export const COMING_UP: RoadmapItem[] = [
   },
   { title: "Seconds-fresh data", description: "New rows visible within a second, before they are committed." },
   { title: "Ingestion with rules", description: "MQTT, HTTP, and Kafka in, with rules and alerts as data arrives." },
-  { title: "Local cache", description: "Repeat queries served from disk instead of the bucket." },
   { title: "DuckDB extension", description: "Timelake's speedups and functions inside DuckDB." },
 ]
 
